@@ -1,0 +1,75 @@
+version: "3.8"
+services:
+  bot:
+    build:
+      context: .
+      dockerfile: bot/Dockerfile
+      args:
+        - DOCKER_BUILDKIT=0
+    ports:
+      - "8082:8080"  # Map host port 8082 to container port 8080
+    volumes:
+      - .:/app
+    command: ["python", "bot/__main__.py"]
+    depends_on:
+      - app  # Ensure bot starts after app if it makes API calls
+    networks:
+      - app-network
+    logging:
+      driver: local
+      options:
+        max-size: "10m"  # Maximum size of log file
+        max-file: "3"    # Maximum number of log files
+
+  db:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - app-network
+    logging:
+      driver: local
+      options:
+        max-size: "10m"  # Maximum size of log file
+        max-file: "3"    # Maximum number of log files
+
+  app:
+    build: 
+      context: ./server
+      dockerfile: Dockerfile
+    ports:
+      - "8081:8080"  # Keep backend on 8080
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./server:/app
+    command: >
+      bash -c "
+        python init_migrations.py &&
+        uvicorn app.main:app --host 0.0.0.0 --port 8080
+      "
+    networks:
+      - app-network
+    logging:
+      driver: local
+      options:
+        max-size: "10m"  # Maximum size of log file
+        max-file: "3"    # Maximum number of log files
+volumes:
+  pgdata:
+
+networks:
+  app-network:
+    driver: bridge

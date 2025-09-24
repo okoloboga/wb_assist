@@ -1,0 +1,113 @@
+### Base Rules
+bot/photos/*
+photos/*
+
+config.yaml
+*.exe
+*.out
+*.test
+bin/
+vendor/
+.env
+*.swp
+*.swo
+.vscode/
+venv/
+*/__pycache__
+__pycache__/
+.git
+admin_actions.log
+
+### Python ###
+*.pyc
+*.pyo
+*.pyd
+*.pyb
+*.pyi
+*.so
+.Python
+
+# pip
+pip-wheel-metadata/
+pip-delete-this-directory.txt
+
+# Pipenv
+Pipfile.lock
+
+# Poetry
+poetry.lock
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# pyenv
+.python-version
+
+# celery
+celerybeat-schedule.*
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+### IDE ###
+# PyCharm
+.idea/
+*.iws
+*.iml
+*.ipr
+
+# VS Code
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+*.code-workspace
+
+# macOS
+.DS_Store
+
+### FastAPI specific ###
+# LOGS
+*.log
+logs/
+
+# DB Cache
+*.sqlite
+*.db
+instance/
+
+### Telegram Bot specific ###
+tmp/
+temp/
+downloads/
+
+# Backup
+*.bak
+*.backup
+
+# Docker
+docker-compose.override.yml
+
+# Migrations
+migrations/versions/*
+!migrations/versions/.gitkeep
+
+# Test Data
+test_data/
+fixtures/
