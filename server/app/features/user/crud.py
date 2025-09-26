@@ -1,6 +1,6 @@
 from sqlalchemy.orm import Session
-from models import User
-from schemas import UserCreate, UserUpdate
+from .models import User
+from .schemas import UserCreate, UserUpdate
 from datetime import datetime
 import logging
 
@@ -90,6 +90,10 @@ class UserCRUD:
 
     def get_users_count(self) -> int:
         """Получить количество пользователей"""
+        return self.db.query(User).count()
+
+    async def get_total_users(self) -> int:
+        """Получить общее количество пользователей (асинхронная версия)"""
         return self.db.query(User).count()
 
 

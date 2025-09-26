@@ -5,21 +5,15 @@ from sqlalchemy import text
 from typing import List
 import logging
 
-from database import get_db
-from schemas import UserCreate, UserResponse
-from crud import UserCRUD
+from ...core.database import get_db
+from .schemas import UserCreate, UserResponse
+from .crud import UserCRUD
 
 # Настройка логирования для routes
 logger = logging.getLogger(__name__)
 
 # Создаем роутер для пользователей
 user_router = APIRouter(prefix="/users", tags=["users"])
-
-# Создаем роутер для статистики
-stats_router = APIRouter(prefix="/stats", tags=["statistics"])
-
-# Создаем роутер для системных эндпоинтов
-system_router = APIRouter(tags=["system"])
 
 
 # === ПОЛЬЗОВАТЕЛИ ===
@@ -143,55 +137,3 @@ async def get_all_users(
     user_crud = UserCRUD(db)
     users = user_crud.get_all_users()
     return users
-
-
-# === СТАТИСТИКА ===
-
-@stats_router.get("/users-count")
-async def get_users_count(
-    db: Session = Depends(get_db)
-):
-    """
-    Получить общее количество пользователей.
-    """
-    user_crud = UserCRUD(db)
-    count = user_crud.get_users_count()
-    return {"total_users": count}
-
-
-# === СИСТЕМНЫЕ ЭНДПОИНТЫ ===
-
-@system_router.get("/")
-async def root():
-    """
-    Корневой эндпоинт API
-    """
-    return {"message": "Telegram Bot Backend API", "status": "running"}
-
-
-@system_router.get("/health")
-async def health_check(db: Session = Depends(get_db)):
-    """
-    Проверка здоровья приложения и подключения к БД
-    """
-    try:
-        # Проверяем подключение к БД
-        db.execute(text("SELECT 1"))
-        return {
-            "status": "healthy",
-            "database": "connected"
-        }
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Database connection failed: {str(e)}"
-        )
-
-
-def setup_routes(app):
-    """
-    Подключение всех роутеров к FastAPI приложению
-    """
-    app.include_router(system_router)
-    app.include_router(user_router)
-    app.include_router(stats_router)

@@ -3,7 +3,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.ext.declarative import declarative_base
 
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./backgammon.db")
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./users.db")
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
@@ -15,3 +15,8 @@ def get_db():
         yield db
     finally:
         db.close()
+
+
+def init_db():
+    """Инициализация базы данных - создание всех таблиц"""
+    Base.metadata.create_all(bind=engine)

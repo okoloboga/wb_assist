@@ -13,7 +13,7 @@ def setup_middleware(app: FastAPI):
     """
     Настройка middleware для приложения
     """
-    from config import settings
+    from .config import settings
 
     # CORS middleware
     app.add_middleware(
