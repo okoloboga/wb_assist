@@ -1,6 +1,8 @@
 import asyncio
 import logging
-
+import os
+from dotenv import load_dotenv
+from registration import router as registration_router
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import CallbackQuery
 from aiogram.filters import Command
@@ -11,13 +13,18 @@ from keyboards import (
     ai_assistant_keyboard, settings_keyboard
 )
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+# Загрузка .env из другой папки
+load_dotenv(dotenv_path=r"C:\configs\botkey.env")
 
-BOT_TOKEN = "8458572417:AAGBs_AV80sQDEbNhrqUych1r7PiC0qZUAQ"
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+if not BOT_TOKEN:
+    raise ValueError("BOT_TOKEN не найден. Проверьте botkey.env")
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Навигация кнопки "назад"
 navigation = {
@@ -44,7 +51,7 @@ keyboards_map = {
 }
 
 section_titles = {
-    "main": "Привет! Я помогу работать с кабинетом WB.\nВыбери действие:",
+    "main": "Я помогу работать с кабинетом WB.\nВыбери действие:",
     "wb_menu": "Раздел: WB Menu",
     "analytics": "Раздел: Аналитика",
     "stock": "Раздел: Склад",
@@ -55,11 +62,13 @@ section_titles = {
     "settings": "Раздел: Настройки"
 }
 
+dp.include_router(registration_router)
 
 @dp.message(Command(commands=["start"]))
 async def cmd_start(message):
+    first_name = message.from_user.first_name  # берём имя пользователя
     await message.answer(
-        section_titles["main"],
+        f"Здравствуйте, {first_name}! 👋\n\n{section_titles['main']}",
         reply_markup=main_keyboard()
     )
 
