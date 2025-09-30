@@ -1,72 +1,53 @@
-version: "3.8"
-services:
-  bot:
-    build:
-      context: .
-      dockerfile: bot/Dockerfile
-      args:
-        - DOCKER_BUILDKIT=0
-    ports:
-      - "8082:8080"  # Map host port 8082 to container port 8080
-    volumes:
-      - .:/app
-    command: ["python", "bot/__main__.py"]
-    depends_on:
-      - app  # Ensure bot starts after app if it makes API calls
-    networks:
-      - app-network
-    logging:
-      driver: local
-      options:
-        max-size: "10m"  # Maximum size of log file
-        max-file: "3"    # Maximum number of log files
+version: "3.9"
 
+services:
   db:
-    image: postgres:15
+    image: postgres:15-alpine
     environment:
-      POSTGRES_USER: ${DB_USER}
-      POSTGRES_PASSWORD: ${DB_PASSWORD}
-      POSTGRES_DB: ${DB_NAME}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
     volumes:
       - pgdata:/var/lib/postgresql/data
     ports:
-      - "5433:5432"
+      - "${POSTGRES_PORT}:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DB_USER}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 5s
       timeout: 5s
       retries: 5
     networks:
       - app-network
-    logging:
-      driver: local
-      options:
-        max-size: "10m"  # Maximum size of log file
-        max-file: "3"    # Maximum number of log files
 
-  app:
-    build: 
+  server:
+    build:
       context: ./server
       dockerfile: Dockerfile
+    command: uvicorn main:app --host 0.0.0.0 --port 8000
     ports:
-      - "8081:8080"  # Keep backend on 8080
+      - "8000:8000"
     depends_on:
       db:
         condition: service_healthy
-    volumes:
-      - ./server:/app
-    command: >
-      bash -c "
-        python init_migrations.py &&
-        uvicorn app.main:app --host 0.0.0.0 --port 8080
-      "
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      - API_SECRET_KEY=${API_SECRET_KEY}
     networks:
       - app-network
-    logging:
-      driver: local
-      options:
-        max-size: "10m"  # Maximum size of log file
-        max-file: "3"    # Maximum number of log files
+
+  bot:
+    build:
+      context: ./bot
+      dockerfile: Dockerfile
+    depends_on:
+      - server
+    environment:
+      - BOT_TOKEN=${BOT_TOKEN}
+      - SERVER_HOST=http://server:8000
+      - API_SECRET_KEY=${API_SECRET_KEY}
+    networks:
+      - app-network
+
 volumes:
   pgdata:
 

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Response
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import SQLAlchemyError, IntegrityError
 from sqlalchemy import text
@@ -21,10 +21,10 @@ user_router = APIRouter(prefix="/users", tags=["users"])
 @user_router.post(
     "/",
     response_model=UserResponse,
-    status_code=status.HTTP_201_CREATED
 )
 async def create_or_update_user(
     user_data: UserCreate,
+    response: Response,
     db: Session = Depends(get_db)
 ):
     """
@@ -40,14 +40,14 @@ async def create_or_update_user(
                 f"API: Создан новый пользователь "
                 f"telegram_id={user_data.telegram_id}"
             )
-            return user
+            response.status_code = status.HTTP_201_CREATED
         else:
             logger.info(
                 f"API: Обновлен пользователь "
                 f"telegram_id={user_data.telegram_id}"
             )
-            # Возвращаем статус 200 для обновления
-            return user
+            response.status_code = status.HTTP_200_OK
+        return user
 
     except IntegrityError as e:
         logger.error(
@@ -135,5 +135,5 @@ async def get_all_users(
     Получить список всех пользователей с пагинацией.
     """
     user_crud = UserCRUD(db)
-    users = user_crud.get_all_users()
+    users = user_crud.get_all_users(skip=skip, limit=limit)
     return users

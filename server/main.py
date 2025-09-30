@@ -1,4 +1,8 @@
 from fastapi import FastAPI
+from dotenv import load_dotenv
+
+# Загружаем переменные окружения перед импортом настроек
+load_dotenv()
 
 from app.core.config import settings
 from app.core.middleware import setup_middleware, setup_exception_handlers

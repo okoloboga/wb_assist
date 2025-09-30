@@ -84,16 +84,16 @@ class UserCRUD:
             logger.info(f"Создан новый пользователь: {user_data.telegram_id}")
             return new_user, True
 
-    def get_all_users(self) -> list[User]:
-        """Получить всех пользователей"""
-        return self.db.query(User).all()
+    def get_all_users(self, skip: int = 0, limit: int = 100) -> list[User]:
+        """Получить всех пользователей с пагинацией"""
+        return self.db.query(User).offset(skip).limit(limit).all()
 
     def get_users_count(self) -> int:
         """Получить количество пользователей"""
         return self.db.query(User).count()
 
-    async def get_total_users(self) -> int:
-        """Получить общее количество пользователей (асинхронная версия)"""
+    def get_total_users(self) -> int:
+        """Получить общее количество пользователей"""
         return self.db.query(User).count()
 
 

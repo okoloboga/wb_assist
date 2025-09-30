@@ -17,7 +17,7 @@ async def get_stats(db: Session = Depends(get_db)):
     Получение общей статистики системы.
     """
     user_crud = UserCRUD(db)
-    total_users = await user_crud.get_total_users()
+    total_users = user_crud.get_total_users()
     
     return JSONResponse(
         status_code=200,
