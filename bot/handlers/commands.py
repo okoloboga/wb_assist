@@ -1,5 +1,5 @@
 from aiogram import Router, F
-from aiogram.types import CallbackQuery
+from aiogram.types import CallbackQuery, User
 
 from ..keyboards.keyboards import (
     main_keyboard,
@@ -51,13 +51,23 @@ section_titles = {
     "settings": "⚙️ Настройки\n\nУправление подключениями, доступами и уведомлениями."
 }
 
+
+async def get_section_text(menu_name: str, user: User) -> str:
+    """
+    Возвращает текст для указанного раздела меню, форматируя его при необходимости.
+    """
+    text_template = section_titles.get(menu_name, "")
+
+    if 'user_name' in text_template:
+        user_name = f"{user.first_name} {user.last_name or ''}".strip()
+        return text_template.format(user_name=user_name)
+    
+    return text_template
+
+
 @router.callback_query(F.data == "connect_wb")
 async def connect_wb_callback(callback: CallbackQuery):
-    user = callback.from_user
-    user_name = f"{user.first_name} {user.last_name or ''}".strip()
-
-    text = section_titles["wb_menu"].format(user_name=user_name)
-
+    text = await get_section_text("wb_menu", callback.from_user)
     await callback.message.edit_text(
         text,
         reply_markup=wb_menu_keyboard()
@@ -84,16 +94,18 @@ async def menu_callback(callback: CallbackQuery):
     data = callback.data
 
     if data in keyboards_map:
+        text = await get_section_text(data, callback.from_user)
         await callback.message.edit_text(
-            section_titles.get(data, ""),
+            text,
             reply_markup=keyboards_map[data]()
         )
         await callback.answer()
 
     elif data.startswith("back_"):
         target_menu = navigation.get(data.replace("back_", ""), "main")
+        text = await get_section_text(target_menu, callback.from_user)
         await callback.message.edit_text(
-            section_titles.get(target_menu, ""),
+            text,
             reply_markup=keyboards_map[target_menu]()
         )
         await callback.answer()
