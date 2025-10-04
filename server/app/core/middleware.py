@@ -4,6 +4,7 @@ from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse
 import logging
 import time
+import os
 
 # Настройка логирования
 logger = logging.getLogger(__name__)
@@ -25,8 +26,11 @@ def setup_middleware(app: FastAPI):
         # 2. Проверяем секретный ключ API, пропуская health-check
         if request.url.path not in ['/system/health', '/docs', '/openapi.json']:
             secret_header = request.headers.get("X-API-SECRET-KEY")
-            if not secret_header or secret_header != settings.API_SECRET_KEY:
+            # Используем ключ из переменной окружения напрямую
+            expected_key = os.getenv('API_SECRET_KEY') or settings.API_SECRET_KEY
+            if not secret_header or secret_header != expected_key:
                 logger.warning(f"Forbidden access attempt to {request.url.path} from {request.client.host}")
+                logger.warning(f"Expected key: {expected_key}, Got: {secret_header}")
                 return JSONResponse(
                     status_code=status.HTTP_403_FORBIDDEN,
                     content={"detail": "Invalid or missing API Secret Key"}

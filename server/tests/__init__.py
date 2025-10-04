@@ -1,0 +1,1 @@
+# Тесты для wb_assist server

@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator
 from datetime import datetime
 from typing import Optional
 
@@ -18,7 +18,8 @@ class UserCreate(BaseModel):
         None, min_length=1, max_length=64, description="Фамилия пользователя"
     )
 
-    @validator('username')
+    @field_validator('username')
+    @classmethod
     def validate_username(cls, v):
         if v is not None:
             # Убираем @ если он есть в начале
@@ -32,13 +33,15 @@ class UserCreate(BaseModel):
                 )
         return v
 
-    @validator('first_name', 'last_name')
+    @field_validator('first_name', 'last_name')
+    @classmethod
     def validate_names(cls, v):
         if v is not None and v.strip() == '':
             raise ValueError('Имя не может быть пустым')
         return v.strip() if v else v
 
-    @validator('telegram_id')
+    @field_validator('telegram_id')
+    @classmethod
     def validate_telegram_id(cls, v):
         if v <= 0:
             raise ValueError('Telegram ID должен быть положительным числом')
@@ -54,8 +57,7 @@ class UserResponse(BaseModel):
     created_at: datetime
     updated_at: Optional[datetime]
 
-    class Config:
-        from_attributes = True
+    model_config = {"from_attributes": True}
 
 
 class UserUpdate(BaseModel):
@@ -63,7 +65,8 @@ class UserUpdate(BaseModel):
     first_name: Optional[str] = Field(None, min_length=1, max_length=64)
     last_name: Optional[str] = Field(None, min_length=1, max_length=64)
 
-    @validator('username')
+    @field_validator('username')
+    @classmethod
     def validate_username(cls, v):
         if v is not None:
             if v.startswith('@'):
@@ -75,7 +78,8 @@ class UserUpdate(BaseModel):
                 )
         return v
 
-    @validator('first_name', 'last_name')
+    @field_validator('first_name', 'last_name')
+    @classmethod
     def validate_names(cls, v):
         if v is not None and v.strip() == '':
             raise ValueError('Имя не может быть пустым')

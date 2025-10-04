@@ -1,7 +1,7 @@
 from sqlalchemy.orm import Session
 from .models import User
 from .schemas import UserCreate, UserUpdate
-from datetime import datetime
+from datetime import datetime, timezone
 import logging
 
 # Настройка логирования
@@ -45,11 +45,11 @@ class UserCRUD:
             return None
 
         # Обновляем только переданные поля
-        update_dict = update_data.dict(exclude_unset=True)
+        update_dict = update_data.model_dump(exclude_unset=True)
         for field, value in update_dict.items():
             setattr(user, field, value)
 
-        user.updated_at = datetime.utcnow()
+        user.updated_at = datetime.now(timezone.utc)
         self.db.commit()
         self.db.refresh(user)
         logger.info(f"Обновлен пользователь: {telegram_id}")
@@ -69,7 +69,7 @@ class UserCRUD:
             existing_user.username = user_data.username
             existing_user.first_name = user_data.first_name
             existing_user.last_name = user_data.last_name
-            existing_user.updated_at = datetime.utcnow()
+            existing_user.updated_at = datetime.now(timezone.utc)
 
             self.db.commit()
             self.db.refresh(existing_user)
