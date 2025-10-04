@@ -1,5 +1,6 @@
 from sqlalchemy import Column, Integer, String, DateTime, BigInteger
 from sqlalchemy.sql import func
+from sqlalchemy.orm import relationship
 from ...core.database import Base
 
 
@@ -13,6 +14,9 @@ class User(Base):
     last_name = Column(String(100), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    # Связи
+    wb_cabinets = relationship("WBCabinet", back_populates="user", cascade="all, delete-orphan")
 
     def __repr__(self):
         return f"<User {self.telegram_id} - {self.username}>"

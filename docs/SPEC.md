@@ -196,3 +196,21 @@
 * Покрытие не менее **80%**.
 * Snapshot тесты для AI-ответов и шаблонов.
 
+---
+
+### 6. Ссылки на все Swagger
+
+https://dev.wildberries.ru/swagger/general 
+https://dev.wildberries.ru/swagger/products 
+https://dev.wildberries.ru/swagger/orders-fbs 
+https://dev.wildberries.ru/swagger/orders-dbw 
+https://dev.wildberries.ru/swagger/orders-dbs 
+https://dev.wildberries.ru/swagger/in-store-pickup 
+https://dev.wildberries.ru/swagger/orders-fbw 
+https://dev.wildberries.ru/swagger/promotion 
+https://dev.wildberries.ru/swagger/communications 
+https://dev.wildberries.ru/swagger/tariffs 
+https://dev.wildberries.ru/swagger/analytics 
+https://dev.wildberries.ru/swagger/reports 
+https://dev.wildberries.ru/swagger/finances 
+

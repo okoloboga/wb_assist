@@ -84,7 +84,7 @@ class TestUserModel:
 
     def test_user_created_at_auto_set(self, db_session):
         """Тест автоматической установки created_at"""
-        before_creation = datetime.utcnow()  # Используем naive datetime для сравнения
+        before_creation = datetime.now(timezone.utc)  # Используем timezone-aware datetime
         
         user = User(
             telegram_id=123456789,
@@ -95,7 +95,7 @@ class TestUserModel:
         db_session.commit()
         db_session.refresh(user)
         
-        after_creation = datetime.utcnow()  # Используем naive datetime для сравнения
+        after_creation = datetime.now(timezone.utc)  # Используем timezone-aware datetime
         
         assert user.created_at is not None
         # Проверяем что created_at находится в разумных пределах (с запасом в 5 секунд)
