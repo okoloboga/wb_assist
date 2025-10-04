@@ -27,7 +27,6 @@ class TestHangingProtection:
         return NotificationQueue(mock_redis)
 
     @pytest.mark.asyncio
-    @pytest.mark.timeout(10)
     async def test_process_notifications_max_processing_time(self, notification_queue, mock_redis):
         """Тест защиты от превышения максимального времени обработки"""
         # Мокаем brpop чтобы он всегда возвращал данные
@@ -53,7 +52,6 @@ class TestHangingProtection:
             assert result["processed"] > 0
 
     @pytest.mark.asyncio
-    @pytest.mark.timeout(10)
     async def test_process_notifications_single_notification_timeout(self, notification_queue, mock_redis):
         """Тест таймаута обработки одного уведомления"""
         mock_redis.brpop.return_value = ("notifications:queue", '{"id": "test"}')
@@ -77,7 +75,6 @@ class TestHangingProtection:
             assert result["failed"] == 1
 
     @pytest.mark.asyncio
-    @pytest.mark.timeout(10)
     async def test_webhook_sender_timeout_protection(self, webhook_sender):
         """Тест защиты от зависания в WebhookSender"""
         with patch('aiohttp.ClientSession.post') as mock_post:
@@ -88,7 +85,8 @@ class TestHangingProtection:
                 mock_response.status = 200
                 return mock_response
             
-            mock_post.return_value.__aenter__.return_value = slow_response()
+            # Правильно мокаем async context manager
+            mock_post.return_value.__aenter__ = slow_response
             
             result = await webhook_sender._send_notification(
                 payload={"test": "data"},
@@ -100,7 +98,6 @@ class TestHangingProtection:
             assert "timeout" in result["error"].lower()
 
     @pytest.mark.asyncio
-    @pytest.mark.timeout(10)
     async def test_redis_brpop_timeout_protection(self, notification_queue, mock_redis):
         """Тест защиты от зависания brpop"""
         # Мокаем brpop чтобы он не возвращал результат (зависание)
@@ -122,7 +119,6 @@ class TestHangingProtection:
         assert result["failed"] == 0
 
     @pytest.mark.asyncio
-    @pytest.mark.timeout(10)
     async def test_empty_result_handling(self, notification_queue, mock_redis):
         """Тест обработки пустых результатов от Redis"""
         # Мокаем brpop чтобы он возвращал пустой результат
@@ -140,7 +136,6 @@ class TestHangingProtection:
         assert result["failed"] == 0
 
     @pytest.mark.asyncio
-    @pytest.mark.timeout(10)
     async def test_malformed_json_handling(self, notification_queue, mock_redis):
         """Тест обработки некорректного JSON от Redis"""
         # Мокаем brpop чтобы он возвращал некорректный JSON

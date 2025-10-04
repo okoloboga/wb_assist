@@ -62,12 +62,14 @@ class TestBotAPIService:
     @pytest.mark.asyncio
     async def test_get_user_cabinet_success(self, bot_service, mock_db_session, sample_user, sample_cabinet):
         """Тест успешного получения кабинета пользователя"""
-        mock_db_session.query.return_value.filter.return_value.first.return_value = sample_cabinet
+        # Настраиваем моки для двух запросов: User и WBCabinet
+        mock_query = mock_db_session.query
+        mock_query.return_value.filter.return_value.first.side_effect = [sample_user, sample_cabinet]
         
         result = await bot_service.get_user_cabinet(sample_user.telegram_id)
         
         assert result == sample_cabinet
-        mock_db_session.query.assert_called_once()
+        assert mock_db_session.query.call_count == 2  # User + WBCabinet
 
     @pytest.mark.asyncio
     async def test_get_user_cabinet_not_found(self, bot_service, mock_db_session, sample_user):
@@ -373,7 +375,7 @@ class TestBotAPIService:
             
             assert result["success"] is False
             assert "error" in result
-            assert "Ошибка базы данных" in result["error"]
+            assert "Ошибка сервера" in result["error"]
 
     @pytest.mark.asyncio
     async def test_error_handling_general_error(self, bot_service, mock_db_session, sample_cabinet, mock_cache_manager):

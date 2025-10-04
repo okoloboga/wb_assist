@@ -201,7 +201,14 @@ class NotificationQueue:
                     break
                 
                 _, notification_json = result
-                notification = self._deserialize_notification(notification_json)
+                
+                try:
+                    notification = self._deserialize_notification(notification_json)
+                except Exception as e:
+                    logger.error(f"Ошибка десериализации уведомления: {e}")
+                    failed += 1
+                    processed += 1
+                    continue
                 
                 try:
                     # Ограничиваем время обработки одного уведомления

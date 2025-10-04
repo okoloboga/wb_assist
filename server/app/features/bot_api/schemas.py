@@ -405,3 +405,69 @@ class SyncRequest(BaseModel):
     @validator('telegram_id')
     def validate_telegram_id(cls, v):
         return BotAPISchemas.validate_telegram_id(v)
+
+
+# ===== СХЕМЫ ОТВЕТОВ ДЛЯ API ENDPOINTS =====
+
+class DashboardResponse(BaseModel):
+    """Ответ dashboard endpoint"""
+    status: str
+    message: Optional[str] = None
+    dashboard: Optional[DashboardData] = None
+    telegram_text: Optional[str] = None
+
+
+class OrdersResponse(BaseModel):
+    """Ответ orders/recent endpoint"""
+    status: str
+    message: Optional[str] = None
+    orders: Optional[List[OrderData]] = None
+    pagination: Optional[PaginationData] = None
+    telegram_text: Optional[str] = None
+
+
+class OrderDetailResponse(BaseModel):
+    """Ответ orders/{order_id} endpoint"""
+    status: str
+    message: Optional[str] = None
+    order: Optional[OrderData] = None
+    telegram_text: Optional[str] = None
+
+
+class CriticalStocksAPIResponse(BaseModel):
+    """Ответ stocks/critical endpoint"""
+    status: str
+    message: Optional[str] = None
+    stocks: Optional[CriticalStocksResponse] = None
+    telegram_text: Optional[str] = None
+
+
+class ReviewsSummaryAPIResponse(BaseModel):
+    """Ответ reviews/summary endpoint"""
+    status: str
+    message: Optional[str] = None
+    reviews: Optional[ReviewsResponse] = None
+    telegram_text: Optional[str] = None
+
+
+class AnalyticsSalesAPIResponse(BaseModel):
+    """Ответ analytics/sales endpoint"""
+    status: str
+    message: Optional[str] = None
+    analytics: Optional[AnalyticsResponse] = None
+    telegram_text: Optional[str] = None
+
+
+class SyncResponse(BaseModel):
+    """Ответ sync/start endpoint"""
+    status: str
+    message: str
+    sync_id: Optional[str] = None
+
+
+class SyncStatusResponse(BaseModel):
+    """Ответ sync/status endpoint"""
+    status: str
+    message: Optional[str] = None
+    sync_status: Optional[SyncStatusData] = None
+    telegram_text: Optional[str] = None

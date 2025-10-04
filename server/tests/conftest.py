@@ -11,6 +11,7 @@ from app.core.database import Base, get_db
 from app.core.config import settings
 from app.features.user.models import User
 from app.features.user.schemas import UserCreate
+from app.features.wb_api.models import WBCabinet, WBOrder, WBProduct, WBStock, WBReview, WBAnalyticsCache
 from main import app
 
 # Отладочная информация
@@ -150,3 +151,233 @@ def multiple_users(db_session):
         db_session.refresh(user)
     
     return users
+
+# ===== ФИКСТУРЫ ДЛЯ BOT_API ТЕСТОВ =====
+
+@pytest.fixture
+def test_user_with_cabinet(db_session):
+    """Фикстура с пользователем и WB кабинетом"""
+    # Создаем пользователя
+    user = User(
+        telegram_id=12345,
+        username="test_user",
+        first_name="Тест",
+        last_name="Пользователь"
+    )
+    db_session.add(user)
+    db_session.commit()
+    db_session.refresh(user)
+    
+    # Создаем WB кабинет
+    cabinet = WBCabinet(
+        user_id=user.id,
+        api_key="test_api_key_12345",
+        cabinet_name="Test Cabinet",
+        is_active=True
+    )
+    db_session.add(cabinet)
+    db_session.commit()
+    db_session.refresh(cabinet)
+    
+    return user, cabinet
+
+@pytest.fixture
+def test_orders_data(db_session, test_user_with_cabinet):
+    """Фикстура с тестовыми заказами"""
+    user, cabinet = test_user_with_cabinet
+    
+    orders_data = [
+        {
+            "cabinet_id": cabinet.id,
+            "order_id": "12345",
+            "total_price": 1500.0,
+            "order_date": datetime.now(),
+            "nm_id": 1001,
+            "is_cancel": False,
+            "is_realization": False,
+            "brand": "Test Brand",
+            "name": "Тестовый товар 1"
+        },
+        {
+            "cabinet_id": cabinet.id,
+            "order_id": "12346", 
+            "total_price": 2300.0,
+            "order_date": datetime.now(),
+            "nm_id": 1002,
+            "is_cancel": False,
+            "is_realization": False,
+            "brand": "Test Brand",
+            "name": "Тестовый товар 2"
+        }
+    ]
+    
+    orders = []
+    for order_data in orders_data:
+        order = WBOrder(**order_data)
+        db_session.add(order)
+        orders.append(order)
+    
+    db_session.commit()
+    for order in orders:
+        db_session.refresh(order)
+    
+    return orders
+
+@pytest.fixture
+def test_products_data(db_session, test_user_with_cabinet):
+    """Фикстура с тестовыми товарами"""
+    user, cabinet = test_user_with_cabinet
+    
+    products_data = [
+        {
+            "cabinet_id": cabinet.id,
+            "nm_id": 1001,
+            "name": "Тестовый товар 1",
+            "brand": "Test Brand",
+            "subject": "Электроника",
+            "is_active": True
+        },
+        {
+            "cabinet_id": cabinet.id,
+            "nm_id": 1002,
+            "name": "Тестовый товар 2", 
+            "brand": "Test Brand",
+            "subject": "Одежда",
+            "is_active": True
+        }
+    ]
+    
+    products = []
+    for product_data in products_data:
+        product = WBProduct(**product_data)
+        db_session.add(product)
+        products.append(product)
+    
+    db_session.commit()
+    for product in products:
+        db_session.refresh(product)
+    
+    return products
+
+@pytest.fixture
+def test_stocks_data(db_session, test_user_with_cabinet):
+    """Фикстура с тестовыми остатками"""
+    user, cabinet = test_user_with_cabinet
+    
+    stocks_data = [
+        {
+            "cabinet_id": cabinet.id,
+            "nm_id": 1001,
+            "warehouse_id": 1,
+            "size": "S",
+            "quantity": 5,
+            "last_change_date": datetime.now()
+        },
+        {
+            "cabinet_id": cabinet.id,
+            "nm_id": 1001,
+            "warehouse_id": 1, 
+            "size": "M",
+            "quantity": 0,  # Критический остаток
+            "last_change_date": datetime.now()
+        },
+        {
+            "cabinet_id": cabinet.id,
+            "nm_id": 1002,
+            "warehouse_id": 1,
+            "size": "L",
+            "quantity": 2,
+            "last_change_date": datetime.now()
+        }
+    ]
+    
+    stocks = []
+    for stock_data in stocks_data:
+        stock = WBStock(**stock_data)
+        db_session.add(stock)
+        stocks.append(stock)
+    
+    db_session.commit()
+    for stock in stocks:
+        db_session.refresh(stock)
+    
+    return stocks
+
+@pytest.fixture
+def test_reviews_data(db_session, test_user_with_cabinet):
+    """Фикстура с тестовыми отзывами"""
+    user, cabinet = test_user_with_cabinet
+    
+    reviews_data = [
+        {
+            "cabinet_id": cabinet.id,
+            "nm_id": 1001,
+            "review_id": "rev_001",
+            "rating": 5,
+            "text": "Отличный товар!",
+            "created_at": datetime.now(),
+            "is_answered": False
+        },
+        {
+            "cabinet_id": cabinet.id,
+            "nm_id": 1001,
+            "review_id": "rev_002",
+            "rating": 3,
+            "text": "Нормально",
+            "created_at": datetime.now(),
+            "is_answered": True
+        },
+        {
+            "cabinet_id": cabinet.id,
+            "nm_id": 1002,
+            "review_id": "rev_003",
+            "rating": 4,
+            "text": "Хорошо",
+            "created_at": datetime.now(),
+            "is_answered": False
+        }
+    ]
+    
+    reviews = []
+    for review_data in reviews_data:
+        review = WBReview(**review_data)
+        db_session.add(review)
+        reviews.append(review)
+    
+    db_session.commit()
+    for review in reviews:
+        db_session.refresh(review)
+    
+    return reviews
+
+@pytest.fixture
+def mock_redis():
+    """Фикстура с моком Redis"""
+    from unittest.mock import AsyncMock
+    redis = AsyncMock()
+    redis.get.return_value = None
+    redis.set.return_value = True
+    redis.ping.return_value = True
+    redis.info.return_value = {"used_memory": 1024}
+    redis.dbsize.return_value = 0
+    redis.scan_iter.return_value = []
+    return redis
+
+@pytest.fixture
+def mock_wb_client():
+    """Фикстура с моком WB API клиента"""
+    from unittest.mock import AsyncMock, patch
+    
+    with patch('app.features.wb_api.client.WBAPIClient') as mock:
+        client = AsyncMock()
+        client.get_orders.return_value = [
+            {"orderId": "123", "totalPrice": 1000, "createdAt": "2024-01-01T10:00:00Z"}
+        ]
+        client.get_stocks.return_value = [
+            {"nmId": 1001, "quantity": 5, "warehouseId": 1}
+        ]
+        client.get_reviews.return_value = {
+            "data": {"feedbacks": [{"id": "rev_001", "rating": 5}]}
+        }
+        mock.return_value = client
+        yield client

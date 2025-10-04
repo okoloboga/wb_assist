@@ -480,3 +480,93 @@ class BotMessageFormatter:
             truncated = truncated[:last_newline]
         
         return truncated + "..."
+
+    def format_order_detail(self, data: Dict[str, Any]) -> str:
+        """Форматирование детального отчета заказа"""
+        try:
+            order = data.get("order", {})
+            if not order:
+                return "❌ Данные заказа не найдены"
+            
+            # Основная информация
+            order_id = order.get("id", "N/A")
+            order_date = self._format_datetime(order.get("date", ""))
+            brand = order.get("brand", "Неизвестно")
+            product_name = order.get("product_name", "Неизвестно")
+            nm_id = order.get("nm_id", "N/A")
+            supplier_article = order.get("supplier_article", "")
+            size = order.get("size", "")
+            barcode = order.get("barcode", "")
+            warehouse_from = order.get("warehouse_from", "")
+            warehouse_to = order.get("warehouse_to", "")
+            
+            # Финансовая информация
+            order_amount = order.get("order_amount", 0)
+            commission_percent = order.get("commission_percent", 0)
+            commission_amount = order.get("commission_amount", 0)
+            spp_percent = order.get("spp_percent", 0)
+            customer_price = order.get("customer_price", 0)
+            logistics_amount = order.get("logistics_amount", 0)
+            
+            # Логистика
+            dimensions = order.get("dimensions", "")
+            volume_liters = order.get("volume_liters", 0)
+            warehouse_rate_per_liter = order.get("warehouse_rate_per_liter", 0)
+            warehouse_rate_extra = order.get("warehouse_rate_extra", 0)
+            
+            # Рейтинги и отзывы
+            rating = order.get("rating", 0)
+            reviews_count = order.get("reviews_count", 0)
+            
+            # Статистика
+            buyout_rates = order.get("buyout_rates", {})
+            order_speed = order.get("order_speed", {})
+            sales_periods = order.get("sales_periods", {})
+            category_availability = order.get("category_availability", "")
+            
+            # Остатки
+            stocks = order.get("stocks", {})
+            stock_days = order.get("stock_days", {})
+            
+            # Формируем сообщение
+            message = f"🧾 Заказ [#{order_id}] {order_date}\n\n"
+            message += f"👑 {brand} ({brand})\n"
+            message += f"✏ Название: {product_name}\n"
+            message += f"🆔 {nm_id} / {supplier_article} / ({size})\n"
+            message += f"🎹 {barcode}\n"
+            message += f"🚛 {warehouse_from} ⟶ {warehouse_to}\n"
+            message += f"💰 Цена заказа: {order_amount:,.0f}₽\n"
+            message += f"💶 Комиссия WB: {commission_percent}% ({commission_amount:,.0f}₽)\n"
+            message += f"🛍 СПП: {spp_percent}% (Цена для покупателя: {customer_price:,.0f}₽)\n"
+            message += f"💶 Логистика WB: {logistics_amount:,.1f}₽\n"
+            message += f"        Габариты: {dimensions}. ({volume_liters}л.)\n"
+            message += f"        Тариф склада: {warehouse_rate_per_liter:,.1f}₽ за 1л. | {warehouse_rate_extra:,.1f}₽ за л. свыше)\n"
+            message += f"🌟 Оценка: {rating}\n"
+            message += f"💬 Отзывы: {reviews_count}\n"
+            
+            # Выкуп и скорость заказов
+            message += f"⚖️ Выкуп/с учетом возврата (7/14/30):\n"
+            message += f"        {buyout_rates.get('7_days', 0):.1f}% / {buyout_rates.get('14_days', 0):.1f}% / {buyout_rates.get('30_days', 0):.1f}%\n"
+            message += f"💠 Скорость заказов за 7/14/30 дней:\n"
+            message += f"        {order_speed.get('7_days', 0):.2f} | {order_speed.get('14_days', 0):.1f} | {order_speed.get('30_days', 0):.1f} шт. в день\n"
+            
+            # Продажи
+            message += f"📖 Продаж за 7 / 14 / 30 / 60 / 90 дней:\n"
+            message += f"        {sales_periods.get('7_days', 0)} | {sales_periods.get('14_days', 0)} | {sales_periods.get('30_days', 0)} | {sales_periods.get('60_days', 0)} | {sales_periods.get('90_days', 0)} шт.\n"
+            
+            # Оборачиваемость
+            message += f"💈 Оборачиваемость категории 90:\n"
+            message += f"        {category_availability}\n"
+            
+            # Остатки
+            message += f"📦 Остаток:\n"
+            for size in ["L", "M", "S", "XL"]:
+                stock_count = stocks.get(size, 0)
+                stock_days_count = stock_days.get(size, 0)
+                message += f"        {size} ({stock_count} шт.) ≈ на {stock_days_count} дн.\n"
+            
+            return self._truncate_message(message)
+            
+        except Exception as e:
+            logger.error(f"Ошибка форматирования детального отчета заказа: {e}")
+            return "❌ Ошибка форматирования детального отчета заказа"

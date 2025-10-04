@@ -1,7 +1,7 @@
 from aiogram import Router, F
-from aiogram.types import CallbackQuery, User
+from aiogram.types import CallbackQuery, User, InlineKeyboardMarkup, InlineKeyboardButton
 
-from ..keyboards.keyboards import (
+from keyboards.keyboards import (
     main_keyboard,
     wb_menu_keyboard,
     analytics_keyboard,
@@ -67,11 +67,38 @@ async def get_section_text(menu_name: str, user: User) -> str:
 
 @router.callback_query(F.data == "connect_wb")
 async def connect_wb_callback(callback: CallbackQuery):
-    text = await get_section_text("wb_menu", callback.from_user)
-    await callback.message.edit_text(
-        text,
-        reply_markup=wb_menu_keyboard()
+    # Проверяем, есть ли уже подключенный кабинет
+    from api.client import bot_api_client
+    
+    response = await bot_api_client.get_cabinet_status(
+        user_id=callback.from_user.id
     )
+    
+    if response.success and response.data:
+        # Кабинет уже подключен, показываем дашборд
+        text = await get_section_text("wb_menu", callback.from_user)
+        await callback.message.edit_text(
+            text,
+            reply_markup=wb_menu_keyboard()
+        )
+    else:
+        # Кабинет не подключен, показываем меню подключения
+        await callback.message.edit_text(
+            "🔑 ПОДКЛЮЧЕНИЕ WB КАБИНЕТА\n\n"
+            "Для работы с ботом необходимо подключить кабинет Wildberries.\n\n"
+            "Выберите действие:",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(
+                    text="🔑 Подключить кабинет",
+                    callback_data="settings_api_key"
+                )],
+                [InlineKeyboardButton(
+                    text="ℹ️ Помощь",
+                    callback_data="help"
+                )]
+            ])
+        )
+    
     await callback.answer()
 
 

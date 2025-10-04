@@ -2,8 +2,8 @@ from aiogram import Router
 from aiogram.types import Message
 from aiogram.filters import Command
 
-from ..keyboards.keyboards import main_keyboard, wb_menu_keyboard
-from ..api.client import register_user_on_server
+from keyboards.keyboards import main_keyboard, wb_menu_keyboard
+from api.client import register_user_on_server
 
 router = Router()
 

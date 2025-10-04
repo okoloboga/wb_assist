@@ -109,3 +109,220 @@ def settings_keyboard() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="🌐 Интеграции (Google Sheets, Docs)", callback_data="settings_integrations")],
         [InlineKeyboardButton(text="🔙 Назад", callback_data="back_settings")]
     ])
+
+
+# Динамические клавиатуры для обработчиков
+
+def create_orders_keyboard(orders: list, offset: int = 0, has_more: bool = False) -> InlineKeyboardMarkup:
+    """Создать клавиатуру для списка заказов"""
+    buttons = []
+    
+    # Кнопки для каждого заказа
+    for order in orders[:5]:  # Показываем максимум 5 заказов
+        order_text = f"#{order.get('id', 'N/A')} | {order.get('amount', 0):,}₽"
+        callback_data = f"order_details_{order.get('id', 'N/A')}"
+        buttons.append([InlineKeyboardButton(
+            text=order_text,
+            callback_data=callback_data
+        )])
+    
+    # Навигационные кнопки
+    nav_buttons = []
+    if offset > 0:
+        nav_buttons.append(InlineKeyboardButton(
+            text="⬅️ Назад",
+            callback_data=f"orders_page_{max(0, offset-10)}"
+        ))
+    
+    if has_more:
+        nav_buttons.append(InlineKeyboardButton(
+            text="Вперед ➡️",
+            callback_data=f"orders_page_{offset+10}"
+        ))
+    
+    if nav_buttons:
+        buttons.append(nav_buttons)
+    
+    # Кнопка возврата
+    buttons.append([InlineKeyboardButton(
+        text="🔙 Назад к меню",
+        callback_data="back_analytics"
+    )])
+    
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def create_stocks_keyboard(has_more: bool = False, offset: int = 0) -> InlineKeyboardMarkup:
+    """Создать клавиатуру для остатков"""
+    buttons = []
+    
+    # Навигационные кнопки
+    if offset > 0 or has_more:
+        nav_buttons = []
+        if offset > 0:
+            nav_buttons.append(InlineKeyboardButton(
+                text="⬅️ Назад",
+                callback_data=f"stocks_page_{max(0, offset-20)}"
+            ))
+        
+        if has_more:
+            nav_buttons.append(InlineKeyboardButton(
+                text="Вперед ➡️",
+                callback_data=f"stocks_page_{offset+20}"
+            ))
+        
+        if nav_buttons:
+            buttons.append(nav_buttons)
+    
+    # Кнопки действий
+    buttons.extend([
+        [InlineKeyboardButton(
+            text="🔄 Обновить",
+            callback_data="refresh_stocks"
+        )],
+        [InlineKeyboardButton(
+            text="📊 Прогноз остатков",
+            callback_data="stock_forecast"
+        )],
+        [InlineKeyboardButton(
+            text="🔙 Назад к меню",
+            callback_data="back_stock"
+        )]
+    ])
+    
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def create_reviews_keyboard(has_more: bool = False, offset: int = 0) -> InlineKeyboardMarkup:
+    """Создать клавиатуру для отзывов"""
+    buttons = []
+    
+    # Навигационные кнопки
+    if offset > 0 or has_more:
+        nav_buttons = []
+        if offset > 0:
+            nav_buttons.append(InlineKeyboardButton(
+                text="⬅️ Назад",
+                callback_data=f"reviews_page_{max(0, offset-10)}"
+            ))
+        
+        if has_more:
+            nav_buttons.append(InlineKeyboardButton(
+                text="Вперед ➡️",
+                callback_data=f"reviews_page_{offset+10}"
+            ))
+        
+        if nav_buttons:
+            buttons.append(nav_buttons)
+    
+    # Кнопки действий
+    buttons.extend([
+        [InlineKeyboardButton(
+            text="🔄 Обновить",
+            callback_data="refresh_reviews"
+        )],
+        [InlineKeyboardButton(
+            text="🤖 Автоответы",
+            callback_data="auto_answers"
+        )],
+        [InlineKeyboardButton(
+            text="🔙 Назад к меню",
+            callback_data="back_reviews"
+        )]
+    ])
+    
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def create_analytics_keyboard(period: str = "7d") -> InlineKeyboardMarkup:
+    """Создать клавиатуру для аналитики"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text="📅 7 дней" if period != "7d" else "✅ 7 дней",
+                callback_data="analytics_period_7d"
+            ),
+            InlineKeyboardButton(
+                text="📅 30 дней" if period != "30d" else "✅ 30 дней",
+                callback_data="analytics_period_30d"
+            ),
+            InlineKeyboardButton(
+                text="📅 90 дней" if period != "90d" else "✅ 90 дней",
+                callback_data="analytics_period_90d"
+            )
+        ],
+        [InlineKeyboardButton(
+            text="🔄 Обновить",
+            callback_data="refresh_analytics"
+        )],
+        [InlineKeyboardButton(
+            text="📊 Динамика",
+            callback_data="dynamics"
+        )],
+        [InlineKeyboardButton(
+            text="💰 Конверсия",
+            callback_data="avg_check"
+        )],
+        [InlineKeyboardButton(
+            text="🔙 Назад к меню",
+            callback_data="back_analytics"
+        )]
+    ])
+
+
+def create_sync_keyboard(sync_id: str = None) -> InlineKeyboardMarkup:
+    """Создать клавиатуру для синхронизации"""
+    buttons = []
+    
+    if sync_id:
+        buttons.append([InlineKeyboardButton(
+            text="🔄 Обновить статус",
+            callback_data=f"sync_status_{sync_id}"
+        )])
+    
+    buttons.extend([
+        [InlineKeyboardButton(
+            text="🔄 Запустить синхронизацию",
+            callback_data="start_sync"
+        )],
+        [InlineKeyboardButton(
+            text="📊 Статус синхронизации",
+            callback_data="sync_status"
+        )],
+        [InlineKeyboardButton(
+            text="🔙 Назад к меню",
+            callback_data="back_analytics"
+        )]
+    ])
+    
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def create_notification_keyboard() -> InlineKeyboardMarkup:
+    """Создать клавиатуру для настроек уведомлений"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(
+            text="🔔 Новые заказы",
+            callback_data="toggle_orders_notifications"
+        )],
+        [InlineKeyboardButton(
+            text="⚠️ Критичные остатки",
+            callback_data="toggle_stocks_notifications"
+        )],
+        [InlineKeyboardButton(
+            text="⭐ Новые отзывы",
+            callback_data="toggle_reviews_notifications"
+        )],
+        [InlineKeyboardButton(
+            text="🔄 Синхронизация",
+            callback_data="toggle_sync_notifications"
+        )],
+        [InlineKeyboardButton(
+            text="🧪 Тестовое уведомление",
+            callback_data="test_notification"
+        )],
+        [InlineKeyboardButton(
+            text="🔙 Назад к настройкам",
+            callback_data="back_settings"
+        )]
+    ])

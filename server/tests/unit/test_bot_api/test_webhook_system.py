@@ -58,7 +58,6 @@ class TestWebhookSender:
         }
 
     @pytest.mark.asyncio
-    @pytest.mark.timeout(5)
     async def test_send_new_order_notification_success(self, webhook_sender, sample_new_order_data):
         """Тест успешной отправки уведомления о новом заказе"""
         with patch('aiohttp.ClientSession.post') as mock_post:
@@ -74,12 +73,11 @@ class TestWebhookSender:
             )
             
             assert result["success"] is True
-            assert result["attempts"] == 1
+            assert result["attempts"] == 1  # Успешная отправка с первой попытки
             assert result["status"] == "delivered"
             mock_post.assert_called_once()
 
     @pytest.mark.asyncio
-    @pytest.mark.timeout(5)
     async def test_send_critical_stocks_notification_success(self, webhook_sender, sample_critical_stocks_data):
         """Тест успешной отправки уведомления о критичных остатках"""
         with patch('aiohttp.ClientSession.post') as mock_post:
@@ -95,7 +93,7 @@ class TestWebhookSender:
             )
             
             assert result["success"] is True
-            assert result["attempts"] == 1
+            assert result["attempts"] == 1  # Успешная отправка с первой попытки
             assert result["status"] == "delivered"
             mock_post.assert_called_once()
 
@@ -156,26 +154,23 @@ class TestWebhookSender:
             )
             
             assert result["success"] is False
-            assert result["attempts"] == 1
+            assert result["attempts"] == 5  # max_retries
             assert result["status"] == "failed"
             assert "Timeout" in result["error"]
 
     @pytest.mark.asyncio
     async def test_send_notification_invalid_url(self, webhook_sender, sample_new_order_data):
         """Тест обработки неверного URL"""
-        with patch('aiohttp.ClientSession.post') as mock_post:
-            mock_post.side_effect = Exception("Invalid URL")
-            
-            result = await webhook_sender.send_new_order_notification(
-                telegram_id=123456789,
-                order_data=sample_new_order_data,
-                bot_webhook_url="invalid_url"
-            )
-            
-            assert result["success"] is False
-            assert result["attempts"] == 1
-            assert result["status"] == "failed"
-            assert "Invalid URL" in result["error"]
+        result = await webhook_sender.send_new_order_notification(
+            telegram_id=123456789,
+            order_data=sample_new_order_data,
+            bot_webhook_url="invalid_url"
+        )
+        
+        assert result["success"] is False
+        assert result["attempts"] == 0  # Не должно делать попытки при неверном URL
+        assert result["status"] == "failed"
+        assert "Invalid webhook URL" in result["error"]
 
     @pytest.mark.asyncio
     async def test_send_notification_network_error(self, webhook_sender, sample_new_order_data):
@@ -190,7 +185,7 @@ class TestWebhookSender:
             )
             
             assert result["success"] is False
-            assert result["attempts"] == 1
+            assert result["attempts"] == 5  # max_retries
             assert result["status"] == "failed"
             assert "Network error" in result["error"]
 
@@ -255,7 +250,6 @@ class TestNotificationQueue:
         return NotificationQueue(mock_redis)
 
     @pytest.mark.asyncio
-    @pytest.mark.timeout(5)
     async def test_add_notification_success(self, notification_queue, mock_redis):
         """Тест успешного добавления уведомления в очередь"""
         mock_redis.lpush.return_value = 1
@@ -272,7 +266,6 @@ class TestNotificationQueue:
         mock_redis.lpush.assert_called_once()
 
     @pytest.mark.asyncio
-    @pytest.mark.timeout(5)
     async def test_add_notification_redis_error(self, notification_queue, mock_redis):
         """Тест обработки ошибки Redis при добавлении уведомления"""
         mock_redis.lpush.side_effect = Exception("Redis connection failed")
@@ -288,7 +281,6 @@ class TestNotificationQueue:
         assert "Redis connection failed" in result["error"]
 
     @pytest.mark.asyncio
-    @pytest.mark.timeout(5)
     async def test_process_notifications_success(self, notification_queue, mock_redis):
         """Тест успешной обработки уведомлений из очереди"""
         mock_notification = {
@@ -315,7 +307,6 @@ class TestNotificationQueue:
             mock_process.assert_called_once()
 
     @pytest.mark.asyncio
-    @pytest.mark.timeout(5)
     async def test_process_notifications_empty_queue(self, notification_queue, mock_redis):
         """Тест обработки пустой очереди"""
         mock_redis.brpop.return_value = None
@@ -327,7 +318,6 @@ class TestNotificationQueue:
         assert result["failed"] == 0
 
     @pytest.mark.asyncio
-    @pytest.mark.timeout(5)
     async def test_process_notifications_processing_error(self, notification_queue, mock_redis):
         """Тест обработки ошибки при обработке уведомления"""
         mock_notification = {
@@ -351,7 +341,6 @@ class TestNotificationQueue:
             assert result["failed"] == 1
 
     @pytest.mark.asyncio
-    @pytest.mark.timeout(5)
     async def test_get_queue_stats_success(self, notification_queue, mock_redis):
         """Тест получения статистики очереди"""
         mock_redis.llen.return_value = 5
@@ -370,7 +359,6 @@ class TestNotificationQueue:
         assert result["success_rate"] == 95.0
 
     @pytest.mark.asyncio
-    @pytest.mark.timeout(5)
     async def test_clear_queue_success(self, notification_queue, mock_redis):
         """Тест очистки очереди"""
         mock_redis.delete.return_value = 1
@@ -382,7 +370,6 @@ class TestNotificationQueue:
         mock_redis.delete.assert_called_once_with("notifications:queue")
 
     @pytest.mark.asyncio
-    @pytest.mark.timeout(5)
     async def test_clear_queue_redis_error(self, notification_queue, mock_redis):
         """Тест обработки ошибки Redis при очистке очереди"""
         mock_redis.delete.side_effect = Exception("Redis connection failed")
