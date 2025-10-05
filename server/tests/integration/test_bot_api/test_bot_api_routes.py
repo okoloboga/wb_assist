@@ -1,5 +1,5 @@
 """
-Integration тесты для Bot API routes (исправленная версия)
+Integration тесты для Bot API routes (исправленная версия с правильными моками)
 """
 
 import pytest
@@ -70,11 +70,14 @@ class TestBotAPIRoutes:
         with patch('app.features.bot_api.routes.get_bot_service') as mock_get_service:
             mock_get_service.return_value = mock_bot_service
             
-            response = client.get(
-                "/api/v1/bot/dashboard",
-                headers={"X-API-SECRET-KEY": "CnWvwoDwwGKh"},
-                params={"telegram_id": sample_user.telegram_id}
-            )
+            with patch('app.features.bot_api.service.BotAPIService.get_user_cabinet') as mock_get_cabinet:
+                mock_get_cabinet.return_value = sample_cabinet
+                
+                response = client.get(
+                    "/api/v1/bot/dashboard",
+                    headers={"X-API-SECRET-KEY": "CnWvwoDwwGKh"},
+                    params={"telegram_id": sample_user.telegram_id}
+                )
         
         assert response.status_code == 200
         data = response.json()
@@ -121,11 +124,14 @@ class TestBotAPIRoutes:
         with patch('app.features.bot_api.routes.get_bot_service') as mock_get_service:
             mock_get_service.return_value = mock_bot_service
             
-            response = client.get(
-                "/api/v1/bot/orders/recent",
-                headers={"X-API-SECRET-KEY": "CnWvwoDwwGKh"},
-                params={"telegram_id": sample_user.telegram_id, "limit": 10}
-            )
+            with patch('app.features.bot_api.service.BotAPIService.get_user_cabinet') as mock_get_cabinet:
+                mock_get_cabinet.return_value = sample_cabinet
+                
+                response = client.get(
+                    "/api/v1/bot/orders/recent",
+                    headers={"X-API-SECRET-KEY": "CnWvwoDwwGKh"},
+                    params={"telegram_id": sample_user.telegram_id, "limit": 10}
+                )
         
         assert response.status_code == 200
         data = response.json()
@@ -178,11 +184,14 @@ class TestBotAPIRoutes:
         with patch('app.features.bot_api.routes.get_bot_service') as mock_get_service:
             mock_get_service.return_value = mock_bot_service
             
-            response = client.get(
-                "/api/v1/bot/stocks/critical",
-                headers={"X-API-SECRET-KEY": "CnWvwoDwwGKh"},
-                params={"telegram_id": sample_user.telegram_id}
-            )
+            with patch('app.features.bot_api.service.BotAPIService.get_user_cabinet') as mock_get_cabinet:
+                mock_get_cabinet.return_value = sample_cabinet
+                
+                response = client.get(
+                    "/api/v1/bot/stocks/critical",
+                    headers={"X-API-SECRET-KEY": "CnWvwoDwwGKh"},
+                    params={"telegram_id": sample_user.telegram_id}
+                )
         
         assert response.status_code == 200
         data = response.json()
@@ -230,11 +239,14 @@ class TestBotAPIRoutes:
         with patch('app.features.bot_api.routes.get_bot_service') as mock_get_service:
             mock_get_service.return_value = mock_bot_service
             
-            response = client.get(
-                "/api/v1/bot/reviews/summary",
-                headers={"X-API-SECRET-KEY": "CnWvwoDwwGKh"},
-                params={"telegram_id": sample_user.telegram_id}
-            )
+            with patch('app.features.bot_api.service.BotAPIService.get_user_cabinet') as mock_get_cabinet:
+                mock_get_cabinet.return_value = sample_cabinet
+                
+                response = client.get(
+                    "/api/v1/bot/reviews/summary",
+                    headers={"X-API-SECRET-KEY": "CnWvwoDwwGKh"},
+                    params={"telegram_id": sample_user.telegram_id}
+                )
         
         assert response.status_code == 200
         data = response.json()
@@ -285,11 +297,14 @@ class TestBotAPIRoutes:
         with patch('app.features.bot_api.routes.get_bot_service') as mock_get_service:
             mock_get_service.return_value = mock_bot_service
             
-            response = client.get(
-                "/api/v1/bot/analytics/sales",
-                headers={"X-API-SECRET-KEY": "CnWvwoDwwGKh"},
-                params={"telegram_id": sample_user.telegram_id, "period": "7d"}
-            )
+            with patch('app.features.bot_api.service.BotAPIService.get_user_cabinet') as mock_get_cabinet:
+                mock_get_cabinet.return_value = sample_cabinet
+                
+                response = client.get(
+                    "/api/v1/bot/analytics/sales",
+                    headers={"X-API-SECRET-KEY": "CnWvwoDwwGKh"},
+                    params={"telegram_id": sample_user.telegram_id, "period": "7d"}
+                )
         
         assert response.status_code == 200
         data = response.json()
@@ -301,17 +316,15 @@ class TestBotAPIRoutes:
         order_detail_data = {
             "success": True,
             "data": {
-                "order": {
-                    "id": 12345,
-                    "date": "2025-01-28T14:25:30",
-                    "amount": 2500.0,
-                    "product_name": "Тестовый товар 1",
-                    "brand": "Test Brand",
-                    "warehouse_from": "Склад 1",
-                    "warehouse_to": "Покупатель",
-                    "commission_percent": 5.0,
-                    "rating": 4.5
-                }
+                "id": 12345,
+                "date": "2025-01-28T14:25:30",
+                "amount": 2500.0,
+                "product_name": "Тестовый товар 1",
+                "brand": "Test Brand",
+                "warehouse_from": "Склад 1",
+                "warehouse_to": "Покупатель",
+                "commission_percent": 5.0,
+                "rating": 4.5
             },
             "telegram_text": "📦 ДЕТАЛИ ЗАКАЗА #12345\n\n..."
         }
@@ -321,11 +334,17 @@ class TestBotAPIRoutes:
         with patch('app.features.bot_api.routes.get_bot_service') as mock_get_service:
             mock_get_service.return_value = mock_bot_service
             
-            response = client.get(
-                "/api/v1/bot/orders/12345",
-                headers={"X-API-SECRET-KEY": "CnWvwoDwwGKh"},
-                params={"telegram_id": sample_user.telegram_id}
-            )
+            with patch('app.features.bot_api.service.BotAPIService.get_user_cabinet') as mock_get_cabinet:
+                mock_get_cabinet.return_value = sample_cabinet
+                
+                with patch('app.features.bot_api.service.BotAPIService.get_order_detail') as mock_get_order:
+                    mock_get_order.return_value = order_detail_data
+                    
+                    response = client.get(
+                        "/api/v1/bot/orders/12345",
+                        headers={"X-API-SECRET-KEY": "CnWvwoDwwGKh"},
+                        params={"telegram_id": sample_user.telegram_id}
+                    )
         
         assert response.status_code == 200
         data = response.json()
@@ -336,10 +355,9 @@ class TestBotAPIRoutes:
         """Тест успешного запуска синхронизации"""
         sync_data = {
             "success": True,
+            "message": "Синхронизация запущена",
             "data": {
-                "sync_id": "sync_12345",
-                "status": "started",
-                "message": "Синхронизация запущена"
+                "sync_id": "sync_12345"
             },
             "telegram_text": "🔄 СИНХРОНИЗАЦИЯ ЗАПУЩЕНА\n\n..."
         }
@@ -349,11 +367,17 @@ class TestBotAPIRoutes:
         with patch('app.features.bot_api.routes.get_bot_service') as mock_get_service:
             mock_get_service.return_value = mock_bot_service
             
-            response = client.post(
-                "/api/v1/bot/sync/start",
-                headers={"X-API-SECRET-KEY": "CnWvwoDwwGKh"},
-                params={"telegram_id": sample_user.telegram_id}
-            )
+            with patch('app.features.bot_api.service.BotAPIService.get_user_cabinet') as mock_get_cabinet:
+                mock_get_cabinet.return_value = sample_cabinet
+                
+                with patch('app.features.bot_api.service.BotAPIService.start_sync') as mock_start_sync:
+                    mock_start_sync.return_value = sync_data
+                    
+                    response = client.post(
+                        "/api/v1/bot/sync/start",
+                        headers={"X-API-SECRET-KEY": "CnWvwoDwwGKh"},
+                        params={"telegram_id": sample_user.telegram_id}
+                    )
         
         assert response.status_code == 200
         data = response.json()
@@ -394,11 +418,17 @@ class TestBotAPIRoutes:
         with patch('app.features.bot_api.routes.get_bot_service') as mock_get_service:
             mock_get_service.return_value = mock_bot_service
             
-            response = client.get(
-                "/api/v1/bot/sync/status",
-                headers={"X-API-SECRET-KEY": "CnWvwoDwwGKh"},
-                params={"telegram_id": sample_user.telegram_id}
-            )
+            with patch('app.features.bot_api.service.BotAPIService.get_user_cabinet') as mock_get_cabinet:
+                mock_get_cabinet.return_value = sample_cabinet
+                
+                with patch('app.features.bot_api.service.BotAPIService.get_sync_status') as mock_get_sync:
+                    mock_get_sync.return_value = sync_status_data
+                    
+                    response = client.get(
+                        "/api/v1/bot/sync/status",
+                        headers={"X-API-SECRET-KEY": "CnWvwoDwwGKh"},
+                        params={"telegram_id": sample_user.telegram_id}
+                    )
         
         assert response.status_code == 200
         data = response.json()

@@ -347,7 +347,7 @@ class TestBotAPIService:
         assert "data" in result
         assert "telegram_text" in result
         assert result["data"]["status"] == "completed"
-        mock_sync_service.get_sync_status.assert_called_once_with(sample_cabinet)
+        mock_sync_service.get_sync_status.assert_called_once_with()
 
     @pytest.mark.asyncio
     async def test_error_handling_wb_api_unavailable(self, bot_service, mock_db_session, sample_cabinet, mock_cache_manager):

@@ -56,9 +56,35 @@ def run_unit_tests():
         print(f"❌ Unit тесты завершились с ошибкой: {e}")
         return False
 
+def run_api_key_tests():
+    """Запустить тесты для проверки API ключа"""
+    print("🔑 Запуск тестов проверки API ключа...")
+    
+    cmd = [
+        sys.executable, "-m", "pytest",
+        "tests/unit/test_api_key_simple.py",
+        "-v",
+        "--tb=short",
+        "--asyncio-mode=auto"
+    ]
+    
+    try:
+        subprocess.run(cmd, check=True)
+        print("✅ Тесты проверки API ключа прошли успешно!")
+        return True
+    except subprocess.CalledProcessError as e:
+        print(f"❌ Тесты проверки API ключа завершились с ошибкой: {e}")
+        return False
+
 if __name__ == "__main__":
-    if len(sys.argv) > 1 and sys.argv[1] == "unit":
-        success = run_unit_tests()
+    if len(sys.argv) > 1:
+        if sys.argv[1] == "unit":
+            success = run_unit_tests()
+        elif sys.argv[1] == "api-key":
+            success = run_api_key_tests()
+        else:
+            print("❌ Неизвестный аргумент. Используйте: unit, api-key или без аргументов")
+            success = False
     else:
         success = run_tests()
     

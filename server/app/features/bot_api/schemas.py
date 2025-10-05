@@ -2,7 +2,7 @@
 Pydantic схемы для Bot API
 """
 
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator
 from typing import List, Optional, Dict, Any, Union
 from datetime import datetime
 from enum import Enum
@@ -346,7 +346,8 @@ class DashboardRequest(BaseModel):
     """Запрос dashboard"""
     telegram_id: int = Field(..., description="Telegram ID пользователя")
     
-    @validator('telegram_id')
+    @field_validator('telegram_id')
+    @classmethod
     def validate_telegram_id(cls, v):
         return BotAPISchemas.validate_telegram_id(v)
 
@@ -357,7 +358,8 @@ class OrdersRequest(BaseModel):
     limit: int = Field(10, ge=1, le=100, description="Количество заказов")
     offset: int = Field(0, ge=0, description="Смещение для пагинации")
     
-    @validator('telegram_id')
+    @field_validator('telegram_id')
+    @classmethod
     def validate_telegram_id(cls, v):
         return BotAPISchemas.validate_telegram_id(v)
 
@@ -368,7 +370,8 @@ class CriticalStocksRequest(BaseModel):
     limit: int = Field(20, ge=1, le=100, description="Количество товаров")
     offset: int = Field(0, ge=0, description="Смещение для пагинации")
     
-    @validator('telegram_id')
+    @field_validator('telegram_id')
+    @classmethod
     def validate_telegram_id(cls, v):
         return BotAPISchemas.validate_telegram_id(v)
 
@@ -379,7 +382,8 @@ class ReviewsRequest(BaseModel):
     limit: int = Field(10, ge=1, le=100, description="Количество отзывов")
     offset: int = Field(0, ge=0, description="Смещение для пагинации")
     
-    @validator('telegram_id')
+    @field_validator('telegram_id')
+    @classmethod
     def validate_telegram_id(cls, v):
         return BotAPISchemas.validate_telegram_id(v)
 
@@ -389,11 +393,13 @@ class AnalyticsRequest(BaseModel):
     telegram_id: int = Field(..., description="Telegram ID пользователя")
     period: str = Field("7d", description="Период анализа")
     
-    @validator('telegram_id')
+    @field_validator('telegram_id')
+    @classmethod
     def validate_telegram_id(cls, v):
         return BotAPISchemas.validate_telegram_id(v)
     
-    @validator('period')
+    @field_validator('period')
+    @classmethod
     def validate_period(cls, v):
         return BotAPISchemas.validate_period(v)
 
@@ -402,7 +408,8 @@ class SyncRequest(BaseModel):
     """Запрос синхронизации"""
     telegram_id: int = Field(..., description="Telegram ID пользователя")
     
-    @validator('telegram_id')
+    @field_validator('telegram_id')
+    @classmethod
     def validate_telegram_id(cls, v):
         return BotAPISchemas.validate_telegram_id(v)
 
@@ -470,4 +477,40 @@ class SyncStatusResponse(BaseModel):
     status: str
     message: Optional[str] = None
     sync_status: Optional[SyncStatusData] = None
+    telegram_text: Optional[str] = None
+
+
+# ===== СХЕМЫ ДЛЯ WB КАБИНЕТОВ =====
+
+class CabinetConnectRequest(BaseModel):
+    """Запрос подключения кабинета"""
+    api_key: str = Field(..., description="WB API ключ пользователя")
+    
+    @field_validator('api_key')
+    @classmethod
+    def validate_api_key(cls, v):
+        if not v or len(v.strip()) < 10:
+            raise ValueError("API ключ должен содержать минимум 10 символов")
+        return v.strip()
+
+
+class CabinetStatusResponse(BaseModel):
+    """Ответ cabinets/status endpoint"""
+    status: str
+    cabinets: Optional[List[Dict[str, Any]]] = None
+    total_cabinets: int = 0
+    active_cabinets: int = 0
+    last_check: Optional[str] = None
+    telegram_text: Optional[str] = None
+
+
+class CabinetConnectResponse(BaseModel):
+    """Ответ cabinets/connect endpoint"""
+    status: str
+    cabinet_id: Optional[str] = None
+    cabinet_name: Optional[str] = None
+    connected_at: Optional[str] = None
+    api_key_status: Optional[str] = None
+    permissions: Optional[List[str]] = None
+    validation: Optional[Dict[str, Any]] = None
     telegram_text: Optional[str] = None

@@ -14,7 +14,7 @@ from .service import BotAPIService
 from .schemas import (
     DashboardResponse, OrdersResponse, CriticalStocksAPIResponse, 
     ReviewsSummaryAPIResponse, AnalyticsSalesAPIResponse, SyncResponse, SyncStatusResponse,
-    OrderDetailResponse
+    OrderDetailResponse, CabinetStatusResponse, CabinetConnectResponse, CabinetConnectRequest
 )
 
 logger = logging.getLogger(__name__)
@@ -25,7 +25,7 @@ router = APIRouter(prefix="/api/v1/bot", tags=["Bot API"])
 def get_bot_service(db: Session = Depends(get_db)) -> BotAPIService:
     """Получение экземпляра BotAPIService"""
     cache_manager = WBCacheManager(db)
-    sync_service = WBSyncService(db, cache_manager)
+    sync_service = WBSyncService(db)
     return BotAPIService(db, cache_manager, sync_service)
 
 
@@ -271,4 +271,81 @@ async def get_order_detail(
         raise
     except Exception as e:
         logger.error(f"Ошибка получения деталей заказа {order_id} для telegram_id {telegram_id}: {e}")
+        raise HTTPException(status_code=500, detail="Ошибка сервера")
+
+
+# ===== WB КАБИНЕТЫ ENDPOINTS =====
+
+@router.get("/cabinets/status", response_model=CabinetStatusResponse)
+async def get_cabinet_status(
+    telegram_id: int = Query(..., description="Telegram ID пользователя"),
+    bot_service: BotAPIService = Depends(get_bot_service)
+):
+    """Получение статуса подключенных WB кабинетов"""
+    try:
+        user = await bot_service.get_user_cabinet(telegram_id)
+        if not user:
+            raise HTTPException(status_code=404, detail="Пользователь не найден")
+        
+        result = await bot_service.get_cabinet_status(user)
+        
+        if not result["success"]:
+            raise HTTPException(status_code=500, detail=result["error"])
+        
+        return CabinetStatusResponse(
+            status="success",
+            cabinets=result["data"]["cabinets"],
+            total_cabinets=result["data"]["total_cabinets"],
+            active_cabinets=result["data"]["active_cabinets"],
+            last_check=result["data"]["last_check"],
+            telegram_text=result["telegram_text"]
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Ошибка получения статуса кабинетов для telegram_id {telegram_id}: {e}")
+        raise HTTPException(status_code=500, detail="Ошибка сервера")
+
+
+@router.post("/cabinets/connect", response_model=CabinetConnectResponse)
+async def connect_cabinet(
+    request: CabinetConnectRequest,
+    telegram_id: int = Query(..., description="Telegram ID пользователя"),
+    bot_service: BotAPIService = Depends(get_bot_service)
+):
+    """Подключение нового WB кабинета через API ключ"""
+    try:
+        user = await bot_service.get_user_cabinet(telegram_id)
+        if not user:
+            raise HTTPException(status_code=404, detail="Пользователь не найден")
+        
+        result = await bot_service.connect_cabinet(user, request.api_key)
+        
+        if not result["success"]:
+            if "already connected" in result["error"].lower():
+                raise HTTPException(status_code=409, detail=result["error"])
+            elif "invalid" in result["error"].lower():
+                raise HTTPException(status_code=400, detail=result["error"])
+            else:
+                raise HTTPException(status_code=500, detail=result["error"])
+        
+        # Обрабатываем структуру с data или без
+        data = result.get("data", result)
+        
+        return CabinetConnectResponse(
+            status="success",
+            cabinet_id=data.get("cabinet_id"),
+            cabinet_name=data.get("cabinet_name"),
+            connected_at=data.get("connected_at"),
+            api_key_status=data.get("api_key_status"),
+            permissions=data.get("permissions"),
+            validation=data.get("validation"),
+            telegram_text=result.get("telegram_text")
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Ошибка подключения кабинета для telegram_id {telegram_id}: {e}")
         raise HTTPException(status_code=500, detail="Ошибка сервера")

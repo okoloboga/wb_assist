@@ -238,7 +238,7 @@ class BotAPIService:
     async def get_sync_status(self, cabinet: WBCabinet) -> Dict[str, Any]:
         """Получение статуса синхронизации"""
         try:
-            status_data = await self.sync_service.get_sync_status(cabinet)
+            status_data = await self.sync_service.get_sync_status()
             
             return {
                 "success": True,
@@ -252,6 +252,31 @@ class BotAPIService:
                 "success": False,
                 "error": "Ошибка сервера"
             }
+
+    # ===== МЕТОДЫ ДЛЯ WB КАБИНЕТОВ =====
+
+    async def get_cabinet_status(self, user: 'User') -> Dict[str, Any]:
+        """Получение статуса кабинетов пользователя"""
+        # TODO: Реализовать получение статуса кабинетов
+        return {
+            "success": True,
+            "data": {
+                "cabinets": [],
+                "total_cabinets": 0,
+                "active_cabinets": 0,
+                "last_check": "2025-01-28T14:30:15"
+            },
+            "telegram_text": "🔑 СТАТУС WB КАБИНЕТОВ\n\n❌ Нет подключенных кабинетов"
+        }
+
+    async def connect_cabinet(self, user: 'User', api_key: str) -> Dict[str, Any]:
+        """Подключение нового кабинета"""
+        # TODO: Реализовать подключение кабинета
+        return {
+            "success": False,
+            "error": "Метод не реализован",
+            "telegram_text": "❌ ОШИБКА ПОДКЛЮЧЕНИЯ\n\n🔧 Функция в разработке"
+        }
 
     # Вспомогательные методы для получения данных из БД
     async def _fetch_dashboard_from_db(self, cabinet: WBCabinet) -> Dict[str, Any]:

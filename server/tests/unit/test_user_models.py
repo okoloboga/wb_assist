@@ -98,8 +98,15 @@ class TestUserModel:
         after_creation = datetime.now(timezone.utc)  # Используем timezone-aware datetime
         
         assert user.created_at is not None
+        
+        # Приводим user.created_at к timezone-aware если нужно
+        created_at = user.created_at
+        if created_at.tzinfo is None:
+            # Если timezone-naive, считаем что это UTC
+            created_at = created_at.replace(tzinfo=timezone.utc)
+        
         # Проверяем что created_at находится в разумных пределах (с запасом в 5 секунд)
-        assert before_creation - timedelta(seconds=5) <= user.created_at <= after_creation + timedelta(seconds=1)
+        assert before_creation - timedelta(seconds=5) <= created_at <= after_creation + timedelta(seconds=1)
 
     def test_user_updated_at_none_initially(self, db_session):
         """Тест что updated_at изначально None"""

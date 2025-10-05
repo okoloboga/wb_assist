@@ -171,7 +171,7 @@ class TestUserAPI:
         # Тест с некорректным JSON
         response = client.post(
             "/users/",
-            data="invalid json",
+            content="invalid json",
             headers={"Content-Type": "application/json"}
         )
         

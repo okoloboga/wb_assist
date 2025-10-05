@@ -7,6 +7,7 @@ from aiogram.filters import Command
 
 from core.config import config
 from middleware.error_handler import ErrorHandlerMiddleware, LoggingMiddleware, RateLimitMiddleware
+from middleware.api_key_check import APIKeyCheckMiddleware
 from handlers.registration import router as registration_router
 from handlers.commands import router as commands_router
 from handlers.wb_cabinet import router as wb_cabinet_router
@@ -30,6 +31,8 @@ bot = Bot(token=config.bot_token)
 dp = Dispatcher()
 
 # Подключаем middleware
+dp.message.middleware(APIKeyCheckMiddleware())
+dp.callback_query.middleware(APIKeyCheckMiddleware())
 dp.message.middleware(ErrorHandlerMiddleware())
 dp.callback_query.middleware(ErrorHandlerMiddleware())
 dp.message.middleware(LoggingMiddleware())
@@ -49,16 +52,6 @@ dp.include_router(analytics_router)
 dp.include_router(sync_router)
 dp.include_router(notifications_router)
 
-# Этот обработчик остаётся здесь, т.к. registration_router
-# обрабатывает /start только при ПЕРВОЙ регистрации.
-# Нужен резервный обработчик для уже зарегистрированных пользователей.
-@dp.message(Command(commands=["start"]))
-async def cmd_start(message):
-    first_name = message.from_user.first_name
-    await message.answer(
-        f"Здравствуйте, {first_name}! 👋\n\nЯ помогу работать с кабинетом WB.\nВыбери действие:",
-        reply_markup=main_keyboard()
-    )
 
 async def main():
     logger.info("Bot started...")

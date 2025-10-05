@@ -11,6 +11,7 @@ from app.features.system.routes import system_router
 from app.features.user.routes import user_router
 from app.features.stats.routes import stats_router
 from app.features.wb_api.routes import router as wb_router
+from app.features.bot_api.routes import router as bot_router
 
 
 # Создаем FastAPI приложение с настройками из config
@@ -30,6 +31,7 @@ app.include_router(system_router)
 app.include_router(user_router)
 app.include_router(stats_router)
 app.include_router(wb_router)
+app.include_router(bot_router)
 
 if __name__ == "__main__":
     import uvicorn

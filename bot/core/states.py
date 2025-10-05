@@ -9,6 +9,14 @@ class WBConnectionStates(StatesGroup):
     connection_error = State()
 
 
+class WBCabinetStates(StatesGroup):
+    """Состояния для WB кабинета при первичной регистрации"""
+    waiting_for_api_key = State()
+    validating_key = State()
+    connection_success = State()
+    connection_error = State()
+
+
 class SyncStates(StatesGroup):
     """Состояния для синхронизации"""
     waiting_for_confirmation = State()

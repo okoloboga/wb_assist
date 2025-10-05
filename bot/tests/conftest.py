@@ -110,3 +110,90 @@ def mock_api_response():
             status_code=status_code
         )
     return _create_response
+
+
+@pytest.fixture
+def mock_fsm_context():
+    """Фикстура мок-FSM контекста"""
+    context = AsyncMock()
+    context.set_state = AsyncMock()
+    context.clear = AsyncMock()
+    context.get_state = AsyncMock(return_value=None)
+    return context
+
+
+@pytest.fixture
+def mock_user_with_api_key():
+    """Фикстура пользователя с API ключом"""
+    return User(
+        id=12345,
+        is_bot=False,
+        first_name="Test",
+        last_name="User",
+        username="testuser",
+        language_code="ru"
+    )
+
+
+@pytest.fixture
+def mock_user_without_api_key():
+    """Фикстура пользователя без API ключа"""
+    return User(
+        id=54321,
+        is_bot=False,
+        first_name="New",
+        last_name="User",
+        username="newuser",
+        language_code="ru"
+    )
+
+
+@pytest.fixture
+def mock_cabinet_status_response():
+    """Фикстура ответа статуса кабинета"""
+    def _create_cabinet_response(has_cabinets=True):
+        from api.client import BotAPIResponse
+        if has_cabinets:
+            data = {
+                "cabinets": [
+                    {
+                        "id": "cabinet_123",
+                        "name": "Test Cabinet",
+                        "status": "active"
+                    }
+                ]
+            }
+        else:
+            data = {"cabinets": []}
+        
+        return BotAPIResponse(
+            success=True,
+            data=data,
+            telegram_text="Cabinet status response"
+        )
+    return _create_cabinet_response
+
+
+@pytest.fixture
+def mock_connect_cabinet_response():
+    """Фикстура ответа подключения кабинета"""
+    def _create_connect_response(success=True):
+        from api.client import BotAPIResponse
+        if success:
+            return BotAPIResponse(
+                success=True,
+                data={
+                    "cabinet_id": "cabinet_123",
+                    "cabinet_name": "Test Cabinet",
+                    "status": "connected"
+                },
+                telegram_text="✅ Кабинет успешно подключен!"
+            )
+        else:
+            return BotAPIResponse(
+                success=False,
+                error="Invalid API key",
+                status_code=400,
+                telegram_text="❌ Ошибка подключения кабинета"
+            )
+    return _create_connect_response
