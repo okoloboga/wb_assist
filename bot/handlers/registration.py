@@ -1,6 +1,11 @@
+import sys
+from pathlib import Path
 from aiogram import Router
 from aiogram.types import Message
 from aiogram.filters import Command
+
+# Добавляем путь к модулям бота
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from keyboards.keyboards import main_keyboard, wb_menu_keyboard
 from api.client import register_user_on_server, bot_api_client

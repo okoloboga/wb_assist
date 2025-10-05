@@ -1,3 +1,9 @@
+import sys
+from pathlib import Path
+
+# Добавляем путь к модулям бота
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
 from aiogram import Router, F
 from aiogram.types import CallbackQuery, User, InlineKeyboardMarkup, InlineKeyboardButton
 

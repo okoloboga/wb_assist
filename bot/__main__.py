@@ -1,9 +1,14 @@
 import asyncio
 import logging
 import os
+import sys
+from pathlib import Path
 from dotenv import load_dotenv
 from aiogram import Bot, Dispatcher
 from aiogram.filters import Command
+
+# Добавляем путь к модулям бота
+sys.path.insert(0, str(Path(__file__).parent))
 
 from core.config import config
 from middleware.error_handler import ErrorHandlerMiddleware, LoggingMiddleware, RateLimitMiddleware

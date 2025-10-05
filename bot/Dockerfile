@@ -5,6 +5,6 @@ WORKDIR /app
 COPY ./requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY . /app/bot
+COPY . /app
 
-CMD ["python", "-m", "bot"]
+CMD ["python", "__main__.py"]

@@ -1,7 +1,12 @@
+import sys
+from pathlib import Path
 from aiogram import Router, F
 from aiogram.types import CallbackQuery, Message
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
+
+# Добавляем путь к модулям бота
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from api.client import bot_api_client
 from core.states import WBConnectionStates, WBCabinetStates

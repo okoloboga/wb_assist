@@ -2,10 +2,15 @@
 Middleware для проверки наличия WB API ключа у пользователя
 """
 import logging
+import sys
+from pathlib import Path
 from typing import Callable, Dict, Any, Awaitable
 
 from aiogram import BaseMiddleware
 from aiogram.types import Message, CallbackQuery
+
+# Добавляем путь к модулям бота
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from api.client import bot_api_client
 from keyboards.keyboards import main_keyboard

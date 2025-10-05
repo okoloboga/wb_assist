@@ -1,3 +1,9 @@
+import sys
+from pathlib import Path
+
+# Добавляем путь к модулям бота
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
 import logging
 from typing import Callable, Dict, Any, Awaitable
 from aiogram import BaseMiddleware
