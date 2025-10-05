@@ -1,4 +1,5 @@
 import sys
+import logging
 from pathlib import Path
 
 # Добавляем путь к модулям бота
@@ -12,15 +13,24 @@ from api.client import bot_api_client
 from keyboards.keyboards import wb_menu_keyboard, main_keyboard
 from utils.formatters import format_error_message
 
+logger = logging.getLogger(__name__)
+
 router = Router()
 
 
 @router.callback_query(F.data == "dashboard")
 async def show_dashboard(callback: CallbackQuery):
     """Показать дашборд с общей информацией по кабинету"""
+    logger.info(f"🔍 DEBUG: Обработчик dashboard вызван для пользователя {callback.from_user.id}")
+    
+    logger.info(f"🔍 DEBUG: Вызываем bot_api_client.get_dashboard с user_id={callback.from_user.id}")
     response = await bot_api_client.get_dashboard(
         user_id=callback.from_user.id
     )
+    
+    logger.info(f"🔍 DEBUG: Получен ответ от API: success={response.success}, status_code={response.status_code}")
+    if response.error:
+        logger.info(f"🔍 DEBUG: Ошибка API: {response.error}")
     
     if response.success:
         await callback.message.edit_text(

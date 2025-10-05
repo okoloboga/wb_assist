@@ -575,40 +575,169 @@ class BotMessageFormatter:
 
     def format_cabinet_status_message(self, cabinet_data: Dict[str, Any]) -> str:
         """Форматирование сообщения статуса кабинетов"""
-        # TODO: Реализовать форматирование статуса кабинетов
-        return "🔑 СТАТУС WB КАБИНЕТОВ\n\n🔧 Функция в разработке"
+        try:
+            cabinets = cabinet_data.get("cabinets", [])
+            if not cabinets:
+                return "🔑 СТАТУС WB КАБИНЕТОВ\n\n❌ Нет подключенных кабинетов"
+            
+            message = "🔑 СТАТУС WB КАБИНЕТОВ\n\n"
+            
+            for i, cabinet in enumerate(cabinets, 1):
+                name = cabinet.get('name', 'Неизвестный кабинет')
+                status = cabinet.get('status', 'unknown')
+                api_status = cabinet.get('api_key_status', 'unknown')
+                connected_at = cabinet.get('connected_at')
+                last_sync = cabinet.get('last_sync')
+                
+                # Статус кабинета
+                status_emoji = "✅" if status == "active" else "❌"
+                status_text = "Активен" if status == "active" else "Неактивен"
+                
+                # Статус API ключа
+                api_emoji = "🔑" if api_status == "valid" else "⚠️"
+                api_text = "Валидный" if api_status == "valid" else "Невалидный"
+                
+                message += f"🏢 {name}\n"
+                message += f"• Статус: {status_emoji} {status_text}\n"
+                message += f"• API ключ: {api_emoji} {api_text}\n"
+                
+                if connected_at:
+                    try:
+                        dt = datetime.fromisoformat(connected_at.replace('Z', '+00:00'))
+                        message += f"• Подключен: {dt.strftime('%d.%m.%Y %H:%M')}\n"
+                    except:
+                        message += f"• Подключен: {connected_at}\n"
+                
+                if last_sync:
+                    try:
+                        dt = datetime.fromisoformat(last_sync.replace('Z', '+00:00'))
+                        message += f"• Последняя синхронизация: {dt.strftime('%d.%m.%Y %H:%M')}\n"
+                    except:
+                        message += f"• Последняя синхронизация: {last_sync}\n"
+                
+                if i < len(cabinets):
+                    message += "\n"
+            
+            return self._truncate_message(message)
+            
+        except Exception as e:
+            logger.error(f"Ошибка форматирования статуса кабинетов: {e}")
+            return "❌ Ошибка форматирования статуса кабинетов"
 
     def format_cabinet_connect_message(self, connect_data: Dict[str, Any]) -> str:
         """Форматирование сообщения успешного подключения кабинета"""
-        # TODO: Реализовать форматирование подключения кабинета
-        return "✅ КАБИНЕТ ПОДКЛЮЧЕН!\n\n🔧 Функция в разработке"
+        try:
+            cabinet_name = connect_data.get("cabinet_name", "Неизвестный кабинет")
+            status = connect_data.get("status", "unknown")
+            connected_at = connect_data.get("connected_at")
+            api_key_status = connect_data.get("api_key_status", "unknown")
+            
+            if status != "connected":
+                return "❌ ОШИБКА ПОДКЛЮЧЕНИЯ\n\n🔧 Не удалось подключить кабинет"
+            
+            # Форматируем время подключения
+            connect_time = "только что"
+            if connected_at:
+                try:
+                    dt = datetime.fromisoformat(connected_at.replace('Z', '+00:00'))
+                    connect_time = dt.strftime('%d.%m.%Y %H:%M')
+                except:
+                    connect_time = connected_at
+            
+            message = f"""✅ КАБИНЕТ ПОДКЛЮЧЕН!
+
+🏢 {cabinet_name}
+🔑 API ключ: {'🔑 Валидный' if api_key_status == 'valid' else '⚠️ Невалидный'}
+📅 Подключен: {connect_time}
+
+🎉 Кабинет успешно подключен и готов к работе!
+📊 Теперь вы можете получать данные о заказах, остатках и отзывах."""
+            
+            return message
+            
+        except Exception as e:
+            logger.error(f"Ошибка форматирования подключения кабинета: {e}")
+            return "✅ КАБИНЕТ ПОДКЛЮЧЕН!\n\n🎉 Кабинет успешно подключен!"
 
     def format_cabinet_connect_error_message(self, error_data: Dict[str, Any]) -> str:
         """Форматирование сообщения ошибки подключения кабинета"""
-        # TODO: Реализовать форматирование ошибки подключения
-        return "❌ ОШИБКА ПОДКЛЮЧЕНИЯ\n\n🔧 Функция в разработке"
+        try:
+            error = error_data.get('error', 'Неизвестная ошибка')
+            return f"❌ ОШИБКА ПОДКЛЮЧЕНИЯ\n\n🔧 {error}"
+        except Exception as e:
+            logger.error(f"Ошибка форматирования ошибки подключения: {e}")
+            return "❌ ОШИБКА ПОДКЛЮЧЕНИЯ\n\n🔧 Произошла ошибка"
 
     def format_cabinet_already_exists_message(self, error_data: Dict[str, Any]) -> str:
         """Форматирование сообщения о существующем кабинете"""
-        # TODO: Реализовать форматирование сообщения о существующем кабинете
-        return "⚠️ КАБИНЕТ УЖЕ ПОДКЛЮЧЕН\n\n🔧 Функция в разработке"
+        try:
+            return "⚠️ КАБИНЕТ УЖЕ ПОДКЛЮЧЕН\n\n🔑 У вас уже есть активный кабинет WB"
+        except Exception as e:
+            logger.error(f"Ошибка форматирования сообщения о существующем кабинете: {e}")
+            return "⚠️ КАБИНЕТ УЖЕ ПОДКЛЮЧЕН"
 
     def _format_time_ago(self, dt: datetime) -> str:
         """Форматирование времени 'назад'"""
-        # TODO: Реализовать форматирование времени
-        return "недавно"
+        try:
+            now = datetime.now(dt.tzinfo) if dt.tzinfo else datetime.now()
+            diff = now - dt
+            
+            if diff.total_seconds() < 60:
+                return f"{int(diff.total_seconds())} сек назад"
+            elif diff.total_seconds() < 3600:
+                return f"{int(diff.total_seconds() / 60)} мин назад"
+            elif diff.total_seconds() < 86400:
+                return f"{int(diff.total_seconds() / 3600)} ч назад"
+            else:
+                return f"{int(diff.total_seconds() / 86400)} дн назад"
+        except Exception as e:
+            logger.error(f"Ошибка форматирования времени: {e}")
+            return "недавно"
 
     def _format_permissions(self, permissions: List[str]) -> str:
         """Форматирование списка прав доступа"""
-        # TODO: Реализовать форматирование прав
-        return "Нет прав доступа"
+        try:
+            if not permissions:
+                return "Нет прав доступа"
+            
+            permission_map = {
+                "read_orders": "Чтение заказов",
+                "read_stocks": "Чтение остатков", 
+                "read_reviews": "Чтение отзывов",
+                "read_products": "Чтение товаров",
+                "read_analytics": "Чтение аналитики"
+            }
+            
+            formatted = [permission_map.get(p, p) for p in permissions]
+            return ", ".join(formatted)
+        except Exception as e:
+            logger.error(f"Ошибка форматирования прав: {e}")
+            return "Нет прав доступа"
 
     def _format_api_key_status(self, status: str) -> str:
         """Форматирование статуса API ключа"""
-        # TODO: Реализовать форматирование статуса API ключа
-        return "Неизвестен"
+        try:
+            status_map = {
+                "valid": "🔑 Валидный",
+                "invalid": "⚠️ Невалидный",
+                "expired": "⏰ Истек",
+                "unknown": "❓ Неизвестен"
+            }
+            return status_map.get(status, "❓ Неизвестен")
+        except Exception as e:
+            logger.error(f"Ошибка форматирования статуса API ключа: {e}")
+            return "❓ Неизвестен"
 
     def _format_cabinet_status(self, status: str) -> str:
         """Форматирование статуса кабинета"""
-        # TODO: Реализовать форматирование статуса кабинета
-        return "Неизвестен"
+        try:
+            status_map = {
+                "active": "✅ Активен",
+                "inactive": "❌ Неактивен",
+                "suspended": "⏸️ Приостановлен",
+                "unknown": "❓ Неизвестен"
+            }
+            return status_map.get(status, "❓ Неизвестен")
+        except Exception as e:
+            logger.error(f"Ошибка форматирования статуса кабинета: {e}")
+            return "❓ Неизвестен"

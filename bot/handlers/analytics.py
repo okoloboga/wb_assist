@@ -183,6 +183,44 @@ async def show_avg_check(callback: CallbackQuery):
     await callback.answer()
 
 
+@router.callback_query(F.data == "sales_period")
+async def show_sales_period(callback: CallbackQuery):
+    """Показать аналитику продаж за период"""
+    response = await bot_api_client.get_analytics_sales(
+        user_id=callback.from_user.id,
+        period="7d"
+    )
+    
+    if response.success and response.data:
+        keyboard = create_analytics_keyboard(period="7d")
+        
+        await callback.message.edit_text(
+            response.telegram_text or "📈 Аналитика продаж",
+            reply_markup=keyboard
+        )
+    else:
+        error_message = format_error_message(response.error, response.status_code)
+        await callback.message.edit_text(
+            f"❌ Ошибка загрузки аналитики:\n\n{error_message}",
+            reply_markup=create_analytics_keyboard()
+        )
+    
+    await callback.answer()
+
+
+@router.callback_query(F.data == "export_sales")
+async def export_sales_to_google(callback: CallbackQuery):
+    """Экспорт аналитики продаж в Google Sheets"""
+    # TODO: Реализовать экспорт в Google Sheets
+    await callback.message.edit_text(
+        "📤 ЭКСПОРТ В GOOGLE SHEETS\n\n"
+        "⚠️ Функция экспорта в Google Sheets будет доступна в следующей версии.\n\n"
+        "Сейчас доступен просмотр аналитики продаж.",
+        reply_markup=create_analytics_keyboard()
+    )
+    await callback.answer()
+
+
 @router.message(Command("analytics"))
 async def cmd_analytics(message: Message):
     """Команда /analytics"""

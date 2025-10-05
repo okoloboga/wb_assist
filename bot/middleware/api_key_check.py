@@ -50,6 +50,16 @@ class APIKeyCheckMiddleware(BaseMiddleware):
         if user_id in self._checked_users:
             return await handler(event, data)
         
+        # Пропускаем ввод API ключа (не команды, не callback)
+        if isinstance(event, Message) and event.text and not event.text.startswith('/'):
+            # Проверяем, не в состоянии ли ввода API ключа
+            from aiogram.fsm.context import FSMContext
+            state = data.get('state')
+            if state:
+                current_state = await state.get_state()
+                if current_state and 'api_key' in str(current_state):
+                    return await handler(event, data)
+        
         # Проверяем наличие API ключа
         has_api_key = await self._check_api_key(user_id)
         
@@ -66,7 +76,12 @@ class APIKeyCheckMiddleware(BaseMiddleware):
     async def _check_api_key(self, user_id: int) -> bool:
         """Проверяет наличие API ключа у пользователя"""
         try:
+            logger.info(f"🔍 API_KEY_CHECK: Проверяем API ключ для пользователя {user_id}")
             response = await bot_api_client.get_cabinet_status(user_id)
+            
+            logger.info(f"🔍 API_KEY_CHECK: Ответ от API: success={response.success}, status_code={response.status_code}")
+            if response.data:
+                logger.info(f"🔍 API_KEY_CHECK: Данные ответа: {response.data}")
             
             if not response.success:
                 logger.warning(f"Ошибка проверки API ключа для пользователя {user_id}: {response.error}")
@@ -74,7 +89,10 @@ class APIKeyCheckMiddleware(BaseMiddleware):
             
             # Проверяем, есть ли подключенные кабинеты
             cabinets = response.data.get('cabinets', []) if response.data else []
-            return len(cabinets) > 0
+            logger.info(f"🔍 API_KEY_CHECK: Найдено кабинетов: {len(cabinets)}")
+            result = len(cabinets) > 0
+            logger.info(f"🔍 API_KEY_CHECK: Результат проверки: {result}")
+            return result
             
         except Exception as e:
             logger.error(f"Ошибка при проверке API ключа для пользователя {user_id}: {e}")
@@ -82,6 +100,8 @@ class APIKeyCheckMiddleware(BaseMiddleware):
     
     async def _block_user_access(self, event: Message | CallbackQuery, user_id: int):
         """Блокирует доступ пользователя и требует ввод API ключа"""
+        from aiogram.exceptions import TelegramBadRequest
+        
         message_text = (
             "🔑 **ТРЕБУЕТСЯ ПОДКЛЮЧЕНИЕ WB КАБИНЕТА**\n\n"
             "Для использования бота необходимо подключить ваш WB кабинет.\n"
@@ -101,11 +121,19 @@ class APIKeyCheckMiddleware(BaseMiddleware):
                 parse_mode="Markdown"
             )
         elif isinstance(event, CallbackQuery):
-            await event.message.edit_text(
-                message_text,
-                reply_markup=main_keyboard(),
-                parse_mode="Markdown"
-            )
+            try:
+                await event.message.edit_text(
+                    message_text,
+                    reply_markup=main_keyboard(),
+                    parse_mode="Markdown"
+                )
+            except TelegramBadRequest:
+                # Если сообщение не изменилось, отправляем новое
+                await event.message.answer(
+                    message_text,
+                    reply_markup=main_keyboard(),
+                    parse_mode="Markdown"
+                )
             await event.answer()
     
     def clear_user_cache(self, user_id: int):

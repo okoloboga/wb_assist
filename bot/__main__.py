@@ -23,7 +23,8 @@ from handlers.reviews import router as reviews_router
 from handlers.analytics import router as analytics_router
 from handlers.sync import router as sync_router
 from handlers.notifications import router as notifications_router
-from keyboards.keyboards import main_keyboard
+from handlers.prices import router as prices_router
+from keyboards.keyboards import main_keyboard, wb_menu_keyboard
 
 # Настройка логирования
 logging.basicConfig(
@@ -35,9 +36,12 @@ logger = logging.getLogger(__name__)
 bot = Bot(token=config.bot_token)
 dp = Dispatcher()
 
+# Создаем экземпляр middleware для глобального доступа
+api_key_middleware = APIKeyCheckMiddleware()
+
 # Подключаем middleware
-dp.message.middleware(APIKeyCheckMiddleware())
-dp.callback_query.middleware(APIKeyCheckMiddleware())
+dp.message.middleware(api_key_middleware)
+dp.callback_query.middleware(api_key_middleware)
 dp.message.middleware(ErrorHandlerMiddleware())
 dp.callback_query.middleware(ErrorHandlerMiddleware())
 dp.message.middleware(LoggingMiddleware())
@@ -46,8 +50,8 @@ dp.message.middleware(RateLimitMiddleware())
 dp.callback_query.middleware(RateLimitMiddleware())
 
 # Подключаем роутеры
+dp.include_router(commands_router)  # commands_router должен быть ПЕРВЫМ
 dp.include_router(registration_router)
-dp.include_router(commands_router)
 dp.include_router(wb_cabinet_router)
 dp.include_router(dashboard_router)
 dp.include_router(orders_router)
@@ -56,7 +60,7 @@ dp.include_router(reviews_router)
 dp.include_router(analytics_router)
 dp.include_router(sync_router)
 dp.include_router(notifications_router)
-
+dp.include_router(prices_router)
 
 async def main():
     logger.info("Bot started...")

@@ -17,6 +17,30 @@ from utils.formatters import format_error_message, format_stocks_summary
 router = Router()
 
 
+@router.callback_query(F.data == "notifications")
+async def show_notifications_menu(callback: CallbackQuery):
+    """Показать меню уведомлений"""
+    await callback.message.edit_text(
+        "🔔 УВЕДОМЛЕНИЯ\n\n"
+        "📊 Статус уведомлений:\n"
+        "✅ Заказы: Включены\n"
+        "✅ Остатки: Включены\n"
+        "✅ Отзывы: Включены\n"
+        "✅ Синхронизация: Включены\n\n"
+        "🔧 Настройте уведомления в разделе 'Настройки' → 'Уведомления'",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(
+                text="⚙️ Настройки уведомлений",
+                callback_data="settings_notifications"
+            )],
+            [InlineKeyboardButton(
+                text="🔙 Назад",
+                callback_data="wb_menu"
+            )]
+        ])
+    )
+    await callback.answer()
+
 
 @router.callback_query(F.data == "settings_notifications")
 async def show_notification_settings(callback: CallbackQuery, state: FSMContext):

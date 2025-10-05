@@ -42,6 +42,15 @@ class BotAPIService:
             logger.error(f"Ошибка получения кабинета для telegram_id {telegram_id}: {e}")
             return None
 
+    async def get_user_by_telegram_id(self, telegram_id: int) -> Optional[User]:
+        """Получение пользователя по telegram_id"""
+        try:
+            user = self.db.query(User).filter(User.telegram_id == telegram_id).first()
+            return user
+        except Exception as e:
+            logger.error(f"Ошибка получения пользователя для telegram_id {telegram_id}: {e}")
+            return None
+
     async def get_dashboard_data(self, cabinet: WBCabinet) -> Dict[str, Any]:
         """Получение данных dashboard"""
         try:
@@ -257,26 +266,162 @@ class BotAPIService:
 
     async def get_cabinet_status(self, user: 'User') -> Dict[str, Any]:
         """Получение статуса кабинетов пользователя"""
-        # TODO: Реализовать получение статуса кабинетов
-        return {
-            "success": True,
-            "data": {
-                "cabinets": [],
-                "total_cabinets": 0,
-                "active_cabinets": 0,
-                "last_check": "2025-01-28T14:30:15"
-            },
-            "telegram_text": "🔑 СТАТУС WB КАБИНЕТОВ\n\n❌ Нет подключенных кабинетов"
-        }
+        try:
+            cabinets = self.db.query(WBCabinet).filter(
+                WBCabinet.user_id == user.id
+            ).all()
+            
+            if not cabinets:
+                return {
+                    "success": True,
+                    "data": {
+                        "cabinets": [],
+                        "total_cabinets": 0,
+                        "active_cabinets": 0,
+                        "last_check": datetime.now(timezone.utc).isoformat()
+                    },
+                    "telegram_text": "🔑 СТАТУС WB КАБИНЕТОВ\n\n❌ Нет подключенных кабинетов"
+                }
+            
+            # Форматируем данные кабинетов
+            cabinet_data = []
+            active_count = 0
+            
+            for cabinet in cabinets:
+                status = "active" if cabinet.is_active else "inactive"
+                if cabinet.is_active:
+                    active_count += 1
+                
+                cabinet_data.append({
+                    "id": f"cabinet_{cabinet.id}",
+                    "name": cabinet.cabinet_name,
+                    "status": status,
+                    "connected_at": cabinet.created_at.isoformat() if cabinet.created_at else None,
+                    "last_sync": cabinet.last_sync_at.isoformat() if cabinet.last_sync_at else None,
+                    "api_key_status": "valid" if cabinet.is_active else "invalid"
+                })
+            
+            # Форматируем Telegram сообщение
+            telegram_text = self.formatter.format_cabinet_status_message({"cabinets": cabinet_data})
+            
+            return {
+                "success": True,
+                "data": {
+                    "cabinets": cabinet_data,
+                    "total_cabinets": len(cabinets),
+                    "active_cabinets": active_count,
+                    "last_check": datetime.now(timezone.utc).isoformat()
+                },
+                "telegram_text": telegram_text
+            }
+            
+        except Exception as e:
+            logger.error(f"Ошибка получения статуса кабинетов: {e}")
+            return {
+                "success": False,
+                "error": f"Ошибка получения статуса: {str(e)}",
+                "telegram_text": "❌ ОШИБКА\n\n🔧 Не удалось получить статус кабинетов"
+            }
 
     async def connect_cabinet(self, user: 'User', api_key: str) -> Dict[str, Any]:
         """Подключение нового кабинета"""
-        # TODO: Реализовать подключение кабинета
-        return {
-            "success": False,
-            "error": "Метод не реализован",
-            "telegram_text": "❌ ОШИБКА ПОДКЛЮЧЕНИЯ\n\n🔧 Функция в разработке"
-        }
+        try:
+            # 1. Проверяем, есть ли уже кабинет у пользователя
+            existing_cabinet = self.db.query(WBCabinet).filter(
+                WBCabinet.user_id == user.id,
+                WBCabinet.is_active == True
+            ).first()
+            
+            if existing_cabinet:
+                return {
+                    "success": False,
+                    "error": "У пользователя уже есть активный кабинет",
+                    "telegram_text": "❌ ОШИБКА ПОДКЛЮЧЕНИЯ\n\n🔑 У вас уже есть подключенный кабинет"
+                }
+            
+            # 2. Проверяем уникальность API ключа
+            duplicate_cabinet = self.db.query(WBCabinet).filter(
+                WBCabinet.api_key == api_key
+            ).first()
+            
+            if duplicate_cabinet:
+                return {
+                    "success": False,
+                    "error": "API ключ уже используется другим пользователем",
+                    "telegram_text": "❌ ОШИБКА ПОДКЛЮЧЕНИЯ\n\n🔑 Этот API ключ уже используется"
+                }
+            
+            # 3. Создаем временный кабинет для валидации
+            temp_cabinet = WBCabinet(
+                user_id=user.id,
+                api_key=api_key,
+                cabinet_name="Temp Cabinet",
+                is_active=False
+            )
+            
+            # 4. Валидируем API ключ
+            from app.features.wb_api.client import WBAPIClient
+            client = WBAPIClient(temp_cabinet)
+            is_valid = await client.validate_api_key()
+            
+            if not is_valid:
+                return {
+                    "success": False,
+                    "error": "Неверный API ключ",
+                    "telegram_text": "❌ ОШИБКА ПОДКЛЮЧЕНИЯ\n\n🔑 Неверный API ключ"
+                }
+            
+            # 5. Получаем информацию о кабинете
+            warehouses = await client.get_warehouses()
+            cabinet_name = f"WB Cabinet {user.telegram_id}"
+            
+            if warehouses:
+                cabinet_name = warehouses[0].get('name', cabinet_name)
+            
+            # 6. Создаем кабинет
+            cabinet = WBCabinet(
+                user_id=user.id,
+                api_key=api_key,
+                cabinet_name=cabinet_name,
+                is_active=True
+            )
+            
+            self.db.add(cabinet)
+            self.db.commit()
+            self.db.refresh(cabinet)
+            
+            # 7. Форматируем ответ
+            connect_data = {
+                "cabinet_name": cabinet_name,
+                "status": "connected",
+                "connected_at": cabinet.created_at.isoformat(),
+                "api_key_status": "valid"
+            }
+            telegram_text = self.formatter.format_cabinet_connect_message(connect_data)
+            
+            return {
+                "success": True,
+                "data": {
+                    "cabinet_id": str(cabinet.id),
+                    "cabinet_name": cabinet_name,
+                    "connected_at": cabinet.created_at.isoformat(),
+                    "api_key_status": "valid",
+                    "permissions": ["read_orders", "read_stocks", "read_reviews"],
+                    "validation": {
+                        "is_valid": True,
+                        "warehouses_count": len(warehouses)
+                    }
+                },
+                "telegram_text": telegram_text
+            }
+            
+        except Exception as e:
+            logger.error(f"Ошибка подключения кабинета: {e}")
+            return {
+                "success": False,
+                "error": f"Ошибка подключения: {str(e)}",
+                "telegram_text": "❌ ОШИБКА ПОДКЛЮЧЕНИЯ\n\n🔧 Произошла ошибка при подключении"
+            }
 
     # Вспомогательные методы для получения данных из БД
     async def _fetch_dashboard_from_db(self, cabinet: WBCabinet) -> Dict[str, Any]:

@@ -70,6 +70,15 @@ async def process_initial_api_key(message: Message, state: FSMContext):
     
     if response.success:
         await state.clear()
+        
+        # Очищаем кэш middleware для этого пользователя
+        try:
+            from __main__ import api_key_middleware
+            api_key_middleware.clear_user_cache(message.from_user.id)
+        except ImportError:
+            # Если не можем импортировать, пропускаем
+            pass
+        
         await message.answer(
             response.telegram_text or "✅ Кабинет успешно подключен! Теперь вы можете пользоваться ботом.",
             reply_markup=wb_menu_keyboard()

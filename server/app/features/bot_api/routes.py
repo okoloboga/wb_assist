@@ -283,7 +283,7 @@ async def get_cabinet_status(
 ):
     """Получение статуса подключенных WB кабинетов"""
     try:
-        user = await bot_service.get_user_cabinet(telegram_id)
+        user = await bot_service.get_user_by_telegram_id(telegram_id)
         if not user:
             raise HTTPException(status_code=404, detail="Пользователь не найден")
         
@@ -316,7 +316,7 @@ async def connect_cabinet(
 ):
     """Подключение нового WB кабинета через API ключ"""
     try:
-        user = await bot_service.get_user_cabinet(telegram_id)
+        user = await bot_service.get_user_by_telegram_id(telegram_id)
         if not user:
             raise HTTPException(status_code=404, detail="Пользователь не найден")
         

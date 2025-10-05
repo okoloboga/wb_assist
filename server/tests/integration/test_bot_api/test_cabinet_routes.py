@@ -104,13 +104,14 @@ class TestBotAPICabinetRoutes:
             "telegram_text": "🔑 СТАТУС WB КАБИНЕТОВ\n\n❌ Нет подключенных кабинетов\n\n💡 Для использования бота необходимо подключить WB кабинет:\n1. Получите API ключ в личном кабинете WB\n2. Используйте команду /connect для подключения\n3. После подключения все функции станут доступны"
         }
         
-        mock_bot_service.get_cabinet_status.return_value = no_cabinets_data
-        
         with patch('app.features.bot_api.routes.get_bot_service') as mock_get_service:
             mock_get_service.return_value = mock_bot_service
             
-            with patch('app.features.bot_api.service.BotAPIService.get_user_cabinet') as mock_get_cabinet:
+            with patch('app.features.bot_api.service.BotAPIService.get_user_by_telegram_id') as mock_get_cabinet:
                 mock_get_cabinet.return_value = sample_user
+                
+            with patch('app.features.bot_api.service.BotAPIService.get_cabinet_status') as mock_get_status:
+                mock_get_status.return_value = no_cabinets_data
                 
                 response = client.get(
                     "/api/v1/bot/cabinets/status",

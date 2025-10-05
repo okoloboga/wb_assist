@@ -193,6 +193,19 @@ async def show_auto_answers(callback: CallbackQuery):
     await callback.answer()
 
 
+@router.callback_query(F.data == "export_reviews")
+async def export_reviews_to_google(callback: CallbackQuery):
+    """Экспорт отзывов в Google Sheets"""
+    # TODO: Реализовать экспорт в Google Sheets
+    await callback.message.edit_text(
+        "📤 ЭКСПОРТ В GOOGLE SHEETS\n\n"
+        "⚠️ Функция экспорта в Google Sheets будет доступна в следующей версии.\n\n"
+        "Сейчас доступен просмотр новых отзывов и вопросов.",
+        reply_markup=create_reviews_keyboard()
+    )
+    await callback.answer()
+
+
 @router.message(Command("reviews"))
 async def cmd_reviews(message: Message):
     """Команда /reviews"""

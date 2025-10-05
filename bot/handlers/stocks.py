@@ -140,6 +140,32 @@ async def show_stock_forecast(callback: CallbackQuery):
     await callback.answer()
 
 
+@router.callback_query(F.data == "stock_notify")
+async def show_stock_notifications(callback: CallbackQuery):
+    """Показать настройки уведомлений об остатках"""
+    # TODO: Реализовать настройки уведомлений
+    await callback.message.edit_text(
+        "🔔 УВЕДОМЛЕНИЯ ОБ ОСТАТКАХ\n\n"
+        "⚠️ Функция настройки уведомлений будет доступна в следующей версии.\n\n"
+        "Сейчас доступен просмотр критичных остатков.",
+        reply_markup=create_stocks_keyboard()
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "export_stock")
+async def export_stocks_to_google(callback: CallbackQuery):
+    """Экспорт остатков в Google Sheets"""
+    # TODO: Реализовать экспорт в Google Sheets
+    await callback.message.edit_text(
+        "📤 ЭКСПОРТ В GOOGLE SHEETS\n\n"
+        "⚠️ Функция экспорта в Google Sheets будет доступна в следующей версии.\n\n"
+        "Сейчас доступен просмотр критичных остатков.",
+        reply_markup=create_stocks_keyboard()
+    )
+    await callback.answer()
+
+
 @router.message(Command("stocks"))
 async def cmd_stocks(message: Message):
     """Команда /stocks"""
