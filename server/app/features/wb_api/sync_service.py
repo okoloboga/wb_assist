@@ -174,6 +174,7 @@ class WBSyncService:
             
             created = 0
             updated = 0
+            processed_order_ids = set()  # Отслеживаем обработанные order_id в рамках одного запроса
             
             for order_data in orders_data:
                 try:
@@ -183,6 +184,11 @@ class WBSyncService:
                     # Пропускаем заказы без order_id или nm_id
                     if not order_id or not nm_id:
                         continue
+                    
+                    # Пропускаем дубликаты в рамках одного запроса
+                    if order_id in processed_order_ids:
+                        continue
+                    processed_order_ids.add(order_id)
                     
                     # Проверяем существующий заказ
                     existing = self.db.query(WBOrder).filter(
@@ -209,23 +215,32 @@ class WBSyncService:
                         updated += 1
                     else:
                         # Создаем новый заказ
-                        order = WBOrder(
-                            cabinet_id=cabinet.id,
-                            order_id=str(order_id),
-                            nm_id=nm_id,
-                            article=order_data.get("supplierArticle"),
-                            name=order_data.get("subject"),  # Исправлено: subject вместо name
-                            brand=order_data.get("brand"),
-                            size=order_data.get("techSize"),  # Исправлено: techSize вместо size
-                            barcode=order_data.get("barcode"),
-                            quantity=1,  # Исправлено: всегда 1, так как нет поля quantity
-                            price=order_data.get("finishedPrice"),  # Исправлено: finishedPrice вместо price
-                            total_price=order_data.get("totalPrice"),
-                            status="canceled" if order_data.get("isCancel", False) else "active",  # Исправлено: вычисляем статус
-                            order_date=self._parse_datetime(order_data.get("date"))
-                        )
-                        self.db.add(order)
-                        created += 1
+                        try:
+                            order = WBOrder(
+                                cabinet_id=cabinet.id,
+                                order_id=str(order_id),
+                                nm_id=nm_id,
+                                article=order_data.get("supplierArticle"),
+                                name=order_data.get("subject"),  # Исправлено: subject вместо name
+                                brand=order_data.get("brand"),
+                                size=order_data.get("techSize"),  # Исправлено: techSize вместо size
+                                barcode=order_data.get("barcode"),
+                                quantity=1,  # Исправлено: всегда 1, так как нет поля quantity
+                                price=order_data.get("finishedPrice"),  # Исправлено: finishedPrice вместо price
+                                total_price=order_data.get("totalPrice"),
+                                status="canceled" if order_data.get("isCancel", False) else "active",  # Исправлено: вычисляем статус
+                                order_date=self._parse_datetime(order_data.get("date"))
+                            )
+                            self.db.add(order)
+                            self.db.flush()  # Принудительно выполняем вставку для проверки уникальности
+                            created += 1
+                        except Exception as insert_error:
+                            # Если заказ уже существует (race condition), пропускаем его
+                            if "duplicate key" in str(insert_error).lower() or "unique constraint" in str(insert_error).lower():
+                                logger.warning(f"Order {order_id} already exists, skipping")
+                                continue
+                            else:
+                                raise insert_error
                         
                 except Exception as order_error:
                     logger.warning(f"Failed to process order {order_id}: {order_error}")
