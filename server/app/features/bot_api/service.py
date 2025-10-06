@@ -111,7 +111,7 @@ class BotAPIService:
             orders_data = await self._fetch_orders_from_db(cabinet, limit, offset)
             
             # Форматируем Telegram сообщение
-            telegram_text = self.formatter.format_orders_message(orders_data)
+            telegram_text = self.formatter.format_orders(orders_data)
             
             return {
                 "success": True,
@@ -648,17 +648,20 @@ class BotAPIService:
             return {
                 "orders": orders_list,
                 "total_orders": total_orders,
-                "orders_today": {
-                    "count": today_count,
-                    "amount": today_amount,
+                "statistics": {
+                    "today_count": today_count,
+                    "today_amount": today_amount,
                     "yesterday_count": yesterday_count,
                     "yesterday_amount": yesterday_amount,
-                    "growth_percent": growth_percent
+                    "growth_percent": growth_percent,
+                    "amount_growth_percent": 0.0,  # Заглушка
+                    "average_check": today_amount / today_count if today_count > 0 else 0
                 },
                 "pagination": {
                     "limit": limit,
                     "offset": offset,
-                    "total": total_orders
+                    "total": total_orders,
+                    "has_more": (offset + limit) < total_orders
                 }
             }
             
@@ -667,8 +670,8 @@ class BotAPIService:
             return {
                 "orders": [],
                 "total_orders": 0,
-                "orders_today": {"count": 0, "amount": 0, "yesterday_count": 0, "yesterday_amount": 0, "growth_percent": 0.0},
-                "pagination": {"limit": limit, "offset": offset, "total": 0}
+                "statistics": {"count": 0, "amount": 0, "yesterday_count": 0, "yesterday_amount": 0, "growth_percent": 0.0, "amount_growth_percent": 0.0, "average_check": 0.0},
+                "pagination": {"limit": limit, "offset": offset, "total": 0, "has_more": False}
             }
 
     async def _fetch_critical_stocks_from_db(self, cabinet: WBCabinet, limit: int, offset: int) -> Dict[str, Any]:

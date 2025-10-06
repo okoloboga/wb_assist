@@ -73,11 +73,11 @@ async def get_recent_orders(
 ):
     """Получение последних заказов пользователя"""
     try:
-        cabinet = await bot_service.get_user_cabinet(telegram_id)
-        if not cabinet:
-            raise HTTPException(status_code=404, detail="Кабинет WB не найден")
+        user = await bot_service.get_user_by_telegram_id(telegram_id)
+        if not user:
+            raise HTTPException(status_code=404, detail="Пользователь не найден")
         
-        result = await bot_service.get_recent_orders(cabinet, limit, offset)
+        result = await bot_service.get_recent_orders(user, limit, offset)
         
         if not result["success"]:
             raise HTTPException(status_code=500, detail=result["error"])
