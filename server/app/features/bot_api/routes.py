@@ -19,7 +19,7 @@ from .schemas import (
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/v1/bot", tags=["Bot API"])
+router = APIRouter(tags=["Bot API"])
 
 
 def get_bot_service(db: Session = Depends(get_db)) -> BotAPIService:
@@ -42,7 +42,11 @@ async def get_dashboard(
             raise HTTPException(status_code=404, detail="Кабинет WB не найден")
         
         # Получаем данные dashboard
-        result = await bot_service.get_dashboard_data(cabinet)
+        user = await bot_service.get_user_by_telegram_id(telegram_id)
+        if not user:
+            raise HTTPException(status_code=404, detail="Пользователь не найден")
+        
+        result = await bot_service.get_dashboard(user)
         
         if not result["success"]:
             raise HTTPException(status_code=500, detail=result["error"])
@@ -195,14 +199,18 @@ async def start_sync(
         if not cabinet:
             raise HTTPException(status_code=404, detail="Кабинет WB не найден")
         
-        result = await bot_service.start_sync(cabinet)
+        user = await bot_service.get_user_by_telegram_id(telegram_id)
+        if not user:
+            raise HTTPException(status_code=404, detail="Пользователь не найден")
+        
+        result = await bot_service.start_sync(user)
         
         if not result["success"]:
             raise HTTPException(status_code=500, detail=result["error"])
         
         return SyncResponse(
             status="success",
-            message=result["message"],
+            message=result.get("telegram_text", "Синхронизация запущена"),
             sync_id=result["data"].get("sync_id") if result["data"] else None
         )
         
@@ -224,14 +232,15 @@ async def get_sync_status(
         if not cabinet:
             raise HTTPException(status_code=404, detail="Кабинет WB не найден")
         
-        result = await bot_service.get_sync_status(cabinet)
+        result = await bot_service.get_sync_status()
         
         if not result["success"]:
             raise HTTPException(status_code=500, detail=result["error"])
         
         return SyncStatusResponse(
             status="success",
-            sync_status=result["data"],
+            message=result.get("telegram_text", "Статус синхронизации получен"),
+            sync_status=None,  # Пока не реализовано
             telegram_text=result["telegram_text"]
         )
         

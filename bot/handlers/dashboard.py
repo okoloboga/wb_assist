@@ -33,16 +33,32 @@ async def show_dashboard(callback: CallbackQuery):
         logger.info(f"🔍 DEBUG: Ошибка API: {response.error}")
     
     if response.success:
-        await callback.message.edit_text(
-            response.telegram_text or "📊 Дашборд загружен",
-            reply_markup=wb_menu_keyboard()
-        )
+        new_text = response.telegram_text or "📊 Дашборд загружен"
+        new_markup = wb_menu_keyboard()
+        
+        # Проверяем, изменилось ли содержимое
+        if (callback.message.text != new_text or 
+            callback.message.reply_markup != new_markup):
+            await callback.message.edit_text(
+                new_text,
+                reply_markup=new_markup
+            )
+        else:
+            logger.info("🔍 DEBUG: Содержимое не изменилось, пропускаем редактирование")
     else:
         error_message = format_error_message(response.error, response.status_code)
-        await callback.message.edit_text(
-            f"❌ Ошибка загрузки дашборда:\n\n{error_message}",
-            reply_markup=main_keyboard()
-        )
+        new_text = f"❌ Ошибка загрузки дашборда:\n\n{error_message}"
+        new_markup = main_keyboard()
+        
+        # Проверяем, изменилось ли содержимое
+        if (callback.message.text != new_text or 
+            callback.message.reply_markup != new_markup):
+            await callback.message.edit_text(
+                new_text,
+                reply_markup=new_markup
+            )
+        else:
+            logger.info("🔍 DEBUG: Содержимое не изменилось, пропускаем редактирование")
     
     await callback.answer()
 

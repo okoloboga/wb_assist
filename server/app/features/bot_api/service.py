@@ -5,9 +5,8 @@ Bot API сервис для интеграции с Telegram ботом
 import logging
 from typing import Dict, Any, Optional
 from sqlalchemy.orm import Session
-from app.features.user.models import User
 from app.features.wb_api.models import WBCabinet, WBOrder, WBProduct, WBStock, WBReview
-from sqlalchemy import func, and_, or_
+from sqlalchemy import func, and_, or_, text
 from datetime import datetime, timezone, timedelta
 from app.features.wb_api.cache_manager import WBCacheManager
 from app.features.wb_api.sync_service import WBSyncService
@@ -19,256 +18,407 @@ logger = logging.getLogger(__name__)
 class BotAPIService:
     """Сервис для Bot API"""
     
-    def __init__(self, db: Session, cache_manager: WBCacheManager, sync_service: WBSyncService):
+    def __init__(self, db: Session, cache_manager: WBCacheManager = None, sync_service: WBSyncService = None):
         self.db = db
-        self.cache_manager = cache_manager
-        self.sync_service = sync_service
+        self.cache_manager = cache_manager or WBCacheManager(db)
+        self.sync_service = sync_service or WBSyncService(db, self.cache_manager)
         self.formatter = BotMessageFormatter()
+
+    async def get_user_by_telegram_id(self, telegram_id: int) -> Optional[Dict[str, Any]]:
+        """Получение пользователя по telegram_id"""
+        try:
+            # Используем прямой SQL запрос вместо ORM
+            result = self.db.execute(
+                text("SELECT id, telegram_id, username, first_name, last_name, created_at FROM users WHERE telegram_id = :telegram_id"),
+                {"telegram_id": telegram_id}
+            ).fetchone()
+            
+            if not result:
+                return None
+            
+            return {
+                "id": result[0],
+                "telegram_id": result[1],
+                "username": result[2],
+                "first_name": result[3],
+                "last_name": result[4],
+                "created_at": result[5]
+            }
+            
+        except Exception as e:
+            logger.error(f"Ошибка получения пользователя: {e}")
+            return None
 
     async def get_user_cabinet(self, telegram_id: int) -> Optional[WBCabinet]:
         """Получение кабинета пользователя по telegram_id"""
         try:
-            user = self.db.query(User).filter(User.telegram_id == telegram_id).first()
+            # Сначала получаем пользователя
+            user = await self.get_user_by_telegram_id(telegram_id)
             if not user:
                 return None
             
+            # Получаем кабинет пользователя
             cabinet = self.db.query(WBCabinet).filter(
-                WBCabinet.user_id == user.id,
-                WBCabinet.is_active == True
+                WBCabinet.user_id == user["id"]
             ).first()
             
             return cabinet
-        except Exception as e:
-            logger.error(f"Ошибка получения кабинета для telegram_id {telegram_id}: {e}")
-            return None
-
-    async def get_user_by_telegram_id(self, telegram_id: int) -> Optional[User]:
-        """Получение пользователя по telegram_id"""
-        try:
-            user = self.db.query(User).filter(User.telegram_id == telegram_id).first()
-            return user
-        except Exception as e:
-            logger.error(f"Ошибка получения пользователя для telegram_id {telegram_id}: {e}")
-            return None
-
-    async def get_dashboard_data(self, cabinet: WBCabinet) -> Dict[str, Any]:
-        """Получение данных dashboard"""
-        try:
-            # Пытаемся получить из кэша
-            cache_key = f"bot:dashboard:cabinet:{cabinet.id}"
-            cached_data = await self.cache_manager.get_cached_data(cache_key, "bot_dashboard")
             
-            if cached_data:
+        except Exception as e:
+            logger.error(f"Ошибка получения кабинета пользователя: {e}")
+            return None
+
+    async def get_dashboard(self, user: Dict[str, Any]) -> Dict[str, Any]:
+        """Получение дашборда пользователя"""
+        try:
+            cabinet = await self.get_user_cabinet(user["telegram_id"])
+            if not cabinet:
                 return {
-                    "success": True,
-                    "data": cached_data,
-                    "telegram_text": self.formatter.format_dashboard(cached_data)
+                    "success": False,
+                    "error": "Кабинет WB не найден"
                 }
             
-            # Если нет в кэше, получаем из БД
+            # Получаем данные из БД
             dashboard_data = await self._fetch_dashboard_from_db(cabinet)
             
-            # Сохраняем в кэш
-            await self.cache_manager.set_cached_data(cache_key, dashboard_data, "bot_dashboard", ttl=300)
+            # Форматируем Telegram сообщение
+            telegram_text = self.formatter.format_dashboard(dashboard_data)
             
             return {
                 "success": True,
                 "data": dashboard_data,
-                "telegram_text": self.formatter.format_dashboard(dashboard_data)
+                "telegram_text": telegram_text
             }
             
         except Exception as e:
-            logger.error(f"Ошибка получения dashboard для кабинета {cabinet.id}: {e}")
+            logger.error(f"Ошибка получения дашборда: {e}")
             return {
                 "success": False,
-                "error": "Ошибка сервера" if "WB API" not in str(e) else "WB API временно недоступен"
+                "error": str(e)
             }
 
-    async def get_recent_orders(self, cabinet: WBCabinet, limit: int = 10, offset: int = 0) -> Dict[str, Any]:
-        """Получение последних заказов"""
+    async def get_recent_orders(self, user: Dict[str, Any], limit: int = 10, offset: int = 0) -> Dict[str, Any]:
+        """Получение последних заказов пользователя"""
         try:
-            cache_key = f"bot:orders:cabinet:{cabinet.id}:limit:{limit}:offset:{offset}"
-            cached_data = await self.cache_manager.get_cached_data(cache_key, "bot_orders")
-            
-            if cached_data:
+            cabinet = await self.get_user_cabinet(user["telegram_id"])
+            if not cabinet:
                 return {
-                    "success": True,
-                    "data": cached_data,
-                    "telegram_text": self.formatter.format_orders(cached_data)
+                    "success": False,
+                    "error": "Кабинет WB не найден"
                 }
             
-            # Получаем из БД
+            # Получаем данные из БД
             orders_data = await self._fetch_orders_from_db(cabinet, limit, offset)
             
-            # Сохраняем в кэш
-            await self.cache_manager.set_cached_data(cache_key, orders_data, "bot_orders", ttl=300)
+            # Форматируем Telegram сообщение
+            telegram_text = self.formatter.format_orders_message(orders_data)
             
             return {
                 "success": True,
                 "data": orders_data,
-                "telegram_text": self.formatter.format_orders(orders_data)
+                "telegram_text": telegram_text
             }
             
         except Exception as e:
-            logger.error(f"Ошибка получения заказов для кабинета {cabinet.id}: {e}")
+            logger.error(f"Ошибка получения заказов: {e}")
             return {
                 "success": False,
-                "error": "Ошибка сервера" if "WB API" not in str(e) else "WB API временно недоступен"
+                "error": str(e)
             }
 
-    async def get_critical_stocks(self, cabinet: WBCabinet, limit: int = 20, offset: int = 0) -> Dict[str, Any]:
-        """Получение критичных остатков"""
+    async def get_order_detail(self, user: Dict[str, Any], order_id: int) -> Dict[str, Any]:
+        """Получение деталей заказа"""
         try:
-            cache_key = f"bot:stocks:cabinet:{cabinet.id}:limit:{limit}:offset:{offset}"
-            cached_data = await self.cache_manager.get_cached_data(cache_key, "bot_stocks")
-            
-            if cached_data:
+            cabinet = await self.get_user_cabinet(user["telegram_id"])
+            if not cabinet:
                 return {
-                    "success": True,
-                    "data": cached_data,
-                    "telegram_text": self.formatter.format_critical_stocks(cached_data)
+                    "success": False,
+                    "error": "Кабинет WB не найден"
                 }
             
-            # Получаем из БД
+            # Получаем заказ из БД
+            order = self.db.query(WBOrder).filter(
+                and_(
+                    WBOrder.id == order_id,
+                    WBOrder.cabinet_id == cabinet.id
+                )
+            ).first()
+            
+            if not order:
+                return {
+                    "success": False,
+                    "error": "Заказ не найден"
+                }
+            
+            # Форматируем данные заказа
+            order_data = {
+                "id": order.id,
+                "order_id": order.order_id,
+                "nm_id": order.nm_id,
+                "article": order.article,
+                "name": order.name,
+                "brand": order.brand,
+                "size": order.size,
+                "barcode": order.barcode,
+                "quantity": order.quantity,
+                "price": order.price,
+                "total_price": order.total_price,
+                "order_date": order.order_date.isoformat() if order.order_date else None,
+                "status": order.status,
+                "created_at": order.created_at.isoformat()
+            }
+            
+            # Форматируем Telegram сообщение
+            telegram_text = self.formatter.format_order_detail_message(order_data)
+            
+            return {
+                "success": True,
+                "data": order_data,
+                "telegram_text": telegram_text
+            }
+            
+        except Exception as e:
+            logger.error(f"Ошибка получения деталей заказа: {e}")
+            return {
+                "success": False,
+                "error": str(e)
+            }
+
+    async def get_critical_stocks(self, user: Dict[str, Any], limit: int = 10, offset: int = 0) -> Dict[str, Any]:
+        """Получение критичных остатков"""
+        try:
+            cabinet = await self.get_user_cabinet(user["telegram_id"])
+            if not cabinet:
+                return {
+                    "success": False,
+                    "error": "Кабинет WB не найден"
+                }
+            
+            # Получаем данные из БД
             stocks_data = await self._fetch_critical_stocks_from_db(cabinet, limit, offset)
             
-            # Сохраняем в кэш
-            await self.cache_manager.set_cached_data(cache_key, stocks_data, "bot_stocks", ttl=300)
+            # Форматируем Telegram сообщение
+            telegram_text = self.formatter.format_critical_stocks_message(stocks_data)
             
             return {
                 "success": True,
                 "data": stocks_data,
-                "telegram_text": self.formatter.format_critical_stocks(stocks_data)
+                "telegram_text": telegram_text
             }
             
         except Exception as e:
-            logger.error(f"Ошибка получения остатков для кабинета {cabinet.id}: {e}")
+            logger.error(f"Ошибка получения критичных остатков: {e}")
             return {
                 "success": False,
-                "error": "Ошибка сервера" if "WB API" not in str(e) else "WB API временно недоступен"
+                "error": str(e)
             }
 
-    async def get_reviews_summary(self, cabinet: WBCabinet, limit: int = 10, offset: int = 0) -> Dict[str, Any]:
-        """Получение сводки отзывов"""
+    async def get_reviews_summary(self, user: Dict[str, Any], limit: int = 10, offset: int = 0) -> Dict[str, Any]:
+        """Получение сводки по отзывам"""
         try:
-            cache_key = f"bot:reviews:cabinet:{cabinet.id}:limit:{limit}:offset:{offset}"
-            cached_data = await self.cache_manager.get_cached_data(cache_key, "bot_reviews")
-            
-            if cached_data:
+            cabinet = await self.get_user_cabinet(user["telegram_id"])
+            if not cabinet:
                 return {
-                    "success": True,
-                    "data": cached_data,
-                    "telegram_text": self.formatter.format_reviews(cached_data)
+                    "success": False,
+                    "error": "Кабинет WB не найден"
                 }
             
-            # Получаем из БД
+            # Получаем данные из БД
             reviews_data = await self._fetch_reviews_from_db(cabinet, limit, offset)
             
-            # Сохраняем в кэш
-            await self.cache_manager.set_cached_data(cache_key, reviews_data, "bot_reviews", ttl=300)
+            # Форматируем Telegram сообщение
+            telegram_text = self.formatter.format_reviews_message(reviews_data)
             
             return {
                 "success": True,
                 "data": reviews_data,
-                "telegram_text": self.formatter.format_reviews(reviews_data)
+                "telegram_text": telegram_text
             }
             
         except Exception as e:
-            logger.error(f"Ошибка получения отзывов для кабинета {cabinet.id}: {e}")
+            logger.error(f"Ошибка получения отзывов: {e}")
             return {
                 "success": False,
-                "error": "Ошибка сервера" if "WB API" not in str(e) else "WB API временно недоступен"
+                "error": str(e)
             }
 
-    async def get_analytics_sales(self, cabinet: WBCabinet, period: str = "7d") -> Dict[str, Any]:
+    async def get_analytics_sales(self, user: Dict[str, Any], period: str = "7d") -> Dict[str, Any]:
         """Получение аналитики продаж"""
         try:
-            cache_key = f"bot:analytics:cabinet:{cabinet.id}:period:{period}"
-            cached_data = await self.cache_manager.get_cached_data(cache_key, "bot_analytics")
-            
-            if cached_data:
+            cabinet = await self.get_user_cabinet(user["telegram_id"])
+            if not cabinet:
                 return {
-                    "success": True,
-                    "data": cached_data,
-                    "telegram_text": self.formatter.format_analytics(cached_data)
+                    "success": False,
+                    "error": "Кабинет WB не найден"
                 }
             
-            # Получаем из БД
+            # Получаем данные из БД
             analytics_data = await self._fetch_analytics_from_db(cabinet, period)
             
-            # Сохраняем в кэш
-            await self.cache_manager.set_cached_data(cache_key, analytics_data, "bot_analytics", ttl=1800)
+            # Форматируем Telegram сообщение
+            telegram_text = self.formatter.format_analytics_message(analytics_data)
             
             return {
                 "success": True,
                 "data": analytics_data,
-                "telegram_text": self.formatter.format_analytics(analytics_data)
+                "telegram_text": telegram_text
             }
             
         except Exception as e:
-            logger.error(f"Ошибка получения аналитики для кабинета {cabinet.id}: {e}")
+            logger.error(f"Ошибка получения аналитики: {e}")
             return {
                 "success": False,
-                "error": "Ошибка сервера" if "WB API" not in str(e) else "WB API временно недоступен"
+                "error": str(e)
             }
 
-    async def start_sync(self, cabinet: WBCabinet) -> Dict[str, Any]:
-        """Запуск синхронизации"""
+    async def start_sync(self, user: Dict[str, Any]) -> Dict[str, Any]:
+        """Запуск синхронизации данных"""
         try:
-            result = await self.sync_service.sync_cabinet(cabinet)
+            logger.info(f"start_sync called with user: {user}")
+            cabinet = await self.get_user_cabinet(user["telegram_id"])
+            logger.info(f"cabinet: {cabinet}, type: {type(cabinet)}")
+            if not cabinet:
+                return {
+                    "success": False,
+                    "error": "Кабинет WB не найден"
+                }
             
-            return {
-                "success": True,
-                "data": {
-                    "sync_id": f"sync_{cabinet.id}_{int(result.get('timestamp', 0))}",
-                    "status": "started",
-                    "message": "Синхронизация запущена"
-                },
-                "telegram_text": self.formatter.format_sync_status({
-                    "last_sync": "Сейчас",
-                    "status": "started",
-                    "duration_seconds": 0,
-                    "cabinets_processed": 1,
-                    "updates": {"orders": {"new": 0}, "stocks": {"updated": 0}, "reviews": {"new": 0}, "products": {"changed": 0}, "analytics": {"recalculated": False}},
-                    "next_sync": "Через минуту",
-                    "sync_mode": "manual",
-                    "interval_seconds": 60,
-                    "statistics": {"successful_today": 0, "errors_today": 0, "average_duration": 0, "last_error": None}
-                })
-            }
+            # Запускаем синхронизацию
+            result = await self.sync_service.sync_all_data(cabinet)
             
+            if result["status"] == "success":
+                return {
+                    "success": True,
+                    "data": result,
+                    "telegram_text": "🔄 Синхронизация завершена успешно!"
+                }
+            else:
+                return {
+                    "success": False,
+                    "error": result.get("error_message", "Ошибка синхронизации")
+                }
+                
         except Exception as e:
-            logger.error(f"Ошибка запуска синхронизации для кабинета {cabinet.id}: {e}")
+            logger.error(f"Ошибка запуска синхронизации: {e}")
             return {
                 "success": False,
-                "error": "Ошибка сервера"
+                "error": str(e)
             }
 
-    async def get_sync_status(self, cabinet: WBCabinet) -> Dict[str, Any]:
+    async def get_sync_status(self) -> Dict[str, Any]:
         """Получение статуса синхронизации"""
         try:
-            status_data = await self.sync_service.get_sync_status()
+            status = await self.sync_service.get_sync_status()
             
             return {
                 "success": True,
-                "data": status_data,
-                "telegram_text": self.formatter.format_sync_status(status_data)
+                "data": status,
+                "telegram_text": f"📊 Статус синхронизации: {status.get('status', 'Неизвестно')}"
             }
             
         except Exception as e:
-            logger.error(f"Ошибка получения статуса синхронизации для кабинета {cabinet.id}: {e}")
+            logger.error(f"Ошибка получения статуса синхронизации: {e}")
             return {
                 "success": False,
-                "error": "Ошибка сервера"
+                "error": str(e)
             }
 
-    # ===== МЕТОДЫ ДЛЯ WB КАБИНЕТОВ =====
+    async def connect_cabinet(self, user: Dict[str, Any], api_key: str) -> Dict[str, Any]:
+        """Подключение WB кабинета"""
+        try:
+            logger.info(f"connect_cabinet called with user: {user}, api_key: {api_key}")
+            logger.info(f"user type: {type(user)}")
+            # Проверяем, есть ли уже кабинет у пользователя
+            existing_cabinet = self.db.query(WBCabinet).filter(
+                WBCabinet.user_id == user["id"]
+            ).first()
+            if existing_cabinet:
+                return {
+                    "success": False,
+                    "error": "Cabinet already connected"
+                }
+            
+            # Проверяем, не используется ли уже этот API ключ
+            existing_key = self.db.query(WBCabinet).filter(
+                WBCabinet.api_key == api_key
+            ).first()
+            if existing_key:
+                return {
+                    "success": False,
+                    "error": "API key already in use"
+                }
+            
+            # Валидируем API ключ через WB API
+            logger.info(f"Creating WBAPIClient with api_key: {api_key}")
+            from app.features.wb_api.client import WBAPIClient
+            
+            # Создаем временный объект кабинета для валидации
+            temp_cabinet = WBCabinet(
+                user_id=user["id"],
+                api_key=api_key,
+                name="temp",
+                is_active=True
+            )
+            wb_client = WBAPIClient(temp_cabinet)
+            logger.info(f"WBAPIClient created successfully")
+            
+            try:
+                # Пробуем получить данные для валидации
+                warehouses = await wb_client.get_warehouses()
+                if not warehouses:
+                    return {
+                        "success": False,
+                        "error": "Invalid API key"
+                    }
+            except Exception:
+                return {
+                    "success": False,
+                    "error": "Invalid API key"
+                }
+            
+            # Создаем кабинет
+            cabinet = WBCabinet(
+                user_id=user["id"],
+                api_key=api_key,
+                name=f"WB Cabinet {user['telegram_id']}",
+                is_active=True
+            )
+            
+            self.db.add(cabinet)
+            self.db.commit()
+            self.db.refresh(cabinet)
+            
+            # Форматируем ответ
+            cabinet_data = {
+                "cabinet_id": str(cabinet.id),
+                "cabinet_name": cabinet.name,
+                "api_key": api_key,
+                "connected_at": cabinet.created_at.isoformat() if cabinet.created_at else None,
+                "status": "connected",
+                "api_key_status": "valid"
+            }
+            
+            telegram_text = self.formatter.format_cabinet_connect_message(cabinet_data)
+            
+            return {
+                "success": True,
+                "data": cabinet_data,
+                "telegram_text": telegram_text
+            }
+            
+        except Exception as e:
+            logger.error(f"Ошибка подключения кабинета: {e}")
+            return {
+                "success": False,
+                "error": str(e)
+            }
 
-    async def get_cabinet_status(self, user: 'User') -> Dict[str, Any]:
+    async def get_cabinet_status(self, user: Dict[str, Any]) -> Dict[str, Any]:
         """Получение статуса кабинетов пользователя"""
         try:
+            # Получаем все кабинеты пользователя
             cabinets = self.db.query(WBCabinet).filter(
-                WBCabinet.user_id == user.id
+                WBCabinet.user_id == user["id"]
             ).all()
             
             if not cabinets:
@@ -288,17 +438,16 @@ class BotAPIService:
             active_count = 0
             
             for cabinet in cabinets:
-                status = "active" if cabinet.is_active else "inactive"
                 if cabinet.is_active:
                     active_count += 1
                 
                 cabinet_data.append({
                     "id": f"cabinet_{cabinet.id}",
-                    "name": cabinet.cabinet_name,
-                    "status": status,
+                    "name": cabinet.name or "Неизвестный кабинет",
+                    "status": "active" if cabinet.is_active else "inactive",
+                    "api_key_status": "valid" if cabinet.is_active else "invalid",
                     "connected_at": cabinet.created_at.isoformat() if cabinet.created_at else None,
-                    "last_sync": cabinet.last_sync_at.isoformat() if cabinet.last_sync_at else None,
-                    "api_key_status": "valid" if cabinet.is_active else "invalid"
+                    "last_sync": cabinet.last_sync_at.isoformat() if cabinet.last_sync_at else None
                 })
             
             # Форматируем Telegram сообщение
@@ -319,132 +468,15 @@ class BotAPIService:
             logger.error(f"Ошибка получения статуса кабинетов: {e}")
             return {
                 "success": False,
-                "error": f"Ошибка получения статуса: {str(e)}",
-                "telegram_text": "❌ ОШИБКА\n\n🔧 Не удалось получить статус кабинетов"
+                "error": str(e)
             }
 
-    async def connect_cabinet(self, user: 'User', api_key: str) -> Dict[str, Any]:
-        """Подключение нового кабинета"""
-        try:
-            # 1. Проверяем, есть ли уже кабинет у пользователя
-            existing_cabinet = self.db.query(WBCabinet).filter(
-                WBCabinet.user_id == user.id,
-                WBCabinet.is_active == True
-            ).first()
-            
-            if existing_cabinet:
-                return {
-                    "success": False,
-                    "error": "У пользователя уже есть активный кабинет",
-                    "telegram_text": "❌ ОШИБКА ПОДКЛЮЧЕНИЯ\n\n🔑 У вас уже есть подключенный кабинет"
-                }
-            
-            # 2. Проверяем уникальность API ключа
-            duplicate_cabinet = self.db.query(WBCabinet).filter(
-                WBCabinet.api_key == api_key
-            ).first()
-            
-            if duplicate_cabinet:
-                return {
-                    "success": False,
-                    "error": "API ключ уже используется другим пользователем",
-                    "telegram_text": "❌ ОШИБКА ПОДКЛЮЧЕНИЯ\n\n🔑 Этот API ключ уже используется"
-                }
-            
-            # 3. Создаем временный кабинет для валидации
-            temp_cabinet = WBCabinet(
-                user_id=user.id,
-                api_key=api_key,
-                cabinet_name="Temp Cabinet",
-                is_active=False
-            )
-            
-            # 4. Валидируем API ключ
-            from app.features.wb_api.client import WBAPIClient
-            client = WBAPIClient(temp_cabinet)
-            is_valid = await client.validate_api_key()
-            
-            if not is_valid:
-                return {
-                    "success": False,
-                    "error": "Неверный API ключ",
-                    "telegram_text": "❌ ОШИБКА ПОДКЛЮЧЕНИЯ\n\n🔑 Неверный API ключ"
-                }
-            
-            # 5. Получаем информацию о кабинете
-            warehouses = await client.get_warehouses()
-            cabinet_name = f"WB Cabinet {user.telegram_id}"
-            
-            if warehouses:
-                cabinet_name = warehouses[0].get('name', cabinet_name)
-            
-            # 6. Создаем кабинет
-            cabinet = WBCabinet(
-                user_id=user.id,
-                api_key=api_key,
-                cabinet_name=cabinet_name,
-                is_active=True
-            )
-            
-            self.db.add(cabinet)
-            self.db.commit()
-            self.db.refresh(cabinet)
-            
-            # 7. Форматируем ответ
-            connect_data = {
-                "cabinet_name": cabinet_name,
-                "status": "connected",
-                "connected_at": cabinet.created_at.isoformat(),
-                "api_key_status": "valid"
-            }
-            telegram_text = self.formatter.format_cabinet_connect_message(connect_data)
-            
-            return {
-                "success": True,
-                "data": {
-                    "cabinet_id": str(cabinet.id),
-                    "cabinet_name": cabinet_name,
-                    "connected_at": cabinet.created_at.isoformat(),
-                    "api_key_status": "valid",
-                    "permissions": ["read_orders", "read_stocks", "read_reviews"],
-                    "validation": {
-                        "is_valid": True,
-                        "warehouses_count": len(warehouses)
-                    }
-                },
-                "telegram_text": telegram_text
-            }
-            
-        except Exception as e:
-            logger.error(f"Ошибка подключения кабинета: {e}")
-            return {
-                "success": False,
-                "error": f"Ошибка подключения: {str(e)}",
-                "telegram_text": "❌ ОШИБКА ПОДКЛЮЧЕНИЯ\n\n🔧 Произошла ошибка при подключении"
-            }
-
-    # Вспомогательные методы для получения данных из БД
     async def _fetch_dashboard_from_db(self, cabinet: WBCabinet) -> Dict[str, Any]:
-        """Получение данных dashboard из БД"""
+        """Получение данных дашборда из БД"""
         try:
             now = datetime.now(timezone.utc)
             today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
             yesterday_start = today_start - timedelta(days=1)
-            
-            # Статус кабинета
-            status = "Активен" if cabinet.is_active else "Неактивен"
-            
-            # Время последней синхронизации
-            if cabinet.last_sync_at:
-                sync_diff = now - cabinet.last_sync_at
-                if sync_diff.total_seconds() < 60:
-                    last_sync = f"{int(sync_diff.total_seconds())} сек назад"
-                elif sync_diff.total_seconds() < 3600:
-                    last_sync = f"{int(sync_diff.total_seconds() / 60)} мин назад"
-                else:
-                    last_sync = f"{int(sync_diff.total_seconds() / 3600)} ч назад"
-            else:
-                last_sync = "Никогда"
             
             # Товары
             total_products = self.db.query(WBProduct).filter(
@@ -452,7 +484,17 @@ class BotAPIService:
             ).count()
             
             active_products = self.db.query(WBProduct).filter(
-                and_(WBProduct.cabinet_id == cabinet.id, WBProduct.is_active == True)
+                and_(
+                    WBProduct.cabinet_id == cabinet.id,
+                    WBProduct.is_active == True
+                )
+            ).count()
+            
+            critical_stocks = self.db.query(WBStock).filter(
+                and_(
+                    WBStock.cabinet_id == cabinet.id,
+                    WBStock.quantity <= 5
+                )
             ).count()
             
             # Заказы за сегодня
@@ -460,119 +502,47 @@ class BotAPIService:
                 and_(
                     WBOrder.cabinet_id == cabinet.id,
                     WBOrder.order_date >= today_start,
-                    WBOrder.is_cancel == False
+                    WBOrder.status != 'canceled'
                 )
             ).all()
             
-            today_count = len(orders_today)
-            today_amount = sum(order.total_price or 0 for order in orders_today)
-            
-            # Заказы за вчера
             orders_yesterday = self.db.query(WBOrder).filter(
                 and_(
                     WBOrder.cabinet_id == cabinet.id,
                     WBOrder.order_date >= yesterday_start,
                     WBOrder.order_date < today_start,
-                    WBOrder.is_cancel == False
+                    WBOrder.status != 'canceled'
                 )
             ).all()
             
+            today_count = len(orders_today)
+            today_amount = sum(order.total_price or 0 for order in orders_today)
             yesterday_count = len(orders_yesterday)
             yesterday_amount = sum(order.total_price or 0 for order in orders_yesterday)
             
-            # Рост заказов
+            # Рост в процентах
+            growth_percent = 0.0
             if yesterday_count > 0:
-                growth_percent = round(((today_count - yesterday_count) / yesterday_count) * 100, 1)
-            else:
-                growth_percent = 100.0 if today_count > 0 else 0.0
-            
-            # Остатки
-            stocks = self.db.query(WBStock).filter(
-                WBStock.cabinet_id == cabinet.id
-            ).all()
-            
-            # Группируем остатки по товарам
-            stock_by_product = {}
-            for stock in stocks:
-                if stock.nm_id not in stock_by_product:
-                    stock_by_product[stock.nm_id] = {}
-                stock_by_product[stock.nm_id][stock.size or "UNKNOWN"] = stock.quantity or 0
-            
-            critical_count = 0
-            zero_count = 0
-            attention_needed = 0
-            
-            for nm_id, sizes in stock_by_product.items():
-                total_stock = sum(sizes.values())
-                if total_stock == 0:
-                    zero_count += 1
-                elif total_stock < 5:
-                    critical_count += 1
-                elif total_stock < 10:
-                    attention_needed += 1
-            
-            # Топ товар (по заказам за 7 дней)
-            week_ago = now - timedelta(days=7)
-            top_orders = self.db.query(
-                WBOrder.nm_id,
-                func.count(WBOrder.id).label('order_count')
-            ).filter(
-                and_(
-                    WBOrder.cabinet_id == cabinet.id,
-                    WBOrder.order_date >= week_ago,
-                    WBOrder.is_cancel == False
-                )
-            ).group_by(WBOrder.nm_id).order_by(func.count(WBOrder.id).desc()).first()
-            
-            top_product = "Нет данных"
-            if top_orders:
-                product = self.db.query(WBProduct).filter(
-                    and_(WBProduct.cabinet_id == cabinet.id, WBProduct.nm_id == top_orders.nm_id)
-                ).first()
-                if product:
-                    top_product = f"{product.name} ({top_orders.order_count} шт/7дн)"
+                growth_percent = ((today_count - yesterday_count) / yesterday_count) * 100
             
             # Отзывы
-            reviews_today = self.db.query(WBReview).filter(
-                and_(
-                    WBReview.cabinet_id == cabinet.id,
-                    WBReview.created_at >= today_start
-                )
-            ).count()
-            
-            all_reviews = self.db.query(WBReview).filter(
+            reviews = self.db.query(WBReview).filter(
                 WBReview.cabinet_id == cabinet.id
             ).all()
             
-            total_reviews = len(all_reviews)
-            if total_reviews > 0:
-                avg_rating = sum(review.rating or 0 for review in all_reviews) / total_reviews
-            else:
-                avg_rating = 0.0
-            
-            # Неотвеченные отзывы (заглушка - в реальности нужна логика определения)
-            unanswered = 0
-            
-            # Рекомендации
-            recommendations = []
-            if critical_count > 0:
-                recommendations.append(f"Пополнить остатки {critical_count} критичных товаров")
-            if zero_count > 0:
-                recommendations.append(f"Заказать {zero_count} товаров с нулевыми остатками")
-            if unanswered > 0:
-                recommendations.append(f"Ответить на {unanswered} отзывов")
-            if not recommendations:
-                recommendations.append("Все в порядке!")
+            new_reviews = len([r for r in reviews if r.created_date and r.created_date >= today_start])
+            unanswered_reviews = len([r for r in reviews if not r.is_answered])
+            avg_rating = sum(r.rating or 0 for r in reviews) / len(reviews) if reviews else 0.0
             
             return {
-                "cabinet_name": cabinet.cabinet_name,
-                "last_sync": last_sync,
-                "status": status,
+                "cabinet_name": cabinet.name or "Неизвестный кабинет",
+                "last_sync": cabinet.last_sync_at.strftime("%d.%m.%Y %H:%M") if cabinet.last_sync_at else "Никогда",
+                "status": "Активен" if cabinet.is_active else "Неактивен",
                 "products": {
                     "total": total_products,
                     "active": active_products,
-                    "moderation": 0,  # Заглушка - в реальности нужна логика модерации
-                    "critical_stocks": critical_count
+                    "moderation": 0,  # Заглушка
+                    "critical_stocks": critical_stocks
                 },
                 "orders_today": {
                     "count": today_count,
@@ -582,30 +552,34 @@ class BotAPIService:
                     "growth_percent": growth_percent
                 },
                 "stocks": {
-                    "critical_count": critical_count,
-                    "zero_count": zero_count,
-                    "attention_needed": attention_needed,
-                    "top_product": top_product
+                    "critical_count": critical_stocks,
+                    "zero_count": self.db.query(WBStock).filter(
+                        and_(
+                            WBStock.cabinet_id == cabinet.id,
+                            WBStock.quantity == 0
+                        )
+                    ).count(),
+                    "attention_needed": critical_stocks,
+                    "top_product": "Нет данных"  # Заглушка
                 },
                 "reviews": {
-                    "new_count": reviews_today,
+                    "new_count": new_reviews,
                     "average_rating": round(avg_rating, 1),
-                    "unanswered": unanswered,
-                    "total": total_reviews
+                    "unanswered": unanswered_reviews,
+                    "total": len(reviews)
                 },
-                "recommendations": recommendations
+                "recommendations": ["Все в порядке!"]  # Заглушка
             }
             
         except Exception as e:
-            logger.error(f"Ошибка получения dashboard из БД для кабинета {cabinet.id}: {e}")
-            # Возвращаем базовые данные при ошибке
+            logger.error(f"Ошибка получения данных дашборда: {e}")
             return {
-                "cabinet_name": cabinet.cabinet_name,
+                "cabinet_name": "Ошибка",
                 "last_sync": "Ошибка",
                 "status": "Ошибка",
                 "products": {"total": 0, "active": 0, "moderation": 0, "critical_stocks": 0},
-                "orders_today": {"count": 0, "amount": 0, "yesterday_count": 0, "yesterday_amount": 0, "growth_percent": 0},
-                "stocks": {"critical_count": 0, "zero_count": 0, "attention_needed": 0, "top_product": "Нет данных"},
+                "orders_today": {"count": 0, "amount": 0, "yesterday_count": 0, "yesterday_amount": 0, "growth_percent": 0.0},
+                "stocks": {"critical_count": 0, "zero_count": 0, "attention_needed": 0, "top_product": "Ошибка"},
                 "reviews": {"new_count": 0, "average_rating": 0.0, "unanswered": 0, "total": 0},
                 "recommendations": ["Ошибка получения данных"]
             }
@@ -621,7 +595,7 @@ class BotAPIService:
             orders_query = self.db.query(WBOrder).filter(
                 and_(
                     WBOrder.cabinet_id == cabinet.id,
-                    WBOrder.is_cancel == False
+                    WBOrder.status != 'canceled'
                 )
             ).order_by(WBOrder.order_date.desc())
             
@@ -648,579 +622,182 @@ class BotAPIService:
                 and_(
                     WBOrder.cabinet_id == cabinet.id,
                     WBOrder.order_date >= today_start,
-                    WBOrder.is_cancel == False
+                    WBOrder.status != 'canceled'
+                )
+            ).all()
+            
+            orders_yesterday = self.db.query(WBOrder).filter(
+                and_(
+                    WBOrder.cabinet_id == cabinet.id,
+                    WBOrder.order_date >= yesterday_start,
+                    WBOrder.order_date < today_start,
+                    WBOrder.status != 'canceled'
                 )
             ).all()
             
             today_count = len(orders_today)
             today_amount = sum(order.total_price or 0 for order in orders_today)
-            
-            # Статистика за вчера
-            orders_yesterday = self.db.query(WBOrder).filter(
-                and_(
-                    WBOrder.cabinet_id == cabinet.id,
-                    WBOrder.order_date >= yesterday_start,
-                    WBOrder.order_date < today_start,
-                    WBOrder.is_cancel == False
-                )
-            ).all()
-            
             yesterday_count = len(orders_yesterday)
             yesterday_amount = sum(order.total_price or 0 for order in orders_yesterday)
             
-            # Рост заказов
+            # Рост в процентах
+            growth_percent = 0.0
             if yesterday_count > 0:
-                growth_percent = round(((today_count - yesterday_count) / yesterday_count) * 100, 1)
-            else:
-                growth_percent = 100.0 if today_count > 0 else 0.0
-            
-            # Рост суммы
-            if yesterday_amount > 0:
-                amount_growth_percent = round(((today_amount - yesterday_amount) / yesterday_amount) * 100, 1)
-            else:
-                amount_growth_percent = 100.0 if today_amount > 0 else 0.0
-            
-            # Средний чек
-            average_check = round(today_amount / today_count, 0) if today_count > 0 else 0
+                growth_percent = ((today_count - yesterday_count) / yesterday_count) * 100
             
             return {
                 "orders": orders_list,
-                "statistics": {
-                    "today_count": today_count,
-                    "today_amount": today_amount,
-                    "average_check": average_check,
-                    "growth_percent": growth_percent,
-                    "amount_growth_percent": amount_growth_percent
+                "total_orders": total_orders,
+                "orders_today": {
+                    "count": today_count,
+                    "amount": today_amount,
+                    "yesterday_count": yesterday_count,
+                    "yesterday_amount": yesterday_amount,
+                    "growth_percent": growth_percent
                 },
                 "pagination": {
                     "limit": limit,
                     "offset": offset,
-                    "total": total_orders,
-                    "has_more": (offset + limit) < total_orders
+                    "total": total_orders
                 }
             }
             
         except Exception as e:
-            logger.error(f"Ошибка получения заказов из БД для кабинета {cabinet.id}: {e}")
+            logger.error(f"Ошибка получения заказов: {e}")
             return {
                 "orders": [],
-                "statistics": {"today_count": 0, "today_amount": 0, "average_check": 0, "growth_percent": 0, "amount_growth_percent": 0},
-                "pagination": {"limit": limit, "offset": offset, "total": 0, "has_more": False}
+                "total_orders": 0,
+                "orders_today": {"count": 0, "amount": 0, "yesterday_count": 0, "yesterday_amount": 0, "growth_percent": 0.0},
+                "pagination": {"limit": limit, "offset": offset, "total": 0}
             }
 
     async def _fetch_critical_stocks_from_db(self, cabinet: WBCabinet, limit: int, offset: int) -> Dict[str, Any]:
         """Получение критичных остатков из БД"""
         try:
-            # Получаем все остатки
-            stocks = self.db.query(WBStock).filter(
-                WBStock.cabinet_id == cabinet.id
-            ).all()
+            # Получаем товары с критичными остатками
+            stocks_query = self.db.query(WBStock).filter(
+                and_(
+                    WBStock.cabinet_id == cabinet.id,
+                    WBStock.quantity <= 5
+                )
+            ).order_by(WBStock.quantity.asc())
             
-            # Группируем остатки по товарам
-            stock_by_product = {}
+            total_stocks = stocks_query.count()
+            stocks = stocks_query.offset(offset).limit(limit).all()
+            
+            # Формируем список остатков
+            stocks_list = []
             for stock in stocks:
-                if stock.nm_id not in stock_by_product:
-                    stock_by_product[stock.nm_id] = {
-                        "product": None,
-                        "stocks": {},
-                        "total_stock": 0,
-                        "price": stock.price or 0
-                    }
-                stock_by_product[stock.nm_id]["stocks"][stock.size or "UNKNOWN"] = stock.quantity or 0
-                stock_by_product[stock.nm_id]["total_stock"] += stock.quantity or 0
-            
-            # Получаем информацию о товарах
-            for nm_id in stock_by_product.keys():
-                product = self.db.query(WBProduct).filter(
-                    and_(WBProduct.cabinet_id == cabinet.id, WBProduct.nm_id == nm_id)
-                ).first()
-                stock_by_product[nm_id]["product"] = product
-            
-            # Разделяем на критичные и нулевые
-            critical_products = []
-            zero_products = []
-            
-            for nm_id, data in stock_by_product.items():
-                product = data["product"]
-                if not product:
-                    continue
-                
-                total_stock = data["total_stock"]
-                stocks_dict = data["stocks"]
-                
-                # Определяем критичные и нулевые размеры
-                critical_sizes = []
-                zero_sizes = []
-                days_left = {}
-                
-                for size, quantity in stocks_dict.items():
-                    if quantity == 0:
-                        zero_sizes.append(size)
-                    elif quantity < 5:
-                        critical_sizes.append(size)
-                        # Заглушка для расчета дней - в реальности нужна логика продаж
-                        days_left[size] = 0
-                
-                product_data = {
-                    "nm_id": nm_id,
-                    "name": product.name or "Неизвестно",
-                    "brand": product.brand or "Неизвестно",
-                    "stocks": stocks_dict,
-                    "critical_sizes": critical_sizes,
-                    "zero_sizes": zero_sizes,
-                    "sales_per_day": 0,  # Заглушка - в реальности из WBOrder
-                    "price": data["price"],
-                    "commission_percent": 0,  # Заглушка - в реальности из WB API
-                    "days_left": days_left
-                }
-                
-                if total_stock == 0:
-                    zero_products.append(product_data)
-                elif total_stock < 5 or critical_sizes:
-                    critical_products.append(product_data)
-            
-            # Применяем пагинацию
-            critical_products = critical_products[offset:offset + limit]
-            zero_products = zero_products[offset:offset + limit]
-            
-            # Сводка
-            critical_count = len([p for p in stock_by_product.values() if p["total_stock"] < 5 and p["total_stock"] > 0])
-            zero_count = len([p for p in stock_by_product.values() if p["total_stock"] == 0])
-            attention_needed = len([p for p in stock_by_product.values() if 5 <= p["total_stock"] < 10])
-            
-            # Потенциальные потери (заглушка)
-            potential_losses = sum(p["total_stock"] for p in stock_by_product.values() if p["total_stock"] < 5)
-            
-            # Рекомендации
-            recommendations = []
-            if critical_count > 0:
-                recommendations.append(f"Срочно пополнить {critical_count} критичных товаров")
-            if zero_count > 0:
-                recommendations.append(f"Заказать {zero_count} товаров с нулевыми остатками")
-            if attention_needed > 0:
-                recommendations.append(f"Проанализировать {attention_needed} товаров с низкими остатками")
-            if not recommendations:
-                recommendations.append("Все остатки в порядке!")
+                stocks_list.append({
+                    "id": stock.id,
+                    "nm_id": stock.nm_id,
+                    "name": stock.name or "Неизвестно",
+                    "brand": stock.brand or "Неизвестно",
+                    "size": stock.size or "Неизвестно",
+                    "quantity": stock.quantity or 0,
+                    "warehouse_name": stock.warehouse_name or "Неизвестно",
+                    "last_updated": stock.last_updated.isoformat() if stock.last_updated else None
+                })
             
             return {
-                "critical_products": critical_products,
-                "zero_products": zero_products,
-                "summary": {
-                    "critical_count": critical_count,
-                    "zero_count": zero_count,
-                    "attention_needed": attention_needed,
-                    "potential_losses": potential_losses
-                },
-                "recommendations": recommendations
+                "stocks": stocks_list,
+                "total_stocks": total_stocks,
+                "pagination": {
+                    "limit": limit,
+                    "offset": offset,
+                    "total": total_stocks
+                }
             }
             
         except Exception as e:
-            logger.error(f"Ошибка получения критичных остатков из БД для кабинета {cabinet.id}: {e}")
+            logger.error(f"Ошибка получения критичных остатков: {e}")
             return {
-                "critical_products": [],
-                "zero_products": [],
-                "summary": {"critical_count": 0, "zero_count": 0, "attention_needed": 0, "potential_losses": 0},
-                "recommendations": ["Ошибка получения данных"]
+                "stocks": [],
+                "total_stocks": 0,
+                "pagination": {"limit": limit, "offset": offset, "total": 0}
             }
 
     async def _fetch_reviews_from_db(self, cabinet: WBCabinet, limit: int, offset: int) -> Dict[str, Any]:
         """Получение отзывов из БД"""
         try:
-            now = datetime.now(timezone.utc)
-            today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-            
-            # Получаем все отзывы
-            all_reviews = self.db.query(WBReview).filter(
+            # Получаем отзывы
+            reviews_query = self.db.query(WBReview).filter(
                 WBReview.cabinet_id == cabinet.id
-            ).all()
+            ).order_by(WBReview.created_date.desc())
             
-            # Новые отзывы за сегодня
-            new_reviews_today = self.db.query(WBReview).filter(
-                and_(
-                    WBReview.cabinet_id == cabinet.id,
-                    WBReview.created_at >= today_start
-                )
-            ).order_by(WBReview.created_at.desc()).limit(limit).all()
+            total_reviews = reviews_query.count()
+            reviews = reviews_query.offset(offset).limit(limit).all()
             
-            # Формируем список новых отзывов
-            new_reviews = []
-            for review in new_reviews_today:
-                # Получаем информацию о товаре
-                product = self.db.query(WBProduct).filter(
-                    and_(WBProduct.cabinet_id == cabinet.id, WBProduct.nm_id == review.nm_id)
-                ).first()
-                
-                # Время назад
-                time_ago = "Неизвестно"
-                if review.created_at:
-                    diff = now - review.created_at
-                    if diff.total_seconds() < 3600:
-                        time_ago = f"{int(diff.total_seconds() / 60)} мин назад"
-                    elif diff.total_seconds() < 86400:
-                        time_ago = f"{int(diff.total_seconds() / 3600)} ч назад"
-                    else:
-                        time_ago = f"{int(diff.total_seconds() / 86400)} дн назад"
-                
-                new_reviews.append({
-                    "id": str(review.id),
-                    "product_name": product.name if product else "Неизвестно",
-                    "rating": review.rating or 0,
+            # Формируем список отзывов
+            reviews_list = []
+            for review in reviews:
+                reviews_list.append({
+                    "id": review.id,
+                    "nm_id": review.nm_id,
+                    "review_id": review.review_id,
                     "text": review.text or "",
-                    "time_ago": time_ago,
-                    "order_id": review.order_id or "N/A"
+                    "rating": review.rating or 0,
+                    "is_answered": review.is_answered,
+                    "created_date": review.created_date.isoformat() if review.created_date else None
                 })
             
-            # Неотвеченные вопросы (заглушка - в реальности нужна логика)
-            unanswered_questions = []
-            
             # Статистика
-            total_reviews = len(all_reviews)
-            if total_reviews > 0:
-                avg_rating = sum(review.rating or 0 for review in all_reviews) / total_reviews
-            else:
-                avg_rating = 0.0
-            
-            # Заглушки для статистики
-            answered_count = total_reviews  # В реальности нужна логика определения отвеченных
-            answered_percent = 100.0 if total_reviews > 0 else 0.0
-            attention_needed = len([r for r in all_reviews if (r.rating or 0) < 3])  # Низкие рейтинги
-            new_today = len(new_reviews_today)
-            
-            # Рекомендации
-            recommendations = []
-            if attention_needed > 0:
-                recommendations.append(f"Ответить на {attention_needed} отзывов с низким рейтингом")
-            if len(unanswered_questions) > 0:
-                recommendations.append(f"Ответить на {len(unanswered_questions)} неотвеченных вопросов")
-            if avg_rating < 4.0 and total_reviews > 0:
-                recommendations.append("Проанализировать жалобы на качество")
-            if not recommendations:
-                recommendations.append("Все отзывы обработаны!")
+            new_reviews = len([r for r in reviews if r.created_date and r.created_date >= datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)])
+            unanswered_reviews = len([r for r in reviews if not r.is_answered])
+            avg_rating = sum(r.rating or 0 for r in reviews) / len(reviews) if reviews else 0.0
             
             return {
+                "reviews": reviews_list,
+                "total_reviews": total_reviews,
                 "new_reviews": new_reviews,
-                "unanswered_questions": unanswered_questions,
-                "statistics": {
-                    "average_rating": round(avg_rating, 1),
-                    "total_reviews": total_reviews,
-                    "answered_count": answered_count,
-                    "answered_percent": round(answered_percent, 1),
-                    "attention_needed": attention_needed,
-                    "new_today": new_today
-                },
-                "recommendations": recommendations
+                "unanswered_reviews": unanswered_reviews,
+                "average_rating": round(avg_rating, 1),
+                "pagination": {
+                    "limit": limit,
+                    "offset": offset,
+                    "total": total_reviews
+                }
             }
             
         except Exception as e:
-            logger.error(f"Ошибка получения отзывов из БД для кабинета {cabinet.id}: {e}")
+            logger.error(f"Ошибка получения отзывов: {e}")
             return {
-                "new_reviews": [],
-                "unanswered_questions": [],
-                "statistics": {"average_rating": 0, "total_reviews": 0, "answered_count": 0, "answered_percent": 0, "attention_needed": 0, "new_today": 0},
-                "recommendations": ["Ошибка получения данных"]
+                "reviews": [],
+                "total_reviews": 0,
+                "new_reviews": 0,
+                "unanswered_reviews": 0,
+                "average_rating": 0.0,
+                "pagination": {"limit": limit, "offset": offset, "total": 0}
             }
 
     async def _fetch_analytics_from_db(self, cabinet: WBCabinet, period: str) -> Dict[str, Any]:
         """Получение аналитики из БД"""
         try:
-            now = datetime.now(timezone.utc)
-            today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-            yesterday_start = today_start - timedelta(days=1)
-            week_ago = now - timedelta(days=7)
-            month_ago = now - timedelta(days=30)
-            quarter_ago = now - timedelta(days=90)
-            
-            # Заказы за разные периоды
-            orders_today = self.db.query(WBOrder).filter(
-                and_(
-                    WBOrder.cabinet_id == cabinet.id,
-                    WBOrder.order_date >= today_start,
-                    WBOrder.is_cancel == False
-                )
-            ).all()
-            
-            orders_yesterday = self.db.query(WBOrder).filter(
-                and_(
-                    WBOrder.cabinet_id == cabinet.id,
-                    WBOrder.order_date >= yesterday_start,
-                    WBOrder.order_date < today_start,
-                    WBOrder.is_cancel == False
-                )
-            ).all()
-            
-            orders_7_days = self.db.query(WBOrder).filter(
-                and_(
-                    WBOrder.cabinet_id == cabinet.id,
-                    WBOrder.order_date >= week_ago,
-                    WBOrder.is_cancel == False
-                )
-            ).all()
-            
-            orders_30_days = self.db.query(WBOrder).filter(
-                and_(
-                    WBOrder.cabinet_id == cabinet.id,
-                    WBOrder.order_date >= month_ago,
-                    WBOrder.is_cancel == False
-                )
-            ).all()
-            
-            orders_90_days = self.db.query(WBOrder).filter(
-                and_(
-                    WBOrder.cabinet_id == cabinet.id,
-                    WBOrder.order_date >= quarter_ago,
-                    WBOrder.is_cancel == False
-                )
-            ).all()
-            
-            # Продажи по периодам
-            sales_periods = {
-                "today": {
-                    "count": len(orders_today),
-                    "amount": sum(order.total_price or 0 for order in orders_today)
-                },
-                "yesterday": {
-                    "count": len(orders_yesterday),
-                    "amount": sum(order.total_price or 0 for order in orders_yesterday)
-                },
-                "7_days": {
-                    "count": len(orders_7_days),
-                    "amount": sum(order.total_price or 0 for order in orders_7_days)
-                },
-                "30_days": {
-                    "count": len(orders_30_days),
-                    "amount": sum(order.total_price or 0 for order in orders_30_days)
-                },
-                "90_days": {
-                    "count": len(orders_90_days),
-                    "amount": sum(order.total_price or 0 for order in orders_90_days)
-                }
-            }
-            
-            # Динамика
-            yesterday_growth_percent = 0
-            if sales_periods["yesterday"]["count"] > 0:
-                yesterday_growth_percent = round(
-                    ((sales_periods["today"]["count"] - sales_periods["yesterday"]["count"]) / 
-                     sales_periods["yesterday"]["count"]) * 100, 1
-                )
-            elif sales_periods["today"]["count"] > 0:
-                yesterday_growth_percent = 100.0
-            
-            week_growth_percent = 0
-            if period == "7d" and len(orders_7_days) > 0:
-                # Сравниваем с предыдущей неделей
-                prev_week_start = week_ago - timedelta(days=7)
-                prev_week_orders = self.db.query(WBOrder).filter(
-                    and_(
-                        WBOrder.cabinet_id == cabinet.id,
-                        WBOrder.order_date >= prev_week_start,
-                        WBOrder.order_date < week_ago,
-                        WBOrder.is_cancel == False
-                    )
-                ).all()
-                
-                if len(prev_week_orders) > 0:
-                    week_growth_percent = round(
-                        ((len(orders_7_days) - len(prev_week_orders)) / len(prev_week_orders)) * 100, 1
-                    )
-                elif len(orders_7_days) > 0:
-                    week_growth_percent = 100.0
-            
-            # Средний чек
-            average_check = 0
-            if sales_periods["today"]["count"] > 0:
-                average_check = round(sales_periods["today"]["amount"] / sales_periods["today"]["count"], 0)
-            
-            # Конверсия (заглушка - в реальности нужны данные о просмотрах)
-            conversion_percent = 0.0
-            
-            # Топ товары за выбранный период
-            period_orders = orders_7_days if period == "7d" else orders_30_days if period == "30d" else orders_90_days
-            
-            # Группируем заказы по товарам
-            product_sales = {}
-            for order in period_orders:
-                nm_id = order.nm_id
-                if nm_id not in product_sales:
-                    product_sales[nm_id] = {"count": 0, "amount": 0}
-                product_sales[nm_id]["count"] += 1
-                product_sales[nm_id]["amount"] += order.total_price or 0
-            
-            # Сортируем по количеству продаж
-            top_products_data = sorted(product_sales.items(), key=lambda x: x[1]["count"], reverse=True)[:5]
-            
-            top_products = []
-            for nm_id, sales_data in top_products_data:
-                product = self.db.query(WBProduct).filter(
-                    and_(WBProduct.cabinet_id == cabinet.id, WBProduct.nm_id == nm_id)
-                ).first()
-                
-                if product:
-                    # Получаем остатки
-                    stocks = self.db.query(WBStock).filter(
-                        and_(WBStock.cabinet_id == cabinet.id, WBStock.nm_id == nm_id)
-                    ).all()
-                    
-                    stocks_dict = {}
-                    for stock in stocks:
-                        stocks_dict[stock.size or "UNKNOWN"] = stock.quantity or 0
-                    
-                    # Средний рейтинг (заглушка)
-                    rating = 4.5
-                    
-                    top_products.append({
-                        "nm_id": nm_id,
-                        "name": product.name or "Неизвестно",
-                        "sales_count": sales_data["count"],
-                        "sales_amount": sales_data["amount"],
-                        "rating": rating,
-                        "stocks": stocks_dict
-                    })
-            
-            # Сводка по остаткам
-            all_stocks = self.db.query(WBStock).filter(WBStock.cabinet_id == cabinet.id).all()
-            
-            stock_by_product = {}
-            for stock in all_stocks:
-                if stock.nm_id not in stock_by_product:
-                    stock_by_product[stock.nm_id] = 0
-                stock_by_product[stock.nm_id] += stock.quantity or 0
-            
-            critical_count = len([s for s in stock_by_product.values() if 0 < s < 5])
-            zero_count = len([s for s in stock_by_product.values() if s == 0])
-            attention_needed = len([s for s in stock_by_product.values() if 5 <= s < 10])
-            total_products = len(stock_by_product)
-            
-            stocks_summary = {
-                "critical_count": critical_count,
-                "zero_count": zero_count,
-                "attention_needed": attention_needed,
-                "total_products": total_products
-            }
-            
-            # Рекомендации
-            recommendations = []
-            if critical_count > 0:
-                recommendations.append(f"Пополнить остатки {critical_count} критичных товаров")
-            if zero_count > 0:
-                recommendations.append(f"Заказать {zero_count} товаров с нулевыми остатками")
-            if yesterday_growth_percent < -20:
-                recommendations.append("Проанализировать падение продаж")
-            if average_check < 1000 and sales_periods["today"]["count"] > 0:
-                recommendations.append("Оптимизировать цены на медленно продающиеся товары")
-            if not recommendations:
-                recommendations.append("Все показатели в норме!")
-            
+            # Заглушка - в реальности здесь должна быть сложная аналитика
             return {
-                "sales_periods": sales_periods,
-                "dynamics": {
-                    "yesterday_growth_percent": yesterday_growth_percent,
-                    "week_growth_percent": week_growth_percent,
-                    "average_check": average_check,
-                    "conversion_percent": conversion_percent
+                "period": period,
+                "sales": {
+                    "total_amount": 0,
+                    "total_orders": 0,
+                    "average_order": 0
                 },
-                "top_products": top_products,
-                "stocks_summary": stocks_summary,
-                "recommendations": recommendations
+                "products": {
+                    "total": 0,
+                    "active": 0,
+                    "top_selling": "Нет данных"
+                },
+                "reviews": {
+                    "total": 0,
+                    "average_rating": 0.0,
+                    "unanswered": 0
+                }
             }
             
         except Exception as e:
-            logger.error(f"Ошибка получения аналитики из БД для кабинета {cabinet.id}: {e}")
+            logger.error(f"Ошибка получения аналитики: {e}")
             return {
-                "sales_periods": {"today": {"count": 0, "amount": 0}, "yesterday": {"count": 0, "amount": 0}, "7_days": {"count": 0, "amount": 0}, "30_days": {"count": 0, "amount": 0}, "90_days": {"count": 0, "amount": 0}},
-                "dynamics": {"yesterday_growth_percent": 0, "week_growth_percent": 0, "average_check": 0, "conversion_percent": 0},
-                "top_products": [],
-                "stocks_summary": {"critical_count": 0, "zero_count": 0, "attention_needed": 0, "total_products": 0},
-                "recommendations": ["Ошибка получения данных"]
+                "period": period,
+                "sales": {"total_amount": 0, "total_orders": 0, "average_order": 0},
+                "products": {"total": 0, "active": 0, "top_selling": "Ошибка"},
+                "reviews": {"total": 0, "average_rating": 0.0, "unanswered": 0}
             }
-
-    async def get_order_detail(self, cabinet: WBCabinet, order_id: int) -> Dict[str, Any]:
-        """Получение детальной информации о заказе"""
-        try:
-            # Получаем заказ из БД
-            order = self.db.query(WBOrder).filter(
-                WBOrder.id == order_id,
-                WBOrder.cabinet_id == cabinet.id
-            ).first()
-            
-            if not order:
-                return {
-                    "success": False,
-                    "error": f"Заказ {order_id} не найден"
-                }
-            
-            # Получаем дополнительные данные для детального отчета
-            order_detail = await self._fetch_order_detail_from_db(cabinet, order)
-            
-            return {
-                "success": True,
-                "data": order_detail,
-                "telegram_text": self.formatter.format_order_detail(order_detail)
-            }
-            
-        except Exception as e:
-            logger.error(f"Ошибка получения деталей заказа {order_id} для кабинета {cabinet.id}: {e}")
-            return {
-                "success": False,
-                "error": "Ошибка сервера" if "WB API" not in str(e) else "WB API временно недоступен"
-            }
-
-    async def _fetch_order_detail_from_db(self, cabinet: WBCabinet, order: WBOrder) -> Dict[str, Any]:
-        """Получение детальных данных заказа из БД"""
-        # Заглушка - в реальности здесь будет сложная логика получения всех данных
-        return {
-            "order": {
-                "id": order.id,
-                "date": order.order_date.isoformat() if order.order_date else None,
-                "brand": order.brand or "Неизвестно",
-                "product_name": order.product_name or "Неизвестно",
-                "nm_id": order.nm_id,
-                "supplier_article": order.supplier_article or "",
-                "size": order.size or "",
-                "barcode": order.barcode or "",
-                "warehouse_from": order.warehouse_from or "",
-                "warehouse_to": order.warehouse_to or "",
-                "order_amount": order.order_amount or 0,
-                "commission_percent": order.commission_percent or 0,
-                "commission_amount": order.commission_amount or 0,
-                "spp_percent": order.spp_percent or 0,
-                "customer_price": order.customer_price or 0,
-                "logistics_amount": order.logistics_amount or 0,
-                "dimensions": order.dimensions or "",
-                "volume_liters": order.volume_liters or 0,
-                "warehouse_rate_per_liter": order.warehouse_rate_per_liter or 0,
-                "warehouse_rate_extra": order.warehouse_rate_extra or 0,
-                "rating": order.rating or 0,
-                "reviews_count": order.reviews_count or 0,
-                "buyout_rates": {
-                    "7_days": order.buyout_7_days or 0,
-                    "14_days": order.buyout_14_days or 0,
-                    "30_days": order.buyout_30_days or 0
-                },
-                "order_speed": {
-                    "7_days": order.order_speed_7_days or 0,
-                    "14_days": order.order_speed_14_days or 0,
-                    "30_days": order.order_speed_30_days or 0
-                },
-                "sales_periods": {
-                    "7_days": order.sales_7_days or 0,
-                    "14_days": order.sales_14_days or 0,
-                    "30_days": order.sales_30_days or 0,
-                    "60_days": order.sales_60_days or 0,
-                    "90_days": order.sales_90_days or 0
-                },
-                "category_availability": order.category_availability or "",
-                "stocks": {
-                    "L": order.stock_L or 0,
-                    "M": order.stock_M or 0,
-                    "S": order.stock_S or 0,
-                    "XL": order.stock_XL or 0
-                },
-                "stock_days": {
-                    "L": order.stock_days_L or 0,
-                    "M": order.stock_days_M or 0,
-                    "S": order.stock_days_S or 0,
-                    "XL": order.stock_days_XL or 0
-                }
-            }
-        }

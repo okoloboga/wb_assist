@@ -39,17 +39,8 @@ class WBCacheManager:
                     return json.loads(cached_data)
             
             # Если Redis недоступен, используем PostgreSQL
-            cache_record = self.db.query(WBAnalyticsCache).filter(
-                and_(
-                    WBAnalyticsCache.cache_key == cache_key,
-                    WBAnalyticsCache.cache_type == cache_type,
-                    WBAnalyticsCache.expires_at > datetime.now(timezone.utc)
-                )
-            ).first()
-            
-            if cache_record:
-                return cache_record.data
-            
+            # WBAnalyticsCache не поддерживает общий кэш, только аналитику
+            # Пока возвращаем None для общих кэшей
             return None
             
         except Exception as e:
@@ -78,30 +69,8 @@ class WBCacheManager:
                     json.dumps(data, default=str)
                 )
             
-            # Сохраняем в PostgreSQL
-            cache_record = self.db.query(WBAnalyticsCache).filter(
-                and_(
-                    WBAnalyticsCache.cache_key == cache_key,
-                    WBAnalyticsCache.cache_type == cache_type
-                )
-            ).first()
-            
-            if cache_record:
-                # Обновляем существующую запись
-                cache_record.data = data
-                cache_record.expires_at = expires_at
-                cache_record.updated_at = datetime.now(timezone.utc)
-            else:
-                # Создаем новую запись
-                cache_record = WBAnalyticsCache(
-                    cache_key=cache_key,
-                    cache_type=cache_type,
-                    data=data,
-                    expires_at=expires_at
-                )
-                self.db.add(cache_record)
-            
-            self.db.commit()
+            # WBAnalyticsCache не поддерживает общий кэш, только аналитику
+            # Пока не сохраняем в PostgreSQL для общих кэшей
             return True
             
         except Exception as e:
@@ -117,50 +86,35 @@ class WBCacheManager:
     ) -> bool:
         """Инвалидация кэша"""
         try:
-            # Инвалидируем в Redis
+            # Инвалидируем Redis кэш
             if self.redis:
                 if cache_key:
                     await self.redis.delete(cache_key)
                 elif cache_type:
-                    # Удаляем все ключи данного типа
+                    # Удаляем все ключи с определенным типом
                     pattern = f"wb:{cache_type}:*"
                     keys = await self.redis.keys(pattern)
                     if keys:
                         await self.redis.delete(*keys)
                 elif cabinet_id:
-                    # Удаляем все ключи для кабинета
+                    # Удаляем все ключи для определенного кабинета
                     pattern = f"wb:*:cabinet:{cabinet_id}:*"
                     keys = await self.redis.keys(pattern)
                     if keys:
                         await self.redis.delete(*keys)
             
-            # Инвалидируем в PostgreSQL
-            query = self.db.query(WBAnalyticsCache)
-            
-            if cache_key:
-                query = query.filter(WBAnalyticsCache.cache_key == cache_key)
-            elif cache_type:
-                query = query.filter(WBAnalyticsCache.cache_type == cache_type)
-            elif cabinet_id:
-                query = query.filter(WBAnalyticsCache.cache_key.like(f"%cabinet:{cabinet_id}%"))
-            
-            cache_records = query.all()
-            for record in cache_records:
-                self.db.delete(record)
-            
-            self.db.commit()
             return True
             
         except Exception as e:
             logger.error(f"Error invalidating cache: {str(e)}")
-            self.db.rollback()
             return False
 
+    # Специфичные методы для аналитики
     async def get_analytics_cache(
         self, 
         cabinet_id: int, 
-        report_type: str,
-        date_from: str,
+        report_type: str, 
+        date_from: str, 
         date_to: str = None
     ) -> Optional[Dict[str, Any]]:
         """Получение кэшированной аналитики"""
@@ -170,8 +124,8 @@ class WBCacheManager:
     async def set_analytics_cache(
         self, 
         cabinet_id: int, 
-        report_type: str,
-        date_from: str,
+        report_type: str, 
+        date_from: str, 
         data: Dict[str, Any],
         date_to: str = None
     ) -> bool:
@@ -179,12 +133,13 @@ class WBCacheManager:
         cache_key = self._build_analytics_key(cabinet_id, report_type, date_from, date_to)
         return await self.set_cached_data(cache_key, data, "analytics")
 
+    # Специфичные методы для товаров
     async def get_products_cache(
         self, 
         cabinet_id: int, 
         filters: Dict[str, Any] = None
     ) -> Optional[Dict[str, Any]]:
-        """Получение кэшированного списка товаров"""
+        """Получение кэшированных товаров"""
         cache_key = self._build_products_key(cabinet_id, filters)
         return await self.get_cached_data(cache_key, "products")
 
@@ -194,14 +149,15 @@ class WBCacheManager:
         data: Dict[str, Any],
         filters: Dict[str, Any] = None
     ) -> bool:
-        """Сохранение списка товаров в кэш"""
+        """Сохранение товаров в кэш"""
         cache_key = self._build_products_key(cabinet_id, filters)
         return await self.set_cached_data(cache_key, data, "products")
 
+    # Специфичные методы для заказов
     async def get_orders_cache(
         self, 
         cabinet_id: int, 
-        date_from: str,
+        date_from: str, 
         date_to: str = None
     ) -> Optional[Dict[str, Any]]:
         """Получение кэшированных заказов"""
@@ -211,18 +167,19 @@ class WBCacheManager:
     async def set_orders_cache(
         self, 
         cabinet_id: int, 
+        date_from: str, 
         data: Dict[str, Any],
-        date_from: str,
         date_to: str = None
     ) -> bool:
         """Сохранение заказов в кэш"""
         cache_key = self._build_orders_key(cabinet_id, date_from, date_to)
         return await self.set_cached_data(cache_key, data, "orders")
 
+    # Специфичные методы для остатков
     async def get_stocks_cache(
         self, 
         cabinet_id: int, 
-        date_from: str,
+        date_from: str, 
         date_to: str = None
     ) -> Optional[Dict[str, Any]]:
         """Получение кэшированных остатков"""
@@ -232,14 +189,15 @@ class WBCacheManager:
     async def set_stocks_cache(
         self, 
         cabinet_id: int, 
+        date_from: str, 
         data: Dict[str, Any],
-        date_from: str,
         date_to: str = None
     ) -> bool:
         """Сохранение остатков в кэш"""
         cache_key = self._build_stocks_key(cabinet_id, date_from, date_to)
         return await self.set_cached_data(cache_key, data, "stocks")
 
+    # Специфичные методы для отзывов
     async def get_reviews_cache(
         self, 
         cabinet_id: int, 
@@ -337,87 +295,72 @@ class WBCacheManager:
         """Построение ключа для складов"""
         return f"wb:warehouses:cabinet:{cabinet_id}"
 
-    async def cleanup_expired_cache(self) -> int:
-        """Очистка устаревшего кэша"""
+    # Методы для работы с WBAnalyticsCache (специфичные для аналитики)
+    async def get_analytics_from_db(
+        self, 
+        cabinet_id: int, 
+        nm_id: int, 
+        period: str
+    ) -> Optional[WBAnalyticsCache]:
+        """Получение аналитики из БД"""
         try:
-            # Очищаем PostgreSQL
-            expired_records = self.db.query(WBAnalyticsCache).filter(
-                WBAnalyticsCache.expires_at < datetime.now(timezone.utc)
-            ).all()
+            return self.db.query(WBAnalyticsCache).filter(
+                and_(
+                    WBAnalyticsCache.cabinet_id == cabinet_id,
+                    WBAnalyticsCache.nm_id == nm_id,
+                    WBAnalyticsCache.period == period
+                )
+            ).first()
+        except Exception as e:
+            logger.error(f"Error getting analytics from DB: {str(e)}")
+            return None
+
+    async def save_analytics_to_db(
+        self, 
+        cabinet_id: int, 
+        nm_id: int, 
+        period: str, 
+        data: Dict[str, Any]
+    ) -> bool:
+        """Сохранение аналитики в БД"""
+        try:
+            # Проверяем, существует ли запись
+            existing = await self.get_analytics_from_db(cabinet_id, nm_id, period)
             
-            count = len(expired_records)
-            for record in expired_records:
-                self.db.delete(record)
+            if existing:
+                # Обновляем существующую запись
+                existing.sales_count = data.get('sales_count', 0)
+                existing.sales_amount = data.get('sales_amount', 0.0)
+                existing.buyouts_count = data.get('buyouts_count', 0)
+                existing.buyouts_amount = data.get('buyouts_amount', 0.0)
+                existing.buyout_rate = data.get('buyout_rate', 0.0)
+                existing.avg_order_speed = data.get('avg_order_speed', 0.0)
+                existing.reviews_count = data.get('reviews_count', 0)
+                existing.avg_rating = data.get('avg_rating', 0.0)
+                existing.last_calculated = datetime.now(timezone.utc)
+                existing.updated_at = datetime.now(timezone.utc)
+            else:
+                # Создаем новую запись
+                analytics = WBAnalyticsCache(
+                    cabinet_id=cabinet_id,
+                    nm_id=nm_id,
+                    period=period,
+                    sales_count=data.get('sales_count', 0),
+                    sales_amount=data.get('sales_amount', 0.0),
+                    buyouts_count=data.get('buyouts_count', 0),
+                    buyouts_amount=data.get('buyouts_amount', 0.0),
+                    buyout_rate=data.get('buyout_rate', 0.0),
+                    avg_order_speed=data.get('avg_order_speed', 0.0),
+                    reviews_count=data.get('reviews_count', 0),
+                    avg_rating=data.get('avg_rating', 0.0),
+                    last_calculated=datetime.now(timezone.utc)
+                )
+                self.db.add(analytics)
             
             self.db.commit()
-            
-            # Очищаем Redis (если доступен)
-            if self.redis:
-                # Redis автоматически удаляет ключи по TTL, но можно принудительно очистить
-                pass
-            
-            logger.info(f"Cleaned up {count} expired cache records")
-            return count
+            return True
             
         except Exception as e:
-            logger.error(f"Error cleaning up expired cache: {str(e)}")
+            logger.error(f"Error saving analytics to DB: {str(e)}")
             self.db.rollback()
-            return 0
-
-    async def get_cache_stats(self) -> Dict[str, Any]:
-        """Получение статистики кэша"""
-        try:
-            # Статистика PostgreSQL
-            total_records = self.db.query(WBAnalyticsCache).count()
-            expired_records = self.db.query(WBAnalyticsCache).filter(
-                WBAnalyticsCache.expires_at < datetime.now(timezone.utc)
-            ).count()
-            
-            # Статистика по типам
-            type_stats = {}
-            for cache_type in self.cache_ttl.keys():
-                count = self.db.query(WBAnalyticsCache).filter(
-                    WBAnalyticsCache.cache_type == cache_type
-                ).count()
-                type_stats[cache_type] = count
-            
-            return {
-                "total_records": total_records,
-                "expired_records": expired_records,
-                "active_records": total_records - expired_records,
-                "type_stats": type_stats,
-                "redis_available": self.redis is not None
-            }
-            
-        except Exception as e:
-            logger.error(f"Error getting cache stats: {str(e)}")
-            return {}
-
-    async def warm_up_cache(self, cabinet_id: int) -> bool:
-        """Прогрев кэша для кабинета"""
-        try:
-            # Здесь можно добавить логику предварительного заполнения кэша
-            # популярными запросами для кабинета
-            
-            logger.info(f"Warming up cache for cabinet {cabinet_id}")
-            return True
-            
-        except Exception as e:
-            logger.error(f"Error warming up cache: {str(e)}")
-            return False
-
-    async def health_check(self) -> bool:
-        """Проверка здоровья кэш-менеджера"""
-        try:
-            # Проверяем подключение к БД
-            self.db.execute("SELECT 1")
-            
-            # Проверяем Redis (если доступен)
-            if self.redis:
-                await self.redis.ping()
-            
-            return True
-            
-        except Exception as e:
-            logger.error(f"Cache manager health check failed: {str(e)}")
             return False
