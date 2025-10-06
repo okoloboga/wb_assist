@@ -32,23 +32,22 @@ class WBSyncService:
             
             results = {}
             
-            # Синхронизируем данные параллельно
-            tasks = [
-                self.sync_products(cabinet, client),
-                self.sync_orders(cabinet, client, date_from, date_to),
-                self.sync_stocks(cabinet, client, date_from, date_to),
-                self.sync_reviews(cabinet, client, date_from, date_to)
+            # Синхронизируем данные последовательно для избежания конфликтов
+            sync_tasks = [
+                ("products", self.sync_products(cabinet, client)),
+                ("orders", self.sync_orders(cabinet, client, date_from, date_to)),
+                ("stocks", self.sync_stocks(cabinet, client, date_from, date_to)),
+                ("reviews", self.sync_reviews(cabinet, client, date_from, date_to))
             ]
             
-            sync_results = await asyncio.gather(*tasks, return_exceptions=True)
-            
-            # Обрабатываем результаты
-            for i, result in enumerate(sync_results):
-                if isinstance(result, Exception):
-                    logger.error(f"Sync task {i} failed: {result}")
-                    results[f"task_{i}"] = {"status": "error", "error": str(result)}
-                else:
-                    results[f"task_{i}"] = result
+            for task_name, task in sync_tasks:
+                try:
+                    result = await task
+                    results[task_name] = result
+                    logger.info(f"Sync {task_name} completed: {result.get('status', 'unknown')}")
+                except Exception as e:
+                    logger.error(f"Sync {task_name} failed: {e}")
+                    results[task_name] = {"status": "error", "error": str(e)}
             
             # Обновляем время последней синхронизации
             cabinet.last_sync_at = datetime.now(timezone.utc)
@@ -94,7 +93,7 @@ class WBSyncService:
             updated = 0
             
             for product_data in products_data:
-                nm_id = product_data.get("nmId")
+                nm_id = product_data.get("nmID")  # Исправлено: nmID вместо nmId
                 if not nm_id:
                     continue
                 
@@ -108,10 +107,10 @@ class WBSyncService:
                 
                 if existing:
                     # Обновляем существующий товар
-                    existing.name = product_data.get("name")
+                    existing.name = product_data.get("title")  # Исправлено: title вместо name
                     existing.vendor_code = product_data.get("vendorCode")
                     existing.brand = product_data.get("brand")
-                    existing.category = product_data.get("category")
+                    existing.category = product_data.get("subjectName")  # Исправлено: subjectName вместо category
                     existing.price = product_data.get("price")
                     existing.discount_price = product_data.get("discountPrice")
                     existing.rating = product_data.get("rating")
@@ -125,10 +124,10 @@ class WBSyncService:
                     product = WBProduct(
                         cabinet_id=cabinet.id,
                         nm_id=nm_id,
-                        name=product_data.get("name"),
+                        name=product_data.get("title"),  # Исправлено: title вместо name
                         vendor_code=product_data.get("vendorCode"),
                         brand=product_data.get("brand"),
-                        category=product_data.get("category"),
+                        category=product_data.get("subjectName"),  # Исправлено: subjectName вместо category
                         price=product_data.get("price"),
                         discount_price=product_data.get("discountPrice"),
                         rating=product_data.get("rating"),
@@ -177,51 +176,60 @@ class WBSyncService:
             updated = 0
             
             for order_data in orders_data:
-                order_id = order_data.get("orderId")
-                nm_id = order_data.get("nmId")
-                
-                # Пропускаем заказы без order_id или nm_id
-                if not order_id or not nm_id:
+                try:
+                    order_id = order_data.get("gNumber")  # Исправлено: gNumber вместо orderId
+                    nm_id = order_data.get("nmId")
+                    
+                    # Пропускаем заказы без order_id или nm_id
+                    if not order_id or not nm_id:
+                        continue
+                    
+                    # Проверяем существующий заказ
+                    existing = self.db.query(WBOrder).filter(
+                        and_(
+                            WBOrder.cabinet_id == cabinet.id,
+                            WBOrder.order_id == str(order_id)
+                        )
+                    ).first()
+                    
+                    if existing:
+                        # Обновляем существующий заказ
+                        existing.nm_id = nm_id
+                        existing.article = order_data.get("supplierArticle")
+                        existing.name = order_data.get("subject")  # Исправлено: subject вместо name
+                        existing.brand = order_data.get("brand")
+                        existing.size = order_data.get("techSize")  # Исправлено: techSize вместо size
+                        existing.barcode = order_data.get("barcode")
+                        existing.quantity = 1  # Исправлено: всегда 1, так как нет поля quantity
+                        existing.price = order_data.get("finishedPrice")  # Исправлено: finishedPrice вместо price
+                        existing.total_price = order_data.get("totalPrice")
+                        existing.status = "canceled" if order_data.get("isCancel", False) else "active"  # Исправлено: вычисляем статус
+                        existing.order_date = self._parse_datetime(order_data.get("date"))
+                        existing.updated_at = datetime.now(timezone.utc)
+                        updated += 1
+                    else:
+                        # Создаем новый заказ
+                        order = WBOrder(
+                            cabinet_id=cabinet.id,
+                            order_id=str(order_id),
+                            nm_id=nm_id,
+                            article=order_data.get("supplierArticle"),
+                            name=order_data.get("subject"),  # Исправлено: subject вместо name
+                            brand=order_data.get("brand"),
+                            size=order_data.get("techSize"),  # Исправлено: techSize вместо size
+                            barcode=order_data.get("barcode"),
+                            quantity=1,  # Исправлено: всегда 1, так как нет поля quantity
+                            price=order_data.get("finishedPrice"),  # Исправлено: finishedPrice вместо price
+                            total_price=order_data.get("totalPrice"),
+                            status="canceled" if order_data.get("isCancel", False) else "active",  # Исправлено: вычисляем статус
+                            order_date=self._parse_datetime(order_data.get("date"))
+                        )
+                        self.db.add(order)
+                        created += 1
+                        
+                except Exception as order_error:
+                    logger.warning(f"Failed to process order {order_id}: {order_error}")
                     continue
-                
-                # Проверяем существующий заказ
-                existing = self.db.query(WBOrder).filter(
-                    and_(
-                        WBOrder.cabinet_id == cabinet.id,
-                        WBOrder.order_id == str(order_id)
-                    )
-                ).first()
-                
-                if existing:
-                    # Обновляем существующий заказ
-                    existing.nm_id = nm_id
-                    existing.article = order_data.get("supplierArticle")
-                    existing.total_price = order_data.get("totalPrice")
-                    existing.finished_price = order_data.get("finishedPrice")
-                    existing.discount_percent = order_data.get("discountPercent")
-                    existing.is_cancel = order_data.get("isCancel", False)
-                    existing.is_realization = order_data.get("isRealization", False)
-                    existing.order_date = self._parse_datetime(order_data.get("date"))
-                    existing.last_change_date = self._parse_datetime(order_data.get("lastChangeDate"))
-                    existing.updated_at = datetime.now(timezone.utc)
-                    updated += 1
-                else:
-                    # Создаем новый заказ
-                    order = WBOrder(
-                        cabinet_id=cabinet.id,
-                        order_id=str(order_id),
-                        nm_id=nm_id,
-                        article=order_data.get("supplierArticle"),
-                        total_price=order_data.get("totalPrice"),
-                        finished_price=order_data.get("finishedPrice"),
-                        discount_percent=order_data.get("discountPercent"),
-                        is_cancel=order_data.get("isCancel", False),
-                        is_realization=order_data.get("isRealization", False),
-                        order_date=self._parse_datetime(order_data.get("date")),
-                        last_change_date=self._parse_datetime(order_data.get("lastChangeDate"))
-                    )
-                    self.db.add(order)
-                    created += 1
             
             self.db.commit()
             
@@ -234,6 +242,11 @@ class WBSyncService:
             
         except Exception as e:
             logger.error(f"Orders sync failed: {str(e)}")
+            # Откатываем транзакцию при ошибке
+            try:
+                self.db.rollback()
+            except:
+                pass
             return {"status": "error", "error_message": str(e)}
 
     async def sync_stocks(
@@ -328,17 +341,21 @@ class WBSyncService:
         """Синхронизация отзывов"""
         try:
             # Получаем данные из API
-            reviews_data = await client.get_reviews(date_from, date_to)
+            reviews_response = await client.get_reviews(is_answered=False, take=1000, skip=0)
             
-            if not reviews_data:
+            if not reviews_response or "data" not in reviews_response:
                 return {"status": "error", "error_message": "No reviews data received"}
+            
+            reviews_data = reviews_response["data"].get("feedbacks", [])
+            if not reviews_data:
+                return {"status": "success", "records_processed": 0, "records_created": 0, "records_updated": 0}
             
             created = 0
             updated = 0
             
             for review_data in reviews_data:
-                review_id = review_data.get("reviewId")
-                nm_id = review_data.get("nmId")
+                review_id = review_data.get("id")  # Исправлено: id вместо reviewId
+                nm_id = review_data.get("productDetails", {}).get("nmId")  # Исправлено: из productDetails
                 
                 # Пропускаем отзывы без review_id
                 if not review_id:
@@ -356,10 +373,10 @@ class WBSyncService:
                     # Обновляем существующий отзыв
                     existing.nm_id = nm_id
                     existing.text = review_data.get("text")
-                    existing.rating = review_data.get("rating")
-                    existing.is_answered = review_data.get("isAnswered", False)
+                    existing.rating = review_data.get("productValuation")  # Исправлено: productValuation вместо rating
+                    existing.is_answered = review_data.get("answer") is not None  # Исправлено: проверяем наличие ответа
                     existing.created_date = self._parse_datetime(review_data.get("createdDate"))
-                    existing.updated_date = self._parse_datetime(review_data.get("updatedDate"))
+                    existing.updated_date = self._parse_datetime(review_data.get("createdDate"))  # Исправлено: нет updatedDate
                     existing.updated_at = datetime.now(timezone.utc)
                     updated += 1
                 else:
@@ -369,10 +386,10 @@ class WBSyncService:
                         nm_id=nm_id,
                         review_id=str(review_id),
                         text=review_data.get("text"),
-                        rating=review_data.get("rating"),
-                        is_answered=review_data.get("isAnswered", False),
+                        rating=review_data.get("productValuation"),  # Исправлено: productValuation вместо rating
+                        is_answered=review_data.get("answer") is not None,  # Исправлено: проверяем наличие ответа
                         created_date=self._parse_datetime(review_data.get("createdDate")),
-                        updated_date=self._parse_datetime(review_data.get("updatedDate"))
+                        updated_date=self._parse_datetime(review_data.get("createdDate"))  # Исправлено: нет updatedDate
                     )
                     self.db.add(review)
                     created += 1
