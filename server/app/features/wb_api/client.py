@@ -158,6 +158,7 @@ class WBAPIClient:
         result = await self._make_request("GET", url, api_type="common")
         return result or []
 
+
     async def get_products(self) -> List[Dict[str, Any]]:
         """Получение списка товаров"""
         url = f"{self.base_urls['content']}/content/v2/get/cards/list"
@@ -264,14 +265,27 @@ class WBAPIClient:
         result = await self._make_request("GET", url, params=params, api_type="orders")
         return result or []
 
-    async def get_commissions(self) -> Dict[str, Any]:
-        """Получение комиссий WB"""
+    async def get_commissions(self) -> List[Dict[str, Any]]:
+        """Получение комиссий WB по категориям товаров"""
         url = f"{self.base_urls['common']}/api/v1/tariffs/commission"
         
         params = {"locale": "ru"}
         
         result = await self._make_request("GET", url, params=params, api_type="common")
-        return result or {"data": []}
+        
+        # Извлекаем данные из ответа
+        if result and isinstance(result, dict):
+            if "data" in result:
+                return result["data"]
+            elif "response" in result and "data" in result["response"]:
+                return result["response"]["data"]
+            else:
+                # Если это словарь, но нет ключа data, возможно это сам список
+                return [result] if result else []
+        elif result and isinstance(result, list):
+            return result
+        else:
+            return []
 
     async def get_box_tariffs(self, date: str) -> Dict[str, Any]:
         """Получение тарифов для коробов"""
@@ -327,5 +341,5 @@ class WBAPIClient:
             "reviews": results[4] if not isinstance(results[4], Exception) else {"data": {"feedbacks": []}},
             "questions": results[5] if not isinstance(results[5], Exception) else {"data": {"questions": []}},
             "sales": results[6] if not isinstance(results[6], Exception) else [],
-            "commissions": results[7] if not isinstance(results[7], Exception) else {"data": []}
+            "commissions": results[7] if not isinstance(results[7], Exception) else []
         }

@@ -259,11 +259,11 @@ async def get_order_detail(
 ):
     """Получение детальной информации о заказе"""
     try:
-        cabinet = await bot_service.get_user_cabinet(telegram_id)
-        if not cabinet:
-            raise HTTPException(status_code=404, detail="Кабинет WB не найден")
+        user = await bot_service.get_user_by_telegram_id(telegram_id)
+        if not user:
+            raise HTTPException(status_code=404, detail="Пользователь не найден")
         
-        result = await bot_service.get_order_detail(cabinet, order_id)
+        result = await bot_service.get_order_detail(user, order_id)
         
         if not result["success"]:
             if "не найден" in result["error"]:

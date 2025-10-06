@@ -33,6 +33,7 @@ class WBSyncService:
             results = {}
             
             # Синхронизируем данные последовательно для избежания конфликтов
+            logger.info(f"Starting sync_all_data for cabinet {cabinet.id}")
             sync_tasks = [
                 ("products", self.sync_products(cabinet, client)),
                 ("orders", self.sync_orders(cabinet, client, date_from, date_to)),
@@ -166,8 +167,47 @@ class WBSyncService:
     ) -> Dict[str, Any]:
         """Синхронизация заказов"""
         try:
+            # Добавляем таймаут для всего процесса
+            import asyncio
+            return await asyncio.wait_for(
+                self._sync_orders_internal(cabinet, client, date_from, date_to),
+                timeout=300  # 5 минут максимум
+            )
+        except asyncio.TimeoutError:
+            logger.error("Orders sync timeout after 5 minutes")
+            return {"status": "error", "error_message": "Sync timeout"}
+        except Exception as e:
+            logger.error(f"Orders sync failed: {str(e)}")
+            return {"status": "error", "error_message": str(e)}
+
+    async def _sync_orders_internal(
+        self, 
+        cabinet: WBCabinet, 
+        client: WBAPIClient, 
+        date_from: str, 
+        date_to: str
+    ) -> Dict[str, Any]:
+        """Внутренний метод синхронизации заказов"""
+        try:
+            logger.info(f"Starting orders sync for cabinet {cabinet.id}, dates: {date_from} to {date_to}")
+            
+            # Проверяем, сколько товаров есть в базе для этого кабинета
+            products_count = self.db.query(WBProduct).filter(WBProduct.cabinet_id == cabinet.id).count()
+                # logger.info(f"Products in database for cabinet {cabinet.id}: {products_count}")
+            
             # Получаем данные из API
+            logger.info("Fetching orders from WB API...")
             orders_data = await client.get_orders(date_from, date_to)
+            logger.info(f"Received {len(orders_data) if orders_data else 0} orders from API")
+            
+            # Получаем комиссии для расчета
+            try:
+                commissions_data = await client.get_commissions()
+                logger.info(f"Commissions data type: {type(commissions_data)}, length: {len(commissions_data) if isinstance(commissions_data, list) else 'N/A'}")
+                # logger.info(f"Commissions data content: {commissions_data}")
+            except Exception as e:
+                logger.error(f"Failed to get commissions: {e}")
+                commissions_data = []
             
             if not orders_data:
                 return {"status": "error", "error_message": "No orders data received"}
@@ -175,8 +215,13 @@ class WBSyncService:
             created = 0
             updated = 0
             processed_order_ids = set()  # Отслеживаем обработанные order_id в рамках одного запроса
+            max_orders = 1000  # Лимит на количество заказов для обработки
             
-            for order_data in orders_data:
+            for i, order_data in enumerate(orders_data):
+                # Ограничиваем количество обрабатываемых заказов
+                if i >= max_orders:
+                    logger.warning(f"Reached max orders limit ({max_orders}), stopping processing")
+                    break
                 try:
                     order_id = order_data.get("gNumber")  # Исправлено: gNumber вместо orderId
                     nm_id = order_data.get("nmId")
@@ -211,11 +256,61 @@ class WBSyncService:
                         existing.total_price = order_data.get("totalPrice")
                         existing.status = "canceled" if order_data.get("isCancel", False) else "active"  # Исправлено: вычисляем статус
                         existing.order_date = self._parse_datetime(order_data.get("date"))
+                        
+                        # Получаем категорию и предмет из товара по nmId
+                        product = self.db.query(WBProduct).filter(
+                            and_(
+                                WBProduct.cabinet_id == cabinet.id,
+                                WBProduct.nm_id == nm_id
+                            )
+                        ).first()
+                        
+                        if product:
+                            existing.category = product.category  # subjectName из товара
+                            existing.subject = product.name       # title из товара
+                            # logger.info(f"Found product for nmId={nm_id}: category='{product.category}', subject='{product.name}'")
+                        else:
+                            # Fallback: используем данные из заказа
+                            existing.category = order_data.get("subject")  # subject из заказа как категория
+                            existing.subject = order_data.get("subject")   # subject из заказа как предмет
+                            # logger.info(f"Product not found for nmId={nm_id}, using order data: category='{existing.category}', subject='{existing.subject}'")
+                        
+                        total_price = order_data.get("totalPrice", 0)
+                        commission_percent, commission_amount = self._calculate_commission(
+                            existing.category, existing.subject, total_price, commissions_data
+                        )
+                        existing.commission_percent = commission_percent
+                        existing.commission_amount = commission_amount
+                        # logger.info(f"Updated order {order_id}: commission_percent={commission_percent}, commission_amount={commission_amount}")
+                        
                         existing.updated_at = datetime.now(timezone.utc)
                         updated += 1
                     else:
                         # Создаем новый заказ
                         try:
+                            # Получаем категорию и предмет из товара по nmId
+                            product = self.db.query(WBProduct).filter(
+                                and_(
+                                    WBProduct.cabinet_id == cabinet.id,
+                                    WBProduct.nm_id == nm_id
+                                )
+                            ).first()
+                            
+                            if product:
+                                category = product.category  # subjectName из товара
+                                subject = product.name       # title из товара
+                                # logger.info(f"Found product for nmId={nm_id}: category='{product.category}', subject='{product.name}'")
+                            else:
+                                # Fallback: используем данные из заказа
+                                category = order_data.get("subject")  # subject из заказа как категория
+                                subject = order_data.get("subject")   # subject из заказа как предмет
+                                # logger.info(f"Product not found for nmId={nm_id}, using order data: category='{category}', subject='{subject}'")
+                            
+                            total_price = order_data.get("totalPrice", 0)
+                            commission_percent, commission_amount = self._calculate_commission(
+                                category, subject, total_price, commissions_data
+                            )
+                            
                             order = WBOrder(
                                 cabinet_id=cabinet.id,
                                 order_id=str(order_id),
@@ -225,6 +320,11 @@ class WBSyncService:
                                 brand=order_data.get("brand"),
                                 size=order_data.get("techSize"),  # Исправлено: techSize вместо size
                                 barcode=order_data.get("barcode"),
+                                # Поля категории и комиссии
+                                category=category,
+                                subject=subject,
+                                commission_percent=commission_percent,
+                                commission_amount=commission_amount,
                                 quantity=1,  # Исправлено: всегда 1, так как нет поля quantity
                                 price=order_data.get("finishedPrice"),  # Исправлено: finishedPrice вместо price
                                 total_price=order_data.get("totalPrice"),
@@ -233,6 +333,7 @@ class WBSyncService:
                             )
                             self.db.add(order)
                             self.db.flush()  # Принудительно выполняем вставку для проверки уникальности
+                            # logger.info(f"Created order {order_id}: commission_percent={commission_percent}, commission_amount={commission_amount}")
                             created += 1
                         except Exception as insert_error:
                             # Если заказ уже существует (race condition), пропускаем его
@@ -470,3 +571,89 @@ class WBSyncService:
         except Exception as e:
             logger.error(f"Get sync status failed: {str(e)}")
             return {"status": "error", "error_message": str(e)}
+
+    def _calculate_commission(self, category: str, subject: str, total_price: float, commissions_data) -> tuple[float, float]:
+        """Расчет комиссии для заказа на основе категории и предмета"""
+        try:
+            if not category or not subject or not total_price or not commissions_data:
+                # logger.warning(f"Missing data: category={category}, subject={subject}, total_price={total_price}, commissions_data={bool(commissions_data)}")
+                return 0.0, 0.0
+            
+            # logger.info(f"Calculating commission for category='{category}', subject='{subject}', total_price={total_price}")
+            
+            # Проверяем, что commissions_data - это список
+            if not isinstance(commissions_data, list):
+                logger.warning(f"Commissions data is not a list: {type(commissions_data)}")
+                return 0.0, 0.0
+            
+            if len(commissions_data) == 0:
+                logger.warning("Commissions data is empty")
+                return 0.0, 0.0
+            
+            # logger.info(f"Searching through {len(commissions_data)} commission records")
+            # logger.info(f"First commission record structure: {commissions_data[0] if commissions_data else 'No data'}")
+            
+            # Ищем комиссию по категории и предмету (точное совпадение)
+            for i, commission in enumerate(commissions_data):
+                if not isinstance(commission, dict):
+                    logger.debug(f"Commission record {i} is not a dict: {type(commission)}")
+                    continue
+                
+                parent_name = commission.get("parentName")
+                subject_name = commission.get("subjectName")
+                kgvp_marketplace = commission.get("kgvpMarketplace")
+                
+                # logger.info(f"Commission {i}: parentName='{parent_name}', subjectName='{subject_name}', kgvpMarketplace={kgvp_marketplace}")
+                
+                # Точное совпадение
+                if (parent_name == category and subject_name == subject):
+                    commission_percent = float(kgvp_marketplace) if kgvp_marketplace is not None else 0.0
+                    commission_amount = (total_price * commission_percent) / 100
+                    
+                    # logger.info(f"Found exact match: {category}/{subject} -> {commission_percent}% = {commission_amount}₽")
+                    return commission_percent, commission_amount
+                
+                # Нечеткое совпадение по предмету (если категории совпадают)
+                if (parent_name == category and subject_name and subject and 
+                    (subject_name.lower() in subject.lower() or subject.lower() in subject_name.lower())):
+                    commission_percent = float(kgvp_marketplace) if kgvp_marketplace is not None else 0.0
+                    commission_amount = (total_price * commission_percent) / 100
+                    
+                    # logger.info(f"Found fuzzy match: {category}/{subject} ~ {parent_name}/{subject_name} -> {commission_percent}% = {commission_amount}₽")
+                    return commission_percent, commission_amount
+            
+            # Если точного совпадения нет, ищем по категории
+            # logger.info(f"No exact match found, searching by category: {category}")
+            for i, commission in enumerate(commissions_data):
+                if not isinstance(commission, dict):
+                    continue
+                
+                parent_name = commission.get("parentName")
+                kgvp_marketplace = commission.get("kgvpMarketplace")
+                
+                # Точное совпадение по категории
+                if parent_name == category:
+                    commission_percent = float(kgvp_marketplace) if kgvp_marketplace is not None else 0.0
+                    commission_amount = (total_price * commission_percent) / 100
+                    
+                    # logger.info(f"Found exact category match: {category} -> {commission_percent}% = {commission_amount}₽")
+                    return commission_percent, commission_amount
+                
+                # Нечеткое совпадение по категории
+                if (parent_name and category and 
+                    (parent_name.lower() in category.lower() or category.lower() in parent_name.lower())):
+                    commission_percent = float(kgvp_marketplace) if kgvp_marketplace is not None else 0.0
+                    commission_amount = (total_price * commission_percent) / 100
+                    
+                    # logger.info(f"Found fuzzy category match: {category} ~ {parent_name} -> {commission_percent}% = {commission_amount}₽")
+                    return commission_percent, commission_amount
+            
+            # Если ничего не найдено, используем дефолтную комиссию 20%
+
+            commission_percent = 20.0
+            commission_amount = (total_price * commission_percent) / 100
+            return commission_percent, commission_amount
+            
+        except Exception as e:
+            logger.error(f"Commission calculation failed: {e}")
+            return 0.0, 0.0

@@ -165,7 +165,7 @@ async def show_order_details(callback: CallbackQuery):
         await callback.answer("❌ Неверный ID заказа")
         return
     
-    response = await bot_api_client.get_order_details(order_id=order_id)
+    response = await bot_api_client.get_order_details(order_id=order_id, user_id=callback.from_user.id)
     
     if response.success and response.data:
         order = response.data.get("order", {})

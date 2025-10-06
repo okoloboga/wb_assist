@@ -78,9 +78,15 @@ class WBOrder(Base):
     brand = Column(String(255), nullable=True)
     size = Column(String(50), nullable=True)
     barcode = Column(String(100), nullable=True)
+    # Поля категории для расчета комиссии
+    category = Column(String(255), nullable=True)
+    subject = Column(String(255), nullable=True)
     quantity = Column(Integer, nullable=True)
     price = Column(Float, nullable=True)
     total_price = Column(Float, nullable=True)
+    # Поля комиссии
+    commission_percent = Column(Float, nullable=True)
+    commission_amount = Column(Float, nullable=True)
     order_date = Column(DateTime(timezone=True), nullable=True)
     status = Column(String(50), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())

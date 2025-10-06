@@ -137,9 +137,10 @@ class BotAPIClient:
         params = {"telegram_id": user_id, "limit": limit, "offset": offset}
         return await self._make_request("GET", "/orders/recent", params=params)
 
-    async def get_order_details(self, order_id: int) -> BotAPIResponse:
+    async def get_order_details(self, order_id: int, user_id: int) -> BotAPIResponse:
         """Получить детальную информацию о заказе"""
-        return await self._make_request("GET", f"/orders/{order_id}")
+        params = {"telegram_id": user_id}
+        return await self._make_request("GET", f"/orders/{order_id}", params=params)
 
     # Остатки и товары
     async def get_critical_stocks(

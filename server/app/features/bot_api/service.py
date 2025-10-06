@@ -153,11 +153,19 @@ class BotAPIService:
             # Форматируем данные заказа
             order_data = {
                 "id": order.id,
+                "date": order.order_date.isoformat() if order.order_date else None,
+                "amount": order.total_price or 0,
+                "product_name": order.name or "Неизвестно",
+                "brand": order.brand or "Неизвестно",
+                "warehouse_from": "Неизвестно",  # Заглушка - в реальности из WBWarehouse
+                "warehouse_to": "Неизвестно",    # Заглушка - в реальности из WBWarehouse
+                "commission_percent": order.commission_percent or 0.0,  # Реальные данные из БД
+                "commission_amount": order.commission_amount or 0.0,  # Реальные данные из БД
+                "rating": 0.0,  # Заглушка - в реальности из WBReview
+                # Дополнительные поля для детального отчета
                 "order_id": order.order_id,
                 "nm_id": order.nm_id,
                 "article": order.article,
-                "name": order.name,
-                "brand": order.brand,
                 "size": order.size,
                 "barcode": order.barcode,
                 "quantity": order.quantity,
@@ -169,7 +177,7 @@ class BotAPIService:
             }
             
             # Форматируем Telegram сообщение
-            telegram_text = self.formatter.format_order_detail_message(order_data)
+            telegram_text = self.formatter.format_order_detail({"order": order_data})
             
             return {
                 "success": True,
@@ -284,7 +292,9 @@ class BotAPIService:
                 }
             
             # Запускаем синхронизацию
+            logger.info(f"Calling sync_all_data for cabinet {cabinet.id}")
             result = await self.sync_service.sync_all_data(cabinet)
+            logger.info(f"sync_all_data result: {result}")
             
             if result["status"] == "success":
                 return {
