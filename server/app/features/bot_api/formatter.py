@@ -86,7 +86,6 @@ class BotMessageFormatter:
                     message += f"""🧾 #{order.get('id', 'N/A')} | {order_date} | {order.get('amount', 0):,.0f}₽
    {order.get('product_name', 'N/A')} | {order.get('brand', 'N/A')}
    {order.get('warehouse_from', 'N/A')} → {order.get('warehouse_to', 'N/A')}
-   Комиссия: {order.get('commission_percent', 0):.1f}% | Рейтинг: {order.get('rating', 0):.1f}⭐
 
 """
             
@@ -197,12 +196,10 @@ class BotMessageFormatter:
                     pros = review.get("pros", "")
                     cons = review.get("cons", "")
                     
-                    message += f"""{stars} {review.get('product_name', 'N/A')} | {rating}/5
+                    message += f"""{stars} | {rating}/5
    Пользователь: {user_name} {f"({color})" if color else ""}
-   "{review.get('text', 'N/A')}"
    Плюсы: {pros if pros else "Не указаны"}
    Минусы: {cons if cons else "Не указаны"}
-   Время: {review.get('time_ago', 'N/A')} | ID: #{review.get('order_id', 'N/A')}
 
 """
             
