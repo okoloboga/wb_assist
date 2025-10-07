@@ -159,59 +159,20 @@ class BotAPIService:
                 )
             ).first()
             
-            # Получаем остатки товара
-            stocks = []
-            logger.info(f"DEBUG stocks: order.nm_id={order.nm_id}, type={type(order.nm_id)}, bool={bool(order.nm_id)}")
-            if order.nm_id:
-                logger.info(f"DEBUG stocks: Searching by nm_id={order.nm_id}")
-                # Если есть nm_id, ищем по нему
-                stocks = self.db.query(WBStock).filter(
-                    and_(
-                        WBStock.cabinet_id == order.cabinet_id,
-                        WBStock.nm_id == order.nm_id
-                    )
-                ).all()
-                logger.info(f"DEBUG stocks: Found {len(stocks)} stocks by nm_id")
-            else:
-                # Если nm_id нет, ищем по названию товара
-                logger.warning(f"Order {order.id} has no nm_id, searching stocks by product name: '{order.name}'")
-                stocks = self.db.query(WBStock).filter(
-                    and_(
-                        WBStock.cabinet_id == order.cabinet_id,
-                        WBStock.subject == order.name  # Ищем по названию товара
-                    )
-                ).all()
-                logger.warning(f"Found {len(stocks)} stocks for product name '{order.name}'")
-                
-                # Если не нашли по точному названию, попробуем найти по частичному совпадению
-                if not stocks:
-                    # Ищем по частичному совпадению названия
-                    partial_stocks = self.db.query(WBStock).filter(
-                        and_(
-                            WBStock.cabinet_id == order.cabinet_id,
-                            WBStock.subject.like(f"%{order.name}%")  # Частичное совпадение
-                        )
-                    ).all()
-                    logger.warning(f"Found {len(partial_stocks)} stocks with partial match for '{order.name}'")
-                    stocks = partial_stocks
-                
-                # Если все еще не нашли, показываем все остатки для этого кабинета
-                if not stocks:
-                    all_stocks = self.db.query(WBStock).filter(WBStock.cabinet_id == order.cabinet_id).all()
-                    logger.warning(f"All stocks for cabinet {order.cabinet_id}: {[(s.subject, s.size, s.quantity) for s in all_stocks[:3]]}")
-                    # Берем первые несколько остатков как пример
-                    stocks = all_stocks[:5]
+            # Получаем остатки товара по размерам
+            stocks = self.db.query(WBStock).filter(
+                and_(
+                    WBStock.cabinet_id == order.cabinet_id,
+                    WBStock.nm_id == order.nm_id
+                )
+            ).all()
             
             # Формируем остатки по размерам
             stocks_dict = {}
-            logger.info(f"DEBUG stocks_dict: Processing {len(stocks)} stocks")
             for stock in stocks:
                 size = stock.size or "ONE SIZE"
                 quantity = stock.quantity or 0
                 stocks_dict[size] = quantity
-                logger.info(f"DEBUG stocks_dict: size={size}, quantity={quantity}")
-            logger.info(f"DEBUG stocks_dict: Final result={stocks_dict}")
-            logger.info(f"DEBUG: After stocks_dict formation")
             
             # Получаем статистику отзывов для товара
             reviews_count = self.db.query(WBReview).filter(
@@ -220,7 +181,6 @@ class BotAPIService:
                     WBReview.nm_id == order.nm_id
                 )
             ).count()
-            logger.info(f"DEBUG: After reviews_count query")
             
             # Получаем статистику продаж для товара
             try:
@@ -270,8 +230,6 @@ class BotAPIService:
             # Отладочный лог
             logger.info(f"Order data for order {order_id}: spp_percent={order.spp_percent}, customer_price={order.customer_price}, discount_percent={order.discount_percent}")
             logger.info(f"Order data keys: {list(order_data.keys())}")
-            logger.info(f"DEBUG final stocks: {order_data.get('stocks', {})}")
-            logger.info(f"DEBUG final nm_id: {order_data.get('nm_id', 'NOT_FOUND')}")
             
             # Форматируем Telegram сообщение
             telegram_text = self.formatter.format_order_detail({"order": order_data})
@@ -368,7 +326,7 @@ class BotAPIService:
             analytics_data = await self._fetch_analytics_from_db(cabinet, period)
             
             # Форматируем Telegram сообщение
-            telegram_text = self.formatter.format_analytics_message(analytics_data)
+            telegram_text = self.formatter.format_analytics(analytics_data)
             
             return {
                 "success": True,
@@ -592,17 +550,18 @@ class BotAPIService:
             today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
             yesterday_start = today_start - timedelta(days=1)
             
-            # Товары
-            total_products = self.db.query(WBProduct).filter(
-                WBProduct.cabinet_id == cabinet.id
-            ).count()
+            # Товары - считаем уникальные nm_id из остатков (реальные товары на складе)
+            total_products = self.db.query(WBStock.nm_id).filter(
+                WBStock.cabinet_id == cabinet.id
+            ).distinct().count()
             
-            active_products = self.db.query(WBProduct).filter(
+            # Активные товары - товары с остатками > 0
+            active_products = self.db.query(WBStock.nm_id).filter(
                 and_(
-                    WBProduct.cabinet_id == cabinet.id,
-                    WBProduct.is_active == True
+                    WBStock.cabinet_id == cabinet.id,
+                    WBStock.quantity > 0
                 )
-            ).count()
+            ).distinct().count()
             
             critical_stocks = self.db.query(WBStock).filter(
                 and_(
@@ -805,7 +764,7 @@ class BotAPIService:
     async def _fetch_critical_stocks_from_db(self, cabinet: WBCabinet, limit: int, offset: int) -> Dict[str, Any]:
         """Получение критичных остатков из БД"""
         try:
-            # Получаем товары с критичными остатками
+            # Получаем товары с критичными остатками (включая нулевые)
             stocks_query = self.db.query(WBStock).filter(
                 and_(
                     WBStock.cabinet_id == cabinet.id,
@@ -819,11 +778,20 @@ class BotAPIService:
             # Формируем список остатков
             stocks_list = []
             for stock in stocks:
+                # Используем данные из остатков для названия товара
+                # Если есть category и subject, формируем название из них
+                if stock.category and stock.subject:
+                    product_name = f"{stock.category} - {stock.subject}"
+                else:
+                    product_name = "Неизвестно"
+                
+                product_brand = stock.brand or "Неизвестно"
+                
                 stocks_list.append({
                     "id": stock.id,
                     "nm_id": stock.nm_id,
-                    "name": stock.name or "Неизвестно",
-                    "brand": stock.brand or "Неизвестно",
+                    "name": product_name,
+                    "brand": product_brand,
                     "size": stock.size or "Неизвестно",
                     "quantity": stock.quantity or 0,
                     "warehouse_name": stock.warehouse_name or "Неизвестно",
@@ -839,11 +807,33 @@ class BotAPIService:
                     "sc_code": stock.sc_code
                 })
             
+            # Получаем комиссии для расчета
+            try:
+                from app.features.wb_api.client import WBAPIClient
+                client = WBAPIClient(cabinet.api_key)
+                commissions_data = await client.get_commissions()
+            except Exception as e:
+                logger.warning(f"Не удалось получить комиссии: {e}")
+                commissions_data = []
+            
             # Группируем по товарам (nm_id)
             products_dict = {}
             for stock in stocks_list:
                 nm_id = stock["nm_id"]
                 if nm_id not in products_dict:
+                    # Получаем категорию и предмет для расчета комиссии
+                    category = stock.get("category")
+                    subject = stock.get("subject")
+                    
+                    # Рассчитываем комиссию
+                    commission_percent = 0.0
+                    if category and subject and commissions_data:
+                        for commission in commissions_data:
+                            if (commission.get("parentName") == category and 
+                                commission.get("subjectName") == subject):
+                                commission_percent = commission.get("kgvpMarketplace", 0.0)
+                                break
+                    
                     products_dict[nm_id] = {
                         "nm_id": nm_id,
                         "name": stock["name"],
@@ -854,7 +844,7 @@ class BotAPIService:
                         "days_left": {},
                         "sales_per_day": 0.0,
                         "price": stock.get("price", 0.0),
-                        "commission_percent": 0.0,
+                        "commission_percent": commission_percent,
                         # Новые поля из WB API остатков
                         "category": stock.get("category"),
                         "subject": stock.get("subject"),
@@ -985,31 +975,53 @@ class BotAPIService:
         try:
             # Заглушка - в реальности здесь должна быть сложная аналитика
             return {
-                "period": period,
-                "sales": {
-                    "total_amount": 0,
-                    "total_orders": 0,
-                    "average_order": 0
+                "sales_periods": {
+                    "today": {"count": 0, "amount": 0},
+                    "yesterday": {"count": 0, "amount": 0},
+                    "7_days": {"count": 0, "amount": 0},
+                    "30_days": {"count": 0, "amount": 0},
+                    "90_days": {"count": 0, "amount": 0}
                 },
-                "products": {
-                    "total": 0,
-                    "active": 0,
-                    "top_selling": "Нет данных"
+                "dynamics": {
+                    "yesterday_growth_percent": 0.0,
+                    "week_growth_percent": 0.0,
+                    "average_check": 0.0,
+                    "conversion_percent": 0.0
                 },
-                "reviews": {
-                    "total": 0,
-                    "average_rating": 0.0,
-                    "unanswered": 0
-                }
+                "top_products": [],
+                "stocks_summary": {
+                    "critical_count": 0,
+                    "zero_count": 0,
+                    "attention_needed": 0,
+                    "total_products": 0
+                },
+                "recommendations": ["Все в порядке!"]
             }
             
         except Exception as e:
             logger.error(f"Ошибка получения аналитики: {e}")
             return {
-                "period": period,
-                "sales": {"total_amount": 0, "total_orders": 0, "average_order": 0},
-                "products": {"total": 0, "active": 0, "top_selling": "Ошибка"},
-                "reviews": {"total": 0, "average_rating": 0.0, "unanswered": 0}
+                "sales_periods": {
+                    "today": {"count": 0, "amount": 0},
+                    "yesterday": {"count": 0, "amount": 0},
+                    "7_days": {"count": 0, "amount": 0},
+                    "30_days": {"count": 0, "amount": 0},
+                    "90_days": {"count": 0, "amount": 0}
+                },
+                "dynamics": {
+                    "yesterday_growth_percent": 0.0,
+                    "week_growth_percent": 0.0,
+                    "average_check": 0.0,
+                    "conversion_percent": 0.0
+                },
+                "top_products": [],
+                "stocks_summary": {
+                    "critical_count": 0,
+                    "zero_count": 0,
+                    "attention_needed": 0,
+                    "total_products": 0
+                },
+                "recommendations": ["Ошибка получения данных"]
             }
 
     async def _get_product_statistics(self, cabinet_id: int, nm_id: int) -> Dict[str, Any]:

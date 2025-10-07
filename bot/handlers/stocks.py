@@ -10,10 +10,56 @@ from aiogram.filters import Command
 
 from api.client import bot_api_client
 from keyboards.keyboards import wb_menu_keyboard, main_keyboard, create_stocks_keyboard
-from utils.formatters import format_error_message, format_stocks_summary
+from utils.formatters import format_error_message, format_stocks_summary, safe_edit_message
 
 router = Router()
 
+
+@router.callback_query(F.data == "stock")
+async def show_stock_menu(callback: CallbackQuery):
+    """Показать меню склада с реальными данными"""
+    response = await bot_api_client.get_critical_stocks(
+        user_id=callback.from_user.id,
+        limit=20,
+        offset=0
+    )
+    
+    if response.success and response.data:
+        stocks_data = response.data.get("stocks", {})
+        critical_products = stocks_data.get("critical_products", [])
+        zero_products = stocks_data.get("zero_products", [])
+        summary = stocks_data.get("summary", {})
+        
+        if critical_products or zero_products:
+            keyboard = create_stocks_keyboard(
+                has_more=len(critical_products) + len(zero_products) >= 20,
+                offset=0
+            )
+            
+            await safe_edit_message(
+                callback=callback,
+                text=response.telegram_text or "📦 Склад - Критичные остатки",
+                reply_markup=keyboard,
+                user_id=callback.from_user.id
+            )
+        else:
+            await safe_edit_message(
+                callback=callback,
+                text="✅ Все остатки в норме!\n\n"
+                     "Критичных остатков не обнаружено.",
+                reply_markup=wb_menu_keyboard(),
+                user_id=callback.from_user.id
+            )
+    else:
+        error_message = format_error_message(response.error, response.status_code)
+        await safe_edit_message(
+            callback=callback,
+            text=f"❌ Ошибка загрузки остатков:\n\n{error_message}",
+            reply_markup=wb_menu_keyboard(),
+            user_id=callback.from_user.id
+        )
+    
+    await callback.answer()
 
 
 @router.callback_query(F.data == "stock_list")
@@ -26,9 +72,10 @@ async def show_critical_stocks(callback: CallbackQuery):
     )
     
     if response.success and response.data:
-        critical_products = response.data.get("critical_products", [])
-        zero_products = response.data.get("zero_products", [])
-        summary = response.data.get("summary", {})
+        stocks_data = response.data.get("stocks", {})
+        critical_products = stocks_data.get("critical_products", [])
+        zero_products = stocks_data.get("zero_products", [])
+        summary = stocks_data.get("summary", {})
         
         if critical_products or zero_products:
             keyboard = create_stocks_keyboard(
@@ -36,21 +83,27 @@ async def show_critical_stocks(callback: CallbackQuery):
                 offset=0
             )
             
-            await callback.message.edit_text(
-                response.telegram_text or "📦 Критичные остатки",
-                reply_markup=keyboard
+            await safe_edit_message(
+                callback=callback,
+                text=response.telegram_text or "📦 Критичные остатки",
+                reply_markup=keyboard,
+                user_id=callback.from_user.id
             )
         else:
-            await callback.message.edit_text(
-                "✅ Все остатки в норме!\n\n"
-                "Критичных остатков не обнаружено.",
-                reply_markup=wb_menu_keyboard()
+            await safe_edit_message(
+                callback=callback,
+                text="✅ Все остатки в норме!\n\n"
+                     "Критичных остатков не обнаружено.",
+                reply_markup=wb_menu_keyboard(),
+                user_id=callback.from_user.id
             )
     else:
         error_message = format_error_message(response.error, response.status_code)
-        await callback.message.edit_text(
-            f"❌ Ошибка загрузки остатков:\n\n{error_message}",
-            reply_markup=wb_menu_keyboard()
+        await safe_edit_message(
+            callback=callback,
+            text=f"❌ Ошибка загрузки остатков:\n\n{error_message}",
+            reply_markup=wb_menu_keyboard(),
+            user_id=callback.from_user.id
         )
     
     await callback.answer()
@@ -71,23 +124,28 @@ async def show_stocks_page(callback: CallbackQuery):
     )
     
     if response.success and response.data:
-        critical_products = response.data.get("critical_products", [])
-        zero_products = response.data.get("zero_products", [])
+        stocks_data = response.data.get("stocks", {})
+        critical_products = stocks_data.get("critical_products", [])
+        zero_products = stocks_data.get("zero_products", [])
         
         keyboard = create_stocks_keyboard(
             has_more=len(critical_products) + len(zero_products) >= 20,
             offset=offset
         )
         
-        await callback.message.edit_text(
-            response.telegram_text or "📦 Остатки",
-            reply_markup=keyboard
+        await safe_edit_message(
+            callback=callback,
+            text=response.telegram_text or "📦 Остатки",
+            reply_markup=keyboard,
+            user_id=callback.from_user.id
         )
     else:
         error_message = format_error_message(response.error, response.status_code)
-        await callback.message.edit_text(
-            f"❌ Ошибка загрузки остатков:\n\n{error_message}",
-            reply_markup=wb_menu_keyboard()
+        await safe_edit_message(
+            callback=callback,
+            text=f"❌ Ошибка загрузки остатков:\n\n{error_message}",
+            reply_markup=wb_menu_keyboard(),
+            user_id=callback.from_user.id
         )
     
     await callback.answer()
@@ -96,7 +154,11 @@ async def show_stocks_page(callback: CallbackQuery):
 @router.callback_query(F.data == "refresh_stocks")
 async def refresh_stocks(callback: CallbackQuery):
     """Обновить данные об остатках"""
-    await callback.message.edit_text("⏳ Обновляю данные об остатках...")
+    await safe_edit_message(
+        callback=callback,
+        text="⏳ Обновляю данные об остатках...",
+        user_id=callback.from_user.id
+    )
     
     response = await bot_api_client.get_critical_stocks(
         user_id=callback.from_user.id,
@@ -105,23 +167,28 @@ async def refresh_stocks(callback: CallbackQuery):
     )
     
     if response.success and response.data:
-        critical_products = response.data.get("critical_products", [])
-        zero_products = response.data.get("zero_products", [])
+        stocks_data = response.data.get("stocks", {})
+        critical_products = stocks_data.get("critical_products", [])
+        zero_products = stocks_data.get("zero_products", [])
         
         keyboard = create_stocks_keyboard(
             has_more=len(critical_products) + len(zero_products) >= 20,
             offset=0
         )
         
-        await callback.message.edit_text(
-            response.telegram_text or "📦 Остатки обновлены",
-            reply_markup=keyboard
+        await safe_edit_message(
+            callback=callback,
+            text=response.telegram_text or "📦 Остатки обновлены",
+            reply_markup=keyboard,
+            user_id=callback.from_user.id
         )
     else:
         error_message = format_error_message(response.error, response.status_code)
-        await callback.message.edit_text(
-            f"❌ Ошибка обновления остатков:\n\n{error_message}",
-            reply_markup=wb_menu_keyboard()
+        await safe_edit_message(
+            callback=callback,
+            text=f"❌ Ошибка обновления остатков:\n\n{error_message}",
+            reply_markup=wb_menu_keyboard(),
+            user_id=callback.from_user.id
         )
     
     await callback.answer("✅ Данные обновлены")
@@ -131,11 +198,13 @@ async def refresh_stocks(callback: CallbackQuery):
 async def show_stock_forecast(callback: CallbackQuery):
     """Показать прогноз остатков"""
     # TODO: Реализовать прогноз остатков через API
-    await callback.message.edit_text(
-        "📊 ПРОГНОЗ ОСТАТКОВ\n\n"
-        "⚠️ Функция прогноза остатков будет доступна в следующей версии.\n\n"
-        "Сейчас доступен просмотр текущих критичных остатков.",
-        reply_markup=create_stocks_keyboard()
+    await safe_edit_message(
+        callback=callback,
+        text="📊 ПРОГНОЗ ОСТАТКОВ\n\n"
+             "⚠️ Функция прогноза остатков будет доступна в следующей версии.\n\n"
+             "Сейчас доступен просмотр текущих критичных остатков.",
+        reply_markup=create_stocks_keyboard(),
+        user_id=callback.from_user.id
     )
     await callback.answer()
 
@@ -144,11 +213,13 @@ async def show_stock_forecast(callback: CallbackQuery):
 async def show_stock_notifications(callback: CallbackQuery):
     """Показать настройки уведомлений об остатках"""
     # TODO: Реализовать настройки уведомлений
-    await callback.message.edit_text(
-        "🔔 УВЕДОМЛЕНИЯ ОБ ОСТАТКАХ\n\n"
-        "⚠️ Функция настройки уведомлений будет доступна в следующей версии.\n\n"
-        "Сейчас доступен просмотр критичных остатков.",
-        reply_markup=create_stocks_keyboard()
+    await safe_edit_message(
+        callback=callback,
+        text="🔔 УВЕДОМЛЕНИЯ ОБ ОСТАТКАХ\n\n"
+             "⚠️ Функция настройки уведомлений будет доступна в следующей версии.\n\n"
+             "Сейчас доступен просмотр критичных остатков.",
+        reply_markup=create_stocks_keyboard(),
+        user_id=callback.from_user.id
     )
     await callback.answer()
 
@@ -157,11 +228,13 @@ async def show_stock_notifications(callback: CallbackQuery):
 async def export_stocks_to_google(callback: CallbackQuery):
     """Экспорт остатков в Google Sheets"""
     # TODO: Реализовать экспорт в Google Sheets
-    await callback.message.edit_text(
-        "📤 ЭКСПОРТ В GOOGLE SHEETS\n\n"
-        "⚠️ Функция экспорта в Google Sheets будет доступна в следующей версии.\n\n"
-        "Сейчас доступен просмотр критичных остатков.",
-        reply_markup=create_stocks_keyboard()
+    await safe_edit_message(
+        callback=callback,
+        text="📤 ЭКСПОРТ В GOOGLE SHEETS\n\n"
+             "⚠️ Функция экспорта в Google Sheets будет доступна в следующей версии.\n\n"
+             "Сейчас доступен просмотр критичных остатков.",
+        reply_markup=create_stocks_keyboard(),
+        user_id=callback.from_user.id
     )
     await callback.answer()
 
@@ -176,8 +249,9 @@ async def cmd_stocks(message: Message):
     )
     
     if response.success and response.data:
-        critical_products = response.data.get("critical_products", [])
-        zero_products = response.data.get("zero_products", [])
+        stocks_data = response.data.get("stocks", {})
+        critical_products = stocks_data.get("critical_products", [])
+        zero_products = stocks_data.get("zero_products", [])
         
         if critical_products or zero_products:
             keyboard = create_stocks_keyboard(

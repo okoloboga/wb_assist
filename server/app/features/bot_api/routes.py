@@ -180,7 +180,12 @@ async def get_analytics_sales(
         if not cabinet:
             raise HTTPException(status_code=404, detail="Кабинет WB не найден")
         
-        result = await bot_service.get_analytics_sales(cabinet, period)
+        # Получаем пользователя
+        user = await bot_service.get_user_by_telegram_id(telegram_id)
+        if not user:
+            raise HTTPException(status_code=404, detail="Пользователь не найден")
+        
+        result = await bot_service.get_analytics_sales(user, period)
         
         if not result["success"]:
             raise HTTPException(status_code=500, detail=result["error"])

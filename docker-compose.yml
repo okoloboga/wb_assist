@@ -19,6 +19,15 @@ services:
     networks:
       - app-network
 
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - app-network
+
   server:
     build:
       context: ./server
@@ -29,9 +38,46 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      redis:
+        condition: service_started
     environment:
       - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
       - API_SECRET_KEY=${API_SECRET_KEY}
+      - REDIS_URL=redis://redis:6379/0
+    networks:
+      - app-network
+
+  celery-worker:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    command: python celery_worker.py
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      - REDIS_URL=redis://redis:6379/0
+    networks:
+      - app-network
+
+  celery-beat:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    command: python celery_beat.py
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      - REDIS_URL=redis://redis:6379/0
+    volumes:
+      - celery_beat_data:/app/beat_data
     networks:
       - app-network
 
@@ -50,6 +96,8 @@ services:
 
 volumes:
   pgdata:
+  redis_data:
+  celery_beat_data:
 
 networks:
   app-network:

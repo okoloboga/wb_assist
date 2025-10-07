@@ -1,4 +1,5 @@
 import sys
+import logging
 from pathlib import Path
 
 # Добавляем путь к модулям бота
@@ -7,6 +8,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from aiogram import Router, F
 from aiogram.types import CallbackQuery, User, InlineKeyboardMarkup, InlineKeyboardButton
 from utils.formatters import safe_edit_message, safe_send_message, handle_telegram_errors
+
+logger = logging.getLogger(__name__)
 
 from keyboards.keyboards import (
     main_keyboard,
@@ -39,9 +42,6 @@ navigation = {
 keyboards_map = {
     "main": main_keyboard,
     "wb_menu": wb_menu_keyboard,
-    "analytics": analytics_keyboard,
-    "stock": stock_keyboard,
-    "reviews": reviews_keyboard,
     "prices": prices_keyboard,
     "content": content_keyboard,
     "ai_assistant": ai_assistant_keyboard,
@@ -184,7 +184,36 @@ async def help_callback(callback: CallbackQuery):
     await callback.answer()
 
 
-@router.callback_query(F.data.in_(["analytics", "stock", "reviews", "prices", "content", "ai_assistant", "settings"]))
+@router.callback_query(F.data == "main_menu")
+async def main_menu_callback(callback: CallbackQuery):
+    """Прямой обработчик для кнопки 'Назад в меню' - показывает дашборд"""
+    logger.info(f"🔍 DEBUG: Обработка main_menu для пользователя {callback.from_user.id}")
+    
+    from api.client import bot_api_client
+    
+    dashboard_response = await bot_api_client.get_dashboard(
+        user_id=callback.from_user.id
+    )
+    
+    if dashboard_response.success:
+        await safe_edit_message(
+            callback=callback,
+            text=dashboard_response.telegram_text or "📊 Дашборд загружен",
+            reply_markup=wb_menu_keyboard(),
+            user_id=callback.from_user.id
+        )
+    else:
+        await safe_edit_message(
+            callback=callback,
+            text="✅ Кабинет подключен\n\nВыберите действие:",
+            reply_markup=wb_menu_keyboard(),
+            user_id=callback.from_user.id
+        )
+    
+    await callback.answer()
+
+
+@router.callback_query(F.data.in_(["prices", "content", "ai_assistant", "settings"]))
 async def menu_callback(callback: CallbackQuery):
     data = callback.data
 
@@ -200,8 +229,9 @@ async def menu_callback(callback: CallbackQuery):
 
     elif data.startswith("back_"):
         target_menu = navigation.get(data.replace("back_", ""), "main")
+        logger.info(f"🔍 DEBUG: Обработка back_ для {data}, target_menu: {target_menu}")
         
-        if target_menu == "wb_menu":
+        if data == "back_wb_menu" or target_menu == "wb_menu":
             # Возвращаемся в главное меню - показываем дашборд
             from api.client import bot_api_client
             

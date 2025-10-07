@@ -72,6 +72,13 @@ class WBSyncService:
             cabinet.last_sync_at = datetime.now(timezone.utc)
             self.db.commit()
             
+            # Планируем автоматическую синхронизацию для нового кабинета
+            if not cabinet.last_sync_at:
+                logger.info(f"Планируем автоматическую синхронизацию для кабинета {cabinet.id}")
+                # Импортируем здесь, чтобы избежать циклического импорта
+                from app.features.sync.tasks import schedule_cabinet_sync
+                schedule_cabinet_sync(cabinet.id)
+            
             return {
                 "status": "success",
                 "results": results,
@@ -357,9 +364,6 @@ class WBSyncService:
                                 category, subject, total_price, commissions_data
                             )
                             
-                            logger.info(f"Step 4: Creating WBOrder with nm_id={nm_id}")
-                            logger.info(f"Step 4: nm_id type before WBOrder = {type(nm_id)}")
-                            logger.info(f"Step 4: nm_id value before WBOrder = {nm_id}")
                             
                             order = WBOrder(
                                 cabinet_id=cabinet.id,
@@ -394,15 +398,9 @@ class WBSyncService:
                                 order_date=self._parse_datetime(order_data.get("date"))
                             )
                             
-                            logger.info(f"Step 5: WBOrder created, nm_id={order.nm_id}")
-                            logger.info(f"Step 5: WBOrder nm_id type = {type(order.nm_id)}")
-                            logger.info(f"Step 5: WBOrder nm_id value = {order.nm_id}")
                             
                             self.db.add(order)
-                            logger.info(f"Step 6: Order added to session")
-                            
                             self.db.flush()  # Принудительно выполняем вставку для проверки уникальности
-                            logger.info(f"Step 7: Order flushed to DB")
                             
                             # logger.info(f"Created order {order_id}: commission_percent={commission_percent}, commission_amount={commission_amount}")
                             created += 1
@@ -418,9 +416,7 @@ class WBSyncService:
                     logger.warning(f"Failed to process order {order_id}: {order_error}")
                     continue
             
-            logger.info(f"Step 8: Committing transaction")
             self.db.commit()
-            logger.info(f"Step 9: Transaction committed successfully")
             
             return {
                 "status": "success",

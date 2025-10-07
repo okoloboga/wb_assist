@@ -170,12 +170,12 @@ async def show_order_details(callback: CallbackQuery):
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(
                 text="🔙 К списку заказов",
-                callback_data="sales_period"
-            )],
-            [InlineKeyboardButton(
-                text="🔄 Обновить",
-                callback_data=f"order_details_{order_id}"
+                callback_data="orders"
             )]
+            # [InlineKeyboardButton(
+            #     text="🔄 Обновить",
+            #     callback_data=f"order_details_{order_id}"
+            # )]
         ])
         
         await callback.message.edit_text(
