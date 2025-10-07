@@ -2,7 +2,7 @@
 Pydantic схемы для Bot API
 """
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, RootModel
 from typing import List, Optional, Dict, Any, Union
 from datetime import datetime
 from enum import Enum
@@ -54,6 +54,11 @@ class OrderData(BaseModel):
     warehouse_to: str
     commission_percent: float
     rating: float
+    # Новые поля из WB API
+    spp_percent: Optional[float] = None
+    customer_price: Optional[float] = None
+    discount_percent: Optional[float] = None
+    logistics_amount: Optional[float] = None
 
 
 class OrdersStatistics(BaseModel):
@@ -80,12 +85,9 @@ class OrdersResponse(BaseModel):
     pagination: PaginationData
 
 
-class StockData(BaseModel):
+class StockData(RootModel[Dict[str, int]]):
     """Данные остатков"""
-    S: int
-    M: int
-    L: int
-    XL: int
+    root: Dict[str, int]
 
 
 class CriticalProduct(BaseModel):
@@ -131,12 +133,15 @@ class CriticalStocksResponse(BaseModel):
 
 class ReviewData(BaseModel):
     """Данные отзыва"""
-    id: str
-    product_name: str
-    rating: int
-    text: str
-    time_ago: str
-    order_id: int
+    id: int
+    nm_id: int
+    text: Optional[str] = None
+    rating: Optional[int] = None
+    user_name: Optional[str] = None
+    color: Optional[str] = None
+    pros: Optional[str] = None
+    cons: Optional[str] = None
+    created_date: Optional[str] = None
 
 
 class QuestionData(BaseModel):

@@ -122,8 +122,17 @@ class BotMessageFormatter:
                     zero_sizes = product.get("zero_sizes", [])
                     days_left = product.get("days_left", {})
                     
+                    # Получаем новые поля
+                    category = product.get('category', 'Неизвестно')
+                    subject = product.get('subject', 'Неизвестно')
+                    price = product.get('price', 0)
+                    discount = product.get('discount', 0)
+                    final_price = price - discount if price and discount else price
+                    
                     message += f"""📦 {product.get('name', 'N/A')} ({product.get('brand', 'N/A')})
    🆔 {product.get('nm_id', 'N/A')}
+   🏷️ Категория: {category} → {subject}
+   💰 Цена: {price:,.0f}₽ {f"(-{discount:,.0f}₽ = {final_price:,.0f}₽)" if discount > 0 else ""}
    📊 Остатки: {stocks_str}
 """
                     if critical_sizes:
@@ -183,8 +192,16 @@ class BotMessageFormatter:
                 for review in new_reviews[:5]:  # Ограничиваем количество
                     rating = review.get("rating", 0)
                     stars = "⭐" * rating
+                    user_name = review.get("user_name", "Аноним")
+                    color = review.get("color", "")
+                    pros = review.get("pros", "")
+                    cons = review.get("cons", "")
+                    
                     message += f"""{stars} {review.get('product_name', 'N/A')} | {rating}/5
+   Пользователь: {user_name} {f"({color})" if color else ""}
    "{review.get('text', 'N/A')}"
+   Плюсы: {pros if pros else "Не указаны"}
+   Минусы: {cons if cons else "Не указаны"}
    Время: {review.get('time_ago', 'N/A')} | ID: #{review.get('order_id', 'N/A')}
 
 """
@@ -441,8 +458,8 @@ class BotMessageFormatter:
             return "N/A"
         
         stock_parts = []
-        for size in ["S", "M", "L", "XL"]:
-            count = stocks.get(size, 0)
+        # Получаем все размеры из данных
+        for size, count in stocks.items():
             stock_parts.append(f"{size}({count})")
         
         return " ".join(stock_parts)
@@ -501,7 +518,7 @@ class BotMessageFormatter:
             warehouse_to = order.get("warehouse_to", "")
             
             # Финансовая информация
-            order_amount = order.get("order_amount", 0)
+            order_amount = order.get("amount", 0)
             commission_percent = order.get("commission_percent", 0)
             commission_amount = order.get("commission_amount", 0)
             spp_percent = order.get("spp_percent", 0)
@@ -583,11 +600,11 @@ class BotMessageFormatter:
             message = "🔑 СТАТУС WB КАБИНЕТОВ\n\n"
             
             for i, cabinet in enumerate(cabinets, 1):
-                name = cabinet.get('name', 'Неизвестный кабинет')
-                status = cabinet.get('status', 'unknown')
-                api_status = cabinet.get('api_key_status', 'unknown')
-                connected_at = cabinet.get('connected_at')
-                last_sync = cabinet.get('last_sync')
+                name = cabinet.name or 'Неизвестный кабинет'
+                status = 'active' if cabinet.is_active else 'inactive'
+                api_status = 'valid' if cabinet.is_active else 'invalid'
+                connected_at = cabinet.created_at.isoformat() if cabinet.created_at else None
+                last_sync = cabinet.last_sync_at.isoformat() if cabinet.last_sync_at else None
                 
                 # Статус кабинета
                 status_emoji = "✅" if status == "active" else "❌"

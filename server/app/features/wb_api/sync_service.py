@@ -50,6 +50,24 @@ class WBSyncService:
                     logger.error(f"Sync {task_name} failed: {e}")
                     results[task_name] = {"status": "error", "error": str(e)}
             
+            # Обновляем цены товаров из остатков
+            try:
+                price_result = await self.update_product_prices_from_stocks(cabinet)
+                results["product_prices"] = price_result
+                logger.info(f"Product prices updated: {price_result.get('updated_products', 0)} products")
+            except Exception as e:
+                logger.error(f"Failed to update product prices: {e}")
+                results["product_prices"] = {"status": "error", "error": str(e)}
+            
+            # Обновляем рейтинги товаров из отзывов
+            try:
+                rating_result = await self.update_product_ratings_from_reviews(cabinet)
+                results["product_ratings"] = rating_result
+                logger.info(f"Product ratings updated: {rating_result.get('updated_products', 0)} products")
+            except Exception as e:
+                logger.error(f"Failed to update product ratings: {e}")
+                results["product_ratings"] = {"status": "error", "error": str(e)}
+            
             # Обновляем время последней синхронизации
             cabinet.last_sync_at = datetime.now(timezone.utc)
             self.db.commit()
@@ -90,6 +108,8 @@ class WBSyncService:
             if not products_data:
                 return {"status": "error", "error_message": "No products data received"}
             
+            logger.info(f"Fetched {len(products_data)} products from WB API")
+            
             created = 0
             updated = 0
             
@@ -112,10 +132,11 @@ class WBSyncService:
                     existing.vendor_code = product_data.get("vendorCode")
                     existing.brand = product_data.get("brand")
                     existing.category = product_data.get("subjectName")  # Исправлено: subjectName вместо category
-                    existing.price = product_data.get("price")
-                    existing.discount_price = product_data.get("discountPrice")
-                    existing.rating = product_data.get("rating")
-                    existing.reviews_count = product_data.get("reviewsCount")
+                    # Цены и рейтинги получаем из других API (остатки, отзывы)
+                    # existing.price = product_data.get("price")  # НЕТ в API товаров
+                    # existing.discount_price = product_data.get("discountPrice")  # НЕТ в API товаров
+                    # existing.rating = product_data.get("rating")  # НЕТ в API товаров
+                    # existing.reviews_count = product_data.get("reviewsCount")  # НЕТ в API товаров
                     existing.in_stock = product_data.get("inStock", True)
                     existing.is_active = product_data.get("isActive", True)
                     existing.updated_at = datetime.now(timezone.utc)
@@ -129,10 +150,11 @@ class WBSyncService:
                         vendor_code=product_data.get("vendorCode"),
                         brand=product_data.get("brand"),
                         category=product_data.get("subjectName"),  # Исправлено: subjectName вместо category
-                        price=product_data.get("price"),
-                        discount_price=product_data.get("discountPrice"),
-                        rating=product_data.get("rating"),
-                        reviews_count=product_data.get("reviewsCount"),
+                        # Цены и рейтинги получаем из других API (остатки, отзывы)
+                        # price=product_data.get("price"),  # НЕТ в API товаров
+                        # discount_price=product_data.get("discountPrice"),  # НЕТ в API товаров
+                        # rating=product_data.get("rating"),  # НЕТ в API товаров
+                        # reviews_count=product_data.get("reviewsCount"),  # НЕТ в API товаров
                         in_stock=product_data.get("inStock", True),
                         is_active=product_data.get("isActive", True)
                     )
@@ -215,19 +237,22 @@ class WBSyncService:
             created = 0
             updated = 0
             processed_order_ids = set()  # Отслеживаем обработанные order_id в рамках одного запроса
-            max_orders = 1000  # Лимит на количество заказов для обработки
+            
+            logger.info(f"Processing {len(orders_data)} orders from WB API")
             
             for i, order_data in enumerate(orders_data):
-                # Ограничиваем количество обрабатываемых заказов
-                if i >= max_orders:
-                    logger.warning(f"Reached max orders limit ({max_orders}), stopping processing")
-                    break
                 try:
                     order_id = order_data.get("gNumber")  # Исправлено: gNumber вместо orderId
                     nm_id = order_data.get("nmId")
                     
+                    # Отладочный лог
+                    if i < 3:  # Логируем только первые 3 заказа
+                        logger.info(f"Order {i}: order_id={order_id}, nm_id={nm_id}, keys={list(order_data.keys())}")
+                    
                     # Пропускаем заказы без order_id или nm_id
                     if not order_id or not nm_id:
+                        if i < 3:  # Логируем только первые 3 пропущенных заказа
+                            logger.info(f"Skipping order {i}: order_id={order_id}, nm_id={nm_id}")
                         continue
                     
                     # Пропускаем дубликаты в рамках одного запроса
@@ -245,7 +270,10 @@ class WBSyncService:
                     
                     if existing:
                         # Обновляем существующий заказ
+                        old_nm_id = existing.nm_id
                         existing.nm_id = nm_id
+                        if old_nm_id != nm_id:
+                            logger.info(f"Updated order {order_id}: nm_id {old_nm_id} -> {nm_id}")
                         existing.article = order_data.get("supplierArticle")
                         existing.name = order_data.get("subject")  # Исправлено: subject вместо name
                         existing.brand = order_data.get("brand")
@@ -281,6 +309,22 @@ class WBSyncService:
                         )
                         existing.commission_percent = commission_percent
                         existing.commission_amount = commission_amount
+                        
+                        # Новые поля из WB API
+                        existing.warehouse_from = order_data.get("warehouseName")
+                        existing.warehouse_to = order_data.get("regionName")
+                        existing.spp_percent = order_data.get("spp")
+                        existing.customer_price = order_data.get("finishedPrice")
+                        existing.discount_percent = order_data.get("discountPercent")
+                        
+                        # Расчет логистики (упрощенный расчет)
+                        logistics_amount = self._calculate_logistics(
+                            order_data.get("warehouseName"), 
+                            order_data.get("regionName"),
+                            total_price
+                        )
+                        existing.logistics_amount = logistics_amount
+                        
                         # logger.info(f"Updated order {order_id}: commission_percent={commission_percent}, commission_amount={commission_amount}")
                         
                         existing.updated_at = datetime.now(timezone.utc)
@@ -328,6 +372,18 @@ class WBSyncService:
                                 quantity=1,  # Исправлено: всегда 1, так как нет поля quantity
                                 price=order_data.get("finishedPrice"),  # Исправлено: finishedPrice вместо price
                                 total_price=order_data.get("totalPrice"),
+                                # Новые поля из WB API
+                                warehouse_from=order_data.get("warehouseName"),
+                                warehouse_to=order_data.get("regionName"),
+                                spp_percent=order_data.get("spp"),
+                                customer_price=order_data.get("finishedPrice"),
+                                discount_percent=order_data.get("discountPercent"),
+                                # Расчет логистики (упрощенный расчет)
+                                logistics_amount=self._calculate_logistics(
+                                    order_data.get("warehouseName"), 
+                                    order_data.get("regionName"),
+                                    total_price
+                                ),
                                 status="canceled" if order_data.get("isCancel", False) else "active",  # Исправлено: вычисляем статус
                                 order_date=self._parse_datetime(order_data.get("date"))
                             )
@@ -402,16 +458,25 @@ class WBSyncService:
                 
                 if existing:
                     # Обновляем существующий остаток
-                    existing.article = stock_data.get("article")
-                    existing.name = stock_data.get("name")
+                    existing.article = stock_data.get("supplierArticle")
+                    existing.name = stock_data.get("name")  # НЕТ в API, оставляем как есть
                     existing.brand = stock_data.get("brand")
-                    existing.size = stock_data.get("size")
+                    existing.size = stock_data.get("techSize")
                     existing.barcode = stock_data.get("barcode")
                     existing.quantity = stock_data.get("quantity")
                     existing.in_way_to_client = stock_data.get("inWayToClient")
                     existing.in_way_from_client = stock_data.get("inWayFromClient")
                     existing.warehouse_name = stock_data.get("warehouseName")
                     existing.last_updated = self._parse_datetime(stock_data.get("lastChangeDate"))
+                    # Новые поля из WB API
+                    existing.category = stock_data.get("category")
+                    existing.subject = stock_data.get("subject")
+                    existing.price = stock_data.get("Price")
+                    existing.discount = stock_data.get("Discount")
+                    existing.quantity_full = stock_data.get("quantityFull")
+                    existing.is_supply = stock_data.get("isSupply")
+                    existing.is_realization = stock_data.get("isRealization")
+                    existing.sc_code = stock_data.get("SCCode")
                     existing.updated_at = datetime.now(timezone.utc)
                     updated += 1
                 else:
@@ -419,17 +484,26 @@ class WBSyncService:
                     stock = WBStock(
                         cabinet_id=cabinet.id,
                         nm_id=nm_id,
-                        article=stock_data.get("article"),
-                        name=stock_data.get("name"),
+                        article=stock_data.get("supplierArticle"),
+                        name=stock_data.get("name"),  # НЕТ в API, оставляем как есть
                         brand=stock_data.get("brand"),
-                        size=stock_data.get("size"),
+                        size=stock_data.get("techSize"),
                         barcode=stock_data.get("barcode"),
                         quantity=stock_data.get("quantity"),
                         in_way_to_client=stock_data.get("inWayToClient"),
                         in_way_from_client=stock_data.get("inWayFromClient"),
                         warehouse_id=warehouse_id,
                         warehouse_name=stock_data.get("warehouseName"),
-                        last_updated=self._parse_datetime(stock_data.get("lastChangeDate"))
+                        last_updated=self._parse_datetime(stock_data.get("lastChangeDate")),
+                        # Новые поля из WB API
+                        category=stock_data.get("category"),
+                        subject=stock_data.get("subject"),
+                        price=stock_data.get("Price"),
+                        discount=stock_data.get("Discount"),
+                        quantity_full=stock_data.get("quantityFull"),
+                        is_supply=stock_data.get("isSupply"),
+                        is_realization=stock_data.get("isRealization"),
+                        sc_code=stock_data.get("SCCode")
                     )
                     self.db.add(stock)
                     created += 1
@@ -456,15 +530,39 @@ class WBSyncService:
     ) -> Dict[str, Any]:
         """Синхронизация отзывов"""
         try:
-            # Получаем данные из API
-            reviews_response = await client.get_reviews(is_answered=False, take=1000, skip=0)
+            # Получаем ВСЕ отзывы с пагинацией
+            all_reviews_data = []
+            skip = 0
+            take = 1000
+            total_fetched = 0
             
-            if not reviews_response or "data" not in reviews_response:
-                return {"status": "error", "error_message": "No reviews data received"}
+            while True:
+                reviews_response = await client.get_reviews(is_answered=True, take=take, skip=skip)
+                
+                if not reviews_response or "data" not in reviews_response:
+                    break
+                
+                reviews_data = reviews_response["data"].get("feedbacks", [])
+                if not reviews_data:
+                    break
+                
+                all_reviews_data.extend(reviews_data)
+                total_fetched += len(reviews_data)
+                
+                logger.info(f"Fetched {len(reviews_data)} reviews (skip={skip}, total={total_fetched})")
+                
+                # Если получили меньше чем запрашивали, значит это последняя страница
+                if len(reviews_data) < take:
+                    break
+                
+                skip += take
             
-            reviews_data = reviews_response["data"].get("feedbacks", [])
-            if not reviews_data:
+            logger.info(f"Total reviews fetched from WB API: {total_fetched}")
+            
+            if not all_reviews_data:
                 return {"status": "success", "records_processed": 0, "records_created": 0, "records_updated": 0}
+            
+            reviews_data = all_reviews_data
             
             created = 0
             updated = 0
@@ -493,6 +591,18 @@ class WBSyncService:
                     existing.is_answered = review_data.get("answer") is not None  # Исправлено: проверяем наличие ответа
                     existing.created_date = self._parse_datetime(review_data.get("createdDate"))
                     existing.updated_date = self._parse_datetime(review_data.get("createdDate"))  # Исправлено: нет updatedDate
+                    
+                    # Новые поля из WB API отзывов
+                    existing.pros = review_data.get("pros")
+                    existing.cons = review_data.get("cons")
+                    existing.user_name = review_data.get("userName")
+                    existing.color = review_data.get("color")
+                    existing.bables = str(review_data.get("bables", [])) if review_data.get("bables") else None
+                    existing.matching_size = review_data.get("matchingSize")
+                    existing.was_viewed = review_data.get("wasViewed")
+                    existing.supplier_feedback_valuation = review_data.get("supplierFeedbackValuation")
+                    existing.supplier_product_valuation = review_data.get("supplierProductValuation")
+                    
                     existing.updated_at = datetime.now(timezone.utc)
                     updated += 1
                 else:
@@ -505,7 +615,18 @@ class WBSyncService:
                         rating=review_data.get("productValuation"),  # Исправлено: productValuation вместо rating
                         is_answered=review_data.get("answer") is not None,  # Исправлено: проверяем наличие ответа
                         created_date=self._parse_datetime(review_data.get("createdDate")),
-                        updated_date=self._parse_datetime(review_data.get("createdDate"))  # Исправлено: нет updatedDate
+                        updated_date=self._parse_datetime(review_data.get("createdDate")),  # Исправлено: нет updatedDate
+                        
+                        # Новые поля из WB API отзывов
+                        pros=review_data.get("pros"),
+                        cons=review_data.get("cons"),
+                        user_name=review_data.get("userName"),
+                        color=review_data.get("color"),
+                        bables=str(review_data.get("bables", [])) if review_data.get("bables") else None,
+                        matching_size=review_data.get("matchingSize"),
+                        was_viewed=review_data.get("wasViewed"),
+                        supplier_feedback_valuation=review_data.get("supplierFeedbackValuation"),
+                        supplier_product_valuation=review_data.get("supplierProductValuation")
                     )
                     self.db.add(review)
                     created += 1
@@ -598,7 +719,7 @@ class WBSyncService:
                 if not isinstance(commission, dict):
                     logger.debug(f"Commission record {i} is not a dict: {type(commission)}")
                     continue
-                
+                    
                 parent_name = commission.get("parentName")
                 subject_name = commission.get("subjectName")
                 kgvp_marketplace = commission.get("kgvpMarketplace")
@@ -657,3 +778,121 @@ class WBSyncService:
         except Exception as e:
             logger.error(f"Commission calculation failed: {e}")
             return 0.0, 0.0
+    
+    def _calculate_logistics(self, warehouse_from: str, warehouse_to: str, total_price: float) -> float:
+        """Расчет логистики на основе склада отправления и региона доставки"""
+        try:
+            if not warehouse_from or not warehouse_to or not total_price:
+                return 0.0
+            
+            # Упрощенный расчет логистики на основе расстояния и цены
+            # В реальности нужно использовать тарифы WB API
+            
+            # Базовые тарифы по регионам (примерные)
+            region_tariffs = {
+                "Москва": 0.0,  # Бесплатная доставка в Москву
+                "Московская область": 50.0,
+                "Санкт-Петербург": 100.0,
+                "Ленинградская область": 150.0,
+                "Центральный федеральный округ": 200.0,
+                "Северо-Западный федеральный округ": 250.0,
+                "Южный федеральный округ": 300.0,
+                "Приволжский федеральный округ": 350.0,
+                "Уральский федеральный округ": 400.0,
+                "Сибирский федеральный округ": 500.0,
+                "Дальневосточный федеральный округ": 600.0,
+            }
+            
+            # Ищем тариф для региона
+            for region, tariff in region_tariffs.items():
+                if region in warehouse_to:
+                    return tariff
+            
+            # Если регион не найден, используем средний тариф
+            return 300.0
+            
+        except Exception as e:
+            logger.error(f"Logistics calculation failed: {e}")
+            return 0.0
+
+    async def update_product_prices_from_stocks(self, cabinet: WBCabinet) -> Dict[str, Any]:
+        """Обновление цен товаров из остатков"""
+        try:
+            # Получаем все остатки для кабинета
+            stocks = self.db.query(WBStock).filter(
+                WBStock.cabinet_id == cabinet.id
+            ).all()
+            
+            updated_count = 0
+            
+            for stock in stocks:
+                if stock.price is not None:
+                    # Обновляем цену товара
+                    product = self.db.query(WBProduct).filter(
+                        and_(
+                            WBProduct.cabinet_id == cabinet.id,
+                            WBProduct.nm_id == stock.nm_id
+                        )
+                    ).first()
+                    
+                    if product:
+                        product.price = stock.price
+                        product.discount_price = stock.discount if stock.discount else None
+                        updated_count += 1
+            
+            self.db.commit()
+            
+            return {
+                "status": "success",
+                "updated_products": updated_count
+            }
+            
+        except Exception as e:
+            logger.error(f"Failed to update product prices: {e}")
+            return {"status": "error", "error_message": str(e)}
+
+    async def update_product_ratings_from_reviews(self, cabinet: WBCabinet) -> Dict[str, Any]:
+        """Обновление рейтингов товаров из отзывов"""
+        try:
+            # Получаем все отзывы для кабинета
+            reviews = self.db.query(WBReview).filter(
+                WBReview.cabinet_id == cabinet.id
+            ).all()
+            
+            # Группируем отзывы по товарам
+            product_reviews = {}
+            for review in reviews:
+                if review.nm_id and review.rating:
+                    if review.nm_id not in product_reviews:
+                        product_reviews[review.nm_id] = []
+                    product_reviews[review.nm_id].append(review.rating)
+            
+            updated_count = 0
+            
+            # Обновляем рейтинги товаров
+            for nm_id, ratings in product_reviews.items():
+                if ratings:
+                    avg_rating = sum(ratings) / len(ratings)
+                    
+                    product = self.db.query(WBProduct).filter(
+                        and_(
+                            WBProduct.cabinet_id == cabinet.id,
+                            WBProduct.nm_id == nm_id
+                        )
+                    ).first()
+                    
+                    if product:
+                        product.rating = round(avg_rating, 1)
+                        product.reviews_count = len(ratings)
+                        updated_count += 1
+            
+            self.db.commit()
+            
+            return {
+                "status": "success",
+                "updated_products": updated_count
+            }
+            
+        except Exception as e:
+            logger.error(f"Failed to update product ratings: {e}")
+            return {"status": "error", "error_message": str(e)}

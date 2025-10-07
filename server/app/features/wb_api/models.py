@@ -87,6 +87,19 @@ class WBOrder(Base):
     # Поля комиссии
     commission_percent = Column(Float, nullable=True)
     commission_amount = Column(Float, nullable=True)
+    
+    # Поля складов (из WB API)
+    warehouse_from = Column(String(255), nullable=True)      # warehouseName
+    warehouse_to = Column(String(255), nullable=True)       # regionName
+    
+    # Поля цен и СПП (из WB API)
+    spp_percent = Column(Float, nullable=True)               # spp
+    customer_price = Column(Float, nullable=True)            # finishedPrice
+    discount_percent = Column(Float, nullable=True)         # discountPercent
+    
+    # Поля логистики (рассчитывается)
+    logistics_amount = Column(Float, nullable=True)
+    
     order_date = Column(DateTime(timezone=True), nullable=True)
     status = Column(String(50), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
@@ -125,6 +138,17 @@ class WBStock(Base):
     warehouse_id = Column(Integer, nullable=True)  # ИСПРАВЛЕНО: nullable=True
     warehouse_name = Column(String(255), nullable=True)
     last_updated = Column(DateTime(timezone=True), nullable=True)
+    
+    # Новые поля из WB API остатков
+    category = Column(String(255), nullable=True)            # category
+    subject = Column(String(255), nullable=True)             # subject
+    price = Column(Float, nullable=True)                     # Price
+    discount = Column(Float, nullable=True)                  # Discount
+    quantity_full = Column(Integer, nullable=True)           # quantityFull
+    is_supply = Column(Boolean, nullable=True)              # isSupply
+    is_realization = Column(Boolean, nullable=True)          # isRealization
+    sc_code = Column(String(50), nullable=True)             # SCCode
+    
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
@@ -156,6 +180,17 @@ class WBReview(Base):
     is_answered = Column(Boolean, default=False, nullable=False)
     created_date = Column(DateTime(timezone=True), nullable=True)
     updated_date = Column(DateTime(timezone=True), nullable=True)
+    
+    # Новые поля из WB API отзывов
+    pros = Column(Text, nullable=True)                       # pros
+    cons = Column(Text, nullable=True)                        # cons
+    user_name = Column(String(255), nullable=True)             # userName
+    color = Column(String(100), nullable=True)                # color
+    bables = Column(Text, nullable=True)                        # bables (JSON array)
+    matching_size = Column(String(50), nullable=True)          # matchingSize
+    was_viewed = Column(Boolean, nullable=True)                # wasViewed
+    supplier_feedback_valuation = Column(Integer, nullable=True)  # supplierFeedbackValuation
+    supplier_product_valuation = Column(Integer, nullable=True)    # supplierProductValuation
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 

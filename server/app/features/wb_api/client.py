@@ -163,10 +163,9 @@ class WBAPIClient:
         """Получение списка товаров"""
         url = f"{self.base_urls['content']}/content/v2/get/cards/list"
         
-        # Параметры для получения товаров
+        # Параметры для получения товаров - БЕЗ ЛИМИТОВ
         json_data = {
             "sort": {
-                "cursor": {"limit": 1000},
                 "filter": {"withPhoto": -1, "visible": "ALL"}
             }
         }

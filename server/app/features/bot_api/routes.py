@@ -109,7 +109,12 @@ async def get_critical_stocks(
         if not cabinet:
             raise HTTPException(status_code=404, detail="Кабинет WB не найден")
         
-        result = await bot_service.get_critical_stocks(cabinet, limit, offset)
+        # Получаем пользователя
+        user = await bot_service.get_user_by_telegram_id(telegram_id)
+        if not user:
+            raise HTTPException(status_code=404, detail="Пользователь не найден")
+        
+        result = await bot_service.get_critical_stocks(user, limit, offset)
         
         if not result["success"]:
             raise HTTPException(status_code=500, detail=result["error"])
@@ -140,7 +145,12 @@ async def get_reviews_summary(
         if not cabinet:
             raise HTTPException(status_code=404, detail="Кабинет WB не найден")
         
-        result = await bot_service.get_reviews_summary(cabinet, limit, offset)
+        # Получаем пользователя
+        user = await bot_service.get_user_by_telegram_id(telegram_id)
+        if not user:
+            raise HTTPException(status_code=404, detail="Пользователь не найден")
+        
+        result = await bot_service.get_reviews_summary(user, limit, offset)
         
         if not result["success"]:
             raise HTTPException(status_code=500, detail=result["error"])

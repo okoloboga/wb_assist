@@ -150,6 +150,39 @@ class BotAPIService:
                     "error": "Заказ не найден"
                 }
             
+            # Получаем данные о товаре (рейтинг, отзывы)
+            product = self.db.query(WBProduct).filter(
+                and_(
+                    WBProduct.cabinet_id == order.cabinet_id,
+                    WBProduct.nm_id == order.nm_id
+                )
+            ).first()
+            
+            # Получаем остатки товара
+            stocks = self.db.query(WBStock).filter(
+                and_(
+                    WBStock.cabinet_id == order.cabinet_id,
+                    WBStock.nm_id == order.nm_id
+                )
+            ).all()
+            
+            # Формируем остатки по размерам
+            stocks_dict = {}
+            for stock in stocks:
+                size = stock.size or "ONE SIZE"
+                stocks_dict[size] = stock.quantity or 0
+            
+            # Получаем статистику отзывов для товара
+            reviews_count = self.db.query(WBReview).filter(
+                and_(
+                    WBReview.cabinet_id == order.cabinet_id,
+                    WBReview.nm_id == order.nm_id
+                )
+            ).count()
+            
+            # Получаем статистику продаж для товара
+            product_stats = await self._get_product_statistics(cabinet.id, order.nm_id)
+            
             # Форматируем данные заказа
             order_data = {
                 "id": order.id,
@@ -157,11 +190,17 @@ class BotAPIService:
                 "amount": order.total_price or 0,
                 "product_name": order.name or "Неизвестно",
                 "brand": order.brand or "Неизвестно",
-                "warehouse_from": "Неизвестно",  # Заглушка - в реальности из WBWarehouse
-                "warehouse_to": "Неизвестно",    # Заглушка - в реальности из WBWarehouse
-                "commission_percent": order.commission_percent or 0.0,  # Реальные данные из БД
-                "commission_amount": order.commission_amount or 0.0,  # Реальные данные из БД
-                "rating": 0.0,  # Заглушка - в реальности из WBReview
+                "warehouse_from": order.warehouse_from,
+                "warehouse_to": order.warehouse_to,
+                "commission_percent": order.commission_percent or 0.0,
+                "commission_amount": order.commission_amount or 0.0,
+                "rating": product.rating if product else 0.0,  # Реальный рейтинг из WBProduct
+                "reviews_count": reviews_count,  # Реальное количество отзывов
+                # Новые поля из WB API
+                "spp_percent": order.spp_percent or 0.0,
+                "customer_price": order.customer_price or 0.0,
+                "discount_percent": order.discount_percent or 0.0,
+                "logistics_amount": order.logistics_amount or 0.0,
                 # Дополнительные поля для детального отчета
                 "order_id": order.order_id,
                 "nm_id": order.nm_id,
@@ -173,8 +212,18 @@ class BotAPIService:
                 "total_price": order.total_price,
                 "order_date": order.order_date.isoformat() if order.order_date else None,
                 "status": order.status,
-                "created_at": order.created_at.isoformat()
+                "created_at": order.created_at.isoformat(),
+                # Остатки товара
+                "stocks": stocks_dict,
+                # Реальная статистика
+                "buyout_rates": product_stats["buyout_rates"],
+                "order_speed": product_stats["order_speed"],
+                "sales_periods": product_stats["sales_periods"]
             }
+            
+            # Отладочный лог
+            logger.info(f"Order data for order {order_id}: spp_percent={order.spp_percent}, customer_price={order.customer_price}, discount_percent={order.discount_percent}")
+            logger.info(f"Order data keys: {list(order_data.keys())}")
             
             # Форматируем Telegram сообщение
             telegram_text = self.formatter.format_order_detail({"order": order_data})
@@ -192,21 +241,26 @@ class BotAPIService:
                 "error": str(e)
             }
 
-    async def get_critical_stocks(self, user: Dict[str, Any], limit: int = 10, offset: int = 0) -> Dict[str, Any]:
+    async def get_critical_stocks(self, user, limit: int = 10, offset: int = 0) -> Dict[str, Any]:
         """Получение критичных остатков"""
         try:
-            cabinet = await self.get_user_cabinet(user["telegram_id"])
+            # Получаем telegram_id из объекта user
+            telegram_id = user.telegram_id if hasattr(user, 'telegram_id') else user["telegram_id"]
+            cabinet = await self.get_user_cabinet(telegram_id)
             if not cabinet:
                 return {
                     "success": False,
                     "error": "Кабинет WB не найден"
                 }
             
+            # Отладочный лог
+            logger.info(f"get_critical_stocks: cabinet type: {type(cabinet)}, cabinet.id: {cabinet.id}")
+            
             # Получаем данные из БД
             stocks_data = await self._fetch_critical_stocks_from_db(cabinet, limit, offset)
             
             # Форматируем Telegram сообщение
-            telegram_text = self.formatter.format_critical_stocks_message(stocks_data)
+            telegram_text = self.formatter.format_critical_stocks(stocks_data)
             
             return {
                 "success": True,
@@ -221,10 +275,12 @@ class BotAPIService:
                 "error": str(e)
             }
 
-    async def get_reviews_summary(self, user: Dict[str, Any], limit: int = 10, offset: int = 0) -> Dict[str, Any]:
+    async def get_reviews_summary(self, user, limit: int = 10, offset: int = 0) -> Dict[str, Any]:
         """Получение сводки по отзывам"""
         try:
-            cabinet = await self.get_user_cabinet(user["telegram_id"])
+            # Получаем telegram_id из объекта user
+            telegram_id = user.telegram_id if hasattr(user, 'telegram_id') else user["telegram_id"]
+            cabinet = await self.get_user_cabinet(telegram_id)
             if not cabinet:
                 return {
                     "success": False,
@@ -235,7 +291,7 @@ class BotAPIService:
             reviews_data = await self._fetch_reviews_from_db(cabinet, limit, offset)
             
             # Форматируем Telegram сообщение
-            telegram_text = self.formatter.format_reviews_message(reviews_data)
+            telegram_text = self.formatter.format_reviews(reviews_data)
             
             return {
                 "success": True,
@@ -615,16 +671,30 @@ class BotAPIService:
             # Формируем список заказов
             orders_list = []
             for order in orders:
+                # Получаем рейтинг товара
+                product = self.db.query(WBProduct).filter(
+                    and_(
+                        WBProduct.cabinet_id == order.cabinet_id,
+                        WBProduct.nm_id == order.nm_id
+                    )
+                ).first()
+                
                 orders_list.append({
                     "id": order.id,
                     "date": order.order_date.isoformat() if order.order_date else None,
                     "amount": order.total_price or 0,
                     "product_name": order.name or "Неизвестно",
                     "brand": order.brand or "Неизвестно",
-                    "warehouse_from": "Неизвестно",  # Заглушка - в реальности из WBWarehouse
-                    "warehouse_to": "Неизвестно",    # Заглушка - в реальности из WBWarehouse
-                    "commission_percent": 0,  # Заглушка - в реальности из WB API
-                    "rating": 0  # Заглушка - в реальности из WBReview
+                    "warehouse_from": order.warehouse_from,
+                    "warehouse_to": order.warehouse_to,
+                    "commission_percent": order.commission_percent or 0.0,
+                    "rating": product.rating if product else 0.0,  # Реальный рейтинг из WBProduct
+                    "nm_id": order.nm_id,  # Добавляем nm_id
+                    # Новые поля из WB API
+                    "spp_percent": order.spp_percent,
+                    "customer_price": order.customer_price,
+                    "discount_percent": order.discount_percent,
+                    "logistics_amount": order.logistics_amount
                 })
             
             # Статистика за сегодня
@@ -709,25 +779,91 @@ class BotAPIService:
                     "size": stock.size or "Неизвестно",
                     "quantity": stock.quantity or 0,
                     "warehouse_name": stock.warehouse_name or "Неизвестно",
-                    "last_updated": stock.last_updated.isoformat() if stock.last_updated else None
+                    "last_updated": stock.last_updated.isoformat() if stock.last_updated else None,
+                    # Новые поля из WB API
+                    "category": stock.category,
+                    "subject": stock.subject,
+                    "price": stock.price,
+                    "discount": stock.discount,
+                    "quantity_full": stock.quantity_full,
+                    "is_supply": stock.is_supply,
+                    "is_realization": stock.is_realization,
+                    "sc_code": stock.sc_code
                 })
             
+            # Группируем по товарам (nm_id)
+            products_dict = {}
+            for stock in stocks_list:
+                nm_id = stock["nm_id"]
+                if nm_id not in products_dict:
+                    products_dict[nm_id] = {
+                        "nm_id": nm_id,
+                        "name": stock["name"],
+                        "brand": stock["brand"],
+                        "stocks": {},
+                        "critical_sizes": [],
+                        "zero_sizes": [],
+                        "days_left": {},
+                        "sales_per_day": 0.0,
+                        "price": stock.get("price", 0.0),
+                        "commission_percent": 0.0,
+                        # Новые поля из WB API остатков
+                        "category": stock.get("category"),
+                        "subject": stock.get("subject"),
+                        "discount": stock.get("discount", 0.0),
+                        "quantity_full": stock.get("quantity_full"),
+                        "is_supply": stock.get("is_supply"),
+                        "is_realization": stock.get("is_realization"),
+                        "sc_code": stock.get("sc_code")
+                    }
+                
+                # Добавляем остатки по размерам
+                size = stock["size"] or "Unknown"
+                products_dict[nm_id]["stocks"][size] = stock["quantity"]
+                
+                # Определяем критические размеры
+                if stock["quantity"] <= 5 and stock["quantity"] > 0:
+                    products_dict[nm_id]["critical_sizes"].append(size)
+                elif stock["quantity"] == 0:
+                    products_dict[nm_id]["zero_sizes"].append(size)
+            
+            # Разделяем на критические и нулевые товары
+            critical_products = []
+            zero_products = []
+            
+            for product in products_dict.values():
+                if product["critical_sizes"]:
+                    critical_products.append(product)
+                elif product["zero_sizes"] and not product["critical_sizes"]:
+                    zero_products.append(product)
+            
             return {
-                "stocks": stocks_list,
-                "total_stocks": total_stocks,
-                "pagination": {
-                    "limit": limit,
-                    "offset": offset,
-                    "total": total_stocks
-                }
+                "critical_products": critical_products,
+                "zero_products": zero_products,
+                "summary": {
+                    "critical_count": len(critical_products),
+                    "zero_count": len(zero_products),
+                    "attention_needed": len(critical_products) + len(zero_products),
+                    "potential_losses": sum(p["sales_per_day"] for p in critical_products + zero_products)
+                },
+                "recommendations": [
+                    "Пополнить остатки критичных товаров",
+                    "Проверить товары с нулевыми остатками"
+                ]
             }
             
         except Exception as e:
             logger.error(f"Ошибка получения критичных остатков: {e}")
             return {
-                "stocks": [],
-                "total_stocks": 0,
-                "pagination": {"limit": limit, "offset": offset, "total": 0}
+                "critical_products": [],
+                "zero_products": [],
+                "summary": {
+                    "critical_count": 0,
+                    "zero_count": 0,
+                    "attention_needed": 0,
+                    "potential_losses": 0.0
+                },
+                "recommendations": ["Ошибка получения данных"]
             }
 
     async def _fetch_reviews_from_db(self, cabinet: WBCabinet, limit: int, offset: int) -> Dict[str, Any]:
@@ -751,7 +887,17 @@ class BotAPIService:
                     "text": review.text or "",
                     "rating": review.rating or 0,
                     "is_answered": review.is_answered,
-                    "created_date": review.created_date.isoformat() if review.created_date else None
+                    "created_date": review.created_date.isoformat() if review.created_date else None,
+                    # Новые поля из WB API отзывов
+                    "pros": review.pros,
+                    "cons": review.cons,
+                    "user_name": review.user_name,
+                    "color": review.color,
+                    "bables": review.bables,
+                    "matching_size": review.matching_size,
+                    "was_viewed": review.was_viewed,
+                    "supplier_feedback_valuation": review.supplier_feedback_valuation,
+                    "supplier_product_valuation": review.supplier_product_valuation
                 })
             
             # Статистика
@@ -760,16 +906,19 @@ class BotAPIService:
             avg_rating = sum(r.rating or 0 for r in reviews) / len(reviews) if reviews else 0.0
             
             return {
-                "reviews": reviews_list,
-                "total_reviews": total_reviews,
-                "new_reviews": new_reviews,
-                "unanswered_reviews": unanswered_reviews,
-                "average_rating": round(avg_rating, 1),
-                "pagination": {
-                    "limit": limit,
-                    "offset": offset,
-                    "total": total_reviews
-                }
+                "new_reviews": reviews_list,  # Список отзывов
+                "unanswered_questions": [],  # Пока пустой список вопросов
+                "statistics": {
+                    "total_reviews": total_reviews,
+                    "new_today": new_reviews,
+                    "unanswered": unanswered_reviews,
+                    "average_rating": round(avg_rating, 1),
+                    "answered_count": total_reviews - unanswered_reviews,
+                    "answered_percent": round((total_reviews - unanswered_reviews) / total_reviews * 100, 1) if total_reviews > 0 else 0.0,
+                    "attention_needed": len([r for r in reviews if r.rating and r.rating <= 3]),
+                    "new_today": new_reviews
+                },
+                "recommendations": ["Все отзывы обработаны"] if unanswered_reviews == 0 else [f"Требуют ответа: {unanswered_reviews} отзывов"]
             }
             
         except Exception as e:
@@ -813,4 +962,63 @@ class BotAPIService:
                 "sales": {"total_amount": 0, "total_orders": 0, "average_order": 0},
                 "products": {"total": 0, "active": 0, "top_selling": "Ошибка"},
                 "reviews": {"total": 0, "average_rating": 0.0, "unanswered": 0}
+            }
+
+    async def _get_product_statistics(self, cabinet_id: int, nm_id: int) -> Dict[str, Any]:
+        """Получение статистики для конкретного товара"""
+        try:
+            now = datetime.now(timezone.utc)
+            
+            # Периоды для расчета
+            periods = {
+                "7_days": now - timedelta(days=7),
+                "14_days": now - timedelta(days=14),
+                "30_days": now - timedelta(days=30),
+                "60_days": now - timedelta(days=60),
+                "90_days": now - timedelta(days=90)
+            }
+            
+            # Получаем заказы товара за разные периоды
+            sales_periods = {}
+            for period_name, start_date in periods.items():
+                orders = self.db.query(WBOrder).filter(
+                    and_(
+                        WBOrder.cabinet_id == cabinet_id,
+                        WBOrder.nm_id == nm_id,
+                        WBOrder.order_date >= start_date,
+                        WBOrder.status != 'canceled'
+                    )
+                ).all()
+                sales_periods[period_name] = len(orders)
+            
+            # Рассчитываем выкуп (пока упрощенно - все заказы считаем выкупленными)
+            buyout_rates = {}
+            for period_name in ["7_days", "14_days", "30_days"]:
+                if period_name in sales_periods:
+                    # Упрощенный расчет: считаем что все заказы выкуплены
+                    buyout_rates[period_name] = 100.0 if sales_periods[period_name] > 0 else 0.0
+                else:
+                    buyout_rates[period_name] = 0.0
+            
+            # Рассчитываем скорость заказов (заказов в день)
+            order_speed = {}
+            for period_name in ["7_days", "14_days", "30_days"]:
+                if period_name in sales_periods:
+                    days = int(period_name.split('_')[0])
+                    order_speed[period_name] = sales_periods[period_name] / days if days > 0 else 0.0
+                else:
+                    order_speed[period_name] = 0.0
+            
+            return {
+                "buyout_rates": buyout_rates,
+                "order_speed": order_speed,
+                "sales_periods": sales_periods
+            }
+            
+        except Exception as e:
+            logger.error(f"Ошибка получения статистики товара: {e}")
+            return {
+                "buyout_rates": {"7_days": 0.0, "14_days": 0.0, "30_days": 0.0},
+                "order_speed": {"7_days": 0.0, "14_days": 0.0, "30_days": 0.0},
+                "sales_periods": {"7_days": 0, "14_days": 0, "30_days": 0, "60_days": 0, "90_days": 0}
             }
