@@ -3,7 +3,7 @@ Bot API сервис для интеграции с Telegram ботом
 """
 
 import logging
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from sqlalchemy.orm import Session
 from app.features.wb_api.models import WBCabinet, WBOrder, WBProduct, WBStock, WBReview
 from sqlalchemy import func, and_, or_, text
@@ -614,7 +614,7 @@ class BotAPIService:
                 "products": {
                     "total": total_products,
                     "active": active_products,
-                    "moderation": 0,  # Заглушка
+                    "moderation": 0,  # TODO: Добавить подсчет товаров на модерации
                     "critical_stocks": critical_stocks
                 },
                 "orders_today": {
@@ -633,7 +633,7 @@ class BotAPIService:
                         )
                     ).count(),
                     "attention_needed": critical_stocks,
-                    "top_product": "Нет данных"  # Заглушка
+                    "top_product": "Нет данных"  # TODO: Добавить расчет топ товара
                 },
                 "reviews": {
                     "new_count": new_reviews,
@@ -641,7 +641,7 @@ class BotAPIService:
                     "unanswered": unanswered_reviews,
                     "total": len(reviews)
                 },
-                "recommendations": ["Все в порядке!"]  # Заглушка
+                "recommendations": ["Все в порядке!"]  # TODO: Добавить умные рекомендации
             }
             
         except Exception as e:
@@ -741,7 +741,7 @@ class BotAPIService:
                     "yesterday_count": yesterday_count,
                     "yesterday_amount": yesterday_amount,
                     "growth_percent": growth_percent,
-                    "amount_growth_percent": 0.0,  # Заглушка
+                    "amount_growth_percent": 0.0,  # TODO: Добавить расчет роста по сумме
                     "average_check": today_amount / today_count if today_count > 0 else 0
                 },
                 "pagination": {
@@ -973,29 +973,40 @@ class BotAPIService:
     async def _fetch_analytics_from_db(self, cabinet: WBCabinet, period: str) -> Dict[str, Any]:
         """Получение аналитики из БД"""
         try:
-            # Заглушка - в реальности здесь должна быть сложная аналитика
+            now = datetime.now(timezone.utc)
+            today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+            yesterday_start = today_start - timedelta(days=1)
+            week_start = today_start - timedelta(days=7)
+            month_start = today_start - timedelta(days=30)
+            quarter_start = today_start - timedelta(days=90)
+            
+            # Продажи по периодам
+            sales_periods = {
+                "today": self._get_orders_period(cabinet.id, today_start, now),
+                "yesterday": self._get_orders_period(cabinet.id, yesterday_start, today_start),
+                "7_days": self._get_orders_period(cabinet.id, week_start, now),
+                "30_days": self._get_orders_period(cabinet.id, month_start, now),
+                "90_days": self._get_orders_period(cabinet.id, quarter_start, now)
+            }
+            
+            # Динамика
+            dynamics = self._calculate_dynamics(sales_periods)
+            
+            # Топ товары
+            top_products = self._get_top_products(cabinet.id, week_start, now)
+            
+            # Сводка остатков
+            stocks_summary = self._get_stocks_summary(cabinet.id)
+            
+            # Рекомендации
+            recommendations = self._generate_recommendations(sales_periods, stocks_summary)
+            
             return {
-                "sales_periods": {
-                    "today": {"count": 0, "amount": 0},
-                    "yesterday": {"count": 0, "amount": 0},
-                    "7_days": {"count": 0, "amount": 0},
-                    "30_days": {"count": 0, "amount": 0},
-                    "90_days": {"count": 0, "amount": 0}
-                },
-                "dynamics": {
-                    "yesterday_growth_percent": 0.0,
-                    "week_growth_percent": 0.0,
-                    "average_check": 0.0,
-                    "conversion_percent": 0.0
-                },
-                "top_products": [],
-                "stocks_summary": {
-                    "critical_count": 0,
-                    "zero_count": 0,
-                    "attention_needed": 0,
-                    "total_products": 0
-                },
-                "recommendations": ["Все в порядке!"]
+                "sales_periods": sales_periods,
+                "dynamics": dynamics,
+                "top_products": top_products,
+                "stocks_summary": stocks_summary,
+                "recommendations": recommendations
             }
             
         except Exception as e:
@@ -1023,6 +1034,163 @@ class BotAPIService:
                 },
                 "recommendations": ["Ошибка получения данных"]
             }
+
+    def _get_orders_period(self, cabinet_id: int, start_date: datetime, end_date: datetime) -> Dict[str, Any]:
+        """Получение заказов за период"""
+        orders = self.db.query(WBOrder).filter(
+            and_(
+                WBOrder.cabinet_id == cabinet_id,
+                WBOrder.order_date >= start_date,
+                WBOrder.order_date < end_date,
+                WBOrder.status != 'canceled'
+            )
+        ).all()
+        
+        count = len(orders)
+        amount = sum(order.total_price or 0 for order in orders)
+        
+        return {"count": count, "amount": amount}
+
+    def _calculate_dynamics(self, sales_periods: Dict[str, Any]) -> Dict[str, float]:
+        """Расчет динамики продаж"""
+        today = sales_periods["today"]
+        yesterday = sales_periods["yesterday"]
+        week = sales_periods["7_days"]
+        
+        # Рост к вчера
+        yesterday_growth = 0.0
+        if yesterday["count"] > 0:
+            yesterday_growth = ((today["count"] - yesterday["count"]) / yesterday["count"]) * 100
+        
+        # Рост к прошлой неделе
+        week_growth = 0.0
+        if week["count"] > 0:
+            week_growth = ((today["count"] - week["count"]) / week["count"]) * 100
+        
+        # Средний чек
+        average_check = today["amount"] / today["count"] if today["count"] > 0 else 0.0
+        
+        # Конверсия (заглушка - в реальности нужны данные о просмотрах)
+        conversion_percent = 0.0  # TODO: Добавить расчет конверсии
+        
+        return {
+            "yesterday_growth_percent": yesterday_growth,
+            "week_growth_percent": week_growth,
+            "average_check": average_check,
+            "conversion_percent": conversion_percent
+        }
+
+    def _get_top_products(self, cabinet_id: int, start_date: datetime, end_date: datetime) -> List[Dict[str, Any]]:
+        """Получение топ товаров"""
+        # Группируем заказы по товарам
+        orders = self.db.query(WBOrder).filter(
+            and_(
+                WBOrder.cabinet_id == cabinet_id,
+                WBOrder.order_date >= start_date,
+                WBOrder.order_date < end_date,
+                WBOrder.status != 'canceled'
+            )
+        ).all()
+        
+        # Группировка по nm_id
+        products_dict = {}
+        for order in orders:
+            nm_id = order.nm_id
+            if nm_id not in products_dict:
+                products_dict[nm_id] = {
+                    "nm_id": nm_id,
+                    "name": order.name or "Неизвестно",
+                    "sales_count": 0,
+                    "sales_amount": 0.0,
+                    "rating": 0.0,
+                    "stocks": {}
+                }
+            products_dict[nm_id]["sales_count"] += 1
+            products_dict[nm_id]["sales_amount"] += order.total_price or 0
+        
+        # Получаем рейтинги и остатки для каждого товара
+        for nm_id in products_dict:
+            # Рейтинг из отзывов
+            review = self.db.query(WBReview).filter(
+                and_(
+                    WBReview.cabinet_id == cabinet_id,
+                    WBReview.nm_id == nm_id
+                )
+            ).first()
+            if review:
+                products_dict[nm_id]["rating"] = review.rating or 0.0
+            
+            # Остатки по размерам
+            stocks = self.db.query(WBStock).filter(
+                and_(
+                    WBStock.cabinet_id == cabinet_id,
+                    WBStock.nm_id == nm_id
+                )
+            ).all()
+            
+            stocks_dict = {}
+            for stock in stocks:
+                size = stock.size or "Unknown"
+                stocks_dict[size] = stock.quantity or 0
+            products_dict[nm_id]["stocks"] = stocks_dict
+        
+        # Сортируем по количеству продаж
+        top_products = sorted(products_dict.values(), key=lambda x: x["sales_count"], reverse=True)
+        
+        return top_products[:5]  # Топ 5
+
+    def _get_stocks_summary(self, cabinet_id: int) -> Dict[str, int]:
+        """Получение сводки остатков"""
+        # Критичные товары (уникальные nm_id с остатками <= 5)
+        critical_products = self.db.query(WBStock.nm_id).filter(
+            and_(
+                WBStock.cabinet_id == cabinet_id,
+                WBStock.quantity <= 5
+            )
+        ).distinct().count()
+        
+        # Товары с нулевыми остатками (уникальные nm_id с остатками = 0)
+        zero_products = self.db.query(WBStock.nm_id).filter(
+            and_(
+                WBStock.cabinet_id == cabinet_id,
+                WBStock.quantity == 0
+            )
+        ).distinct().count()
+        
+        # Общее количество товаров
+        total_products = self.db.query(WBStock.nm_id).filter(
+            WBStock.cabinet_id == cabinet_id
+        ).distinct().count()
+        
+        return {
+            "critical_count": critical_products,
+            "zero_count": zero_products,
+            "attention_needed": critical_products + zero_products,
+            "total_products": total_products
+        }
+
+    def _generate_recommendations(self, sales_periods: Dict[str, Any], stocks_summary: Dict[str, int]) -> List[str]:
+        """Генерация рекомендаций"""
+        recommendations = []
+        
+        # Анализ продаж
+        today = sales_periods["today"]
+        yesterday = sales_periods["yesterday"]
+        
+        if today["count"] < yesterday["count"]:
+            recommendations.append("📉 Продажи упали - проверьте рекламу")
+        
+        # Анализ остатков
+        if stocks_summary["zero_count"] > 0:
+            recommendations.append(f"📦 {stocks_summary['zero_count']} товаров с нулевыми остатками")
+        
+        if stocks_summary["critical_count"] > 0:
+            recommendations.append(f"⚠️ {stocks_summary['critical_count']} товаров с критичными остатками")
+        
+        if not recommendations:
+            recommendations.append("✅ Все в порядке!")
+        
+        return recommendations
 
     async def _get_product_statistics(self, cabinet_id: int, nm_id: int) -> Dict[str, Any]:
         """Получение статистики для конкретного товара"""
