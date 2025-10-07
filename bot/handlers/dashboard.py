@@ -11,77 +11,45 @@ from aiogram.filters import Command
 
 from api.client import bot_api_client
 from keyboards.keyboards import wb_menu_keyboard, main_keyboard
-from utils.formatters import format_error_message
+from utils.formatters import format_error_message, safe_edit_message
 
 logger = logging.getLogger(__name__)
 
 router = Router()
 
 
-@router.callback_query(F.data == "dashboard")
-async def show_dashboard(callback: CallbackQuery):
-    """Показать дашборд с общей информацией по кабинету"""
-    logger.info(f"🔍 DEBUG: Обработчик dashboard вызван для пользователя {callback.from_user.id}")
-    
-    logger.info(f"🔍 DEBUG: Вызываем bot_api_client.get_dashboard с user_id={callback.from_user.id}")
-    response = await bot_api_client.get_dashboard(
-        user_id=callback.from_user.id
-    )
-    
-    logger.info(f"🔍 DEBUG: Получен ответ от API: success={response.success}, status_code={response.status_code}")
-    if response.error:
-        logger.info(f"🔍 DEBUG: Ошибка API: {response.error}")
-    
-    if response.success:
-        new_text = response.telegram_text or "📊 Дашборд загружен"
-        new_markup = wb_menu_keyboard()
-        
-        # Проверяем, изменилось ли содержимое
-        if (callback.message.text != new_text or 
-            callback.message.reply_markup != new_markup):
-            await callback.message.edit_text(
-                new_text,
-                reply_markup=new_markup
-            )
-        else:
-            logger.info("🔍 DEBUG: Содержимое не изменилось, пропускаем редактирование")
-    else:
-        error_message = format_error_message(response.error, response.status_code)
-        new_text = f"❌ Ошибка загрузки дашборда:\n\n{error_message}"
-        new_markup = main_keyboard()
-        
-        # Проверяем, изменилось ли содержимое
-        if (callback.message.text != new_text or 
-            callback.message.reply_markup != new_markup):
-            await callback.message.edit_text(
-                new_text,
-                reply_markup=new_markup
-            )
-        else:
-            logger.info("🔍 DEBUG: Содержимое не изменилось, пропускаем редактирование")
-    
-    await callback.answer()
+# Обработчик dashboard убран, так как кнопка удалена из меню
+# Данные дашборда теперь показываются в главном меню
 
 
 @router.callback_query(F.data == "refresh_dashboard")
 async def refresh_dashboard(callback: CallbackQuery):
     """Обновить данные дашборда"""
-    await callback.message.edit_text("⏳ Обновляю данные...")
+    await safe_edit_message(
+        callback=callback,
+        text="⏳ Обновляю данные...",
+        reply_markup=None,
+        user_id=callback.from_user.id
+    )
     
     response = await bot_api_client.get_dashboard(
         user_id=callback.from_user.id
     )
     
     if response.success:
-        await callback.message.edit_text(
-            response.telegram_text or "📊 Дашборд обновлен",
-            reply_markup=wb_menu_keyboard()
+        await safe_edit_message(
+            callback=callback,
+            text=response.telegram_text or "📊 Дашборд обновлен",
+            reply_markup=wb_menu_keyboard(),
+            user_id=callback.from_user.id
         )
     else:
         error_message = format_error_message(response.error, response.status_code)
-        await callback.message.edit_text(
-            f"❌ Ошибка обновления дашборда:\n\n{error_message}",
-            reply_markup=wb_menu_keyboard()
+        await safe_edit_message(
+            callback=callback,
+            text=f"❌ Ошибка обновления дашборда:\n\n{error_message}",
+            reply_markup=wb_menu_keyboard(),
+            user_id=callback.from_user.id
         )
     
     await callback.answer("✅ Данные обновлены")

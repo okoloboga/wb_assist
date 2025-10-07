@@ -240,19 +240,19 @@ class WBSyncService:
             
             logger.info(f"Processing {len(orders_data)} orders from WB API")
             
+            
             for i, order_data in enumerate(orders_data):
                 try:
-                    order_id = order_data.get("gNumber")  # Исправлено: gNumber вместо orderId
+                    order_id = order_data.get("gNumber")
                     nm_id = order_data.get("nmId")
-                    
-                    # Отладочный лог
-                    if i < 3:  # Логируем только первые 3 заказа
-                        logger.info(f"Order {i}: order_id={order_id}, nm_id={nm_id}, keys={list(order_data.keys())}")
                     
                     # Пропускаем заказы без order_id или nm_id
                     if not order_id or not nm_id:
-                        if i < 3:  # Логируем только первые 3 пропущенных заказа
-                            logger.info(f"Skipping order {i}: order_id={order_id}, nm_id={nm_id}")
+                        continue
+                    
+                    # Специальная обработка для заказов без nm_id в базе
+                    if not nm_id:
+                        logger.warning(f"Order {order_id} has no nm_id in WB API data")
                         continue
                     
                     # Пропускаем дубликаты в рамках одного запроса
@@ -274,6 +274,8 @@ class WBSyncService:
                         existing.nm_id = nm_id
                         if old_nm_id != nm_id:
                             logger.info(f"Updated order {order_id}: nm_id {old_nm_id} -> {nm_id}")
+                        else:
+                            logger.info(f"Order {order_id} already has nm_id={nm_id}")
                         existing.article = order_data.get("supplierArticle")
                         existing.name = order_data.get("subject")  # Исправлено: subject вместо name
                         existing.brand = order_data.get("brand")
@@ -355,6 +357,10 @@ class WBSyncService:
                                 category, subject, total_price, commissions_data
                             )
                             
+                            logger.info(f"Step 4: Creating WBOrder with nm_id={nm_id}")
+                            logger.info(f"Step 4: nm_id type before WBOrder = {type(nm_id)}")
+                            logger.info(f"Step 4: nm_id value before WBOrder = {nm_id}")
+                            
                             order = WBOrder(
                                 cabinet_id=cabinet.id,
                                 order_id=str(order_id),
@@ -387,8 +393,17 @@ class WBSyncService:
                                 status="canceled" if order_data.get("isCancel", False) else "active",  # Исправлено: вычисляем статус
                                 order_date=self._parse_datetime(order_data.get("date"))
                             )
+                            
+                            logger.info(f"Step 5: WBOrder created, nm_id={order.nm_id}")
+                            logger.info(f"Step 5: WBOrder nm_id type = {type(order.nm_id)}")
+                            logger.info(f"Step 5: WBOrder nm_id value = {order.nm_id}")
+                            
                             self.db.add(order)
+                            logger.info(f"Step 6: Order added to session")
+                            
                             self.db.flush()  # Принудительно выполняем вставку для проверки уникальности
+                            logger.info(f"Step 7: Order flushed to DB")
+                            
                             # logger.info(f"Created order {order_id}: commission_percent={commission_percent}, commission_amount={commission_amount}")
                             created += 1
                         except Exception as insert_error:
@@ -403,7 +418,9 @@ class WBSyncService:
                     logger.warning(f"Failed to process order {order_id}: {order_error}")
                     continue
             
+            logger.info(f"Step 8: Committing transaction")
             self.db.commit()
+            logger.info(f"Step 9: Transaction committed successfully")
             
             return {
                 "status": "success",

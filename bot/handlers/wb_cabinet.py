@@ -1,7 +1,7 @@
 import sys
 from pathlib import Path
 from aiogram import Router, F
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery, Message, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 
@@ -45,8 +45,18 @@ async def process_initial_api_key(message: Message, state: FSMContext):
     if api_key.lower() in ['/cancel', 'отмена', 'cancel']:
         await state.clear()
         await message.answer(
-            "❌ Подключение отменено. Без API ключа использование бота невозможно.",
-            reply_markup=main_keyboard()
+            "❌ Подключение отменено. Без API ключа использование бота невозможно.\n\n"
+            "Для работы с ботом необходимо подключить кабинет Wildberries.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(
+                    text="🔑 Подключить кабинет",
+                    callback_data="settings_api_key"
+                )],
+                [InlineKeyboardButton(
+                    text="ℹ️ Помощь",
+                    callback_data="help"
+                )]
+            ])
         )
         return
     
@@ -79,10 +89,44 @@ async def process_initial_api_key(message: Message, state: FSMContext):
             # Если не можем импортировать, пропускаем
             pass
         
+        # Запускаем первичную синхронизацию
         await message.answer(
-            response.telegram_text or "✅ Кабинет успешно подключен! Теперь вы можете пользоваться ботом.",
-            reply_markup=wb_menu_keyboard()
+            "🔄 Запускаю первичную синхронизацию данных...\n"
+            "⏳ Это займет около 2 минут. Пожалуйста, подождите.",
+            reply_markup=None
         )
+        
+        # Запускаем синхронизацию
+        sync_response = await bot_api_client.start_sync(
+            user_id=message.from_user.id
+        )
+        
+        if sync_response.success:
+            # Получаем дашборд и показываем его сразу
+            dashboard_response = await bot_api_client.get_dashboard(
+                user_id=message.from_user.id
+            )
+            
+            if dashboard_response.success:
+                await message.answer(
+                    dashboard_response.telegram_text or "📊 Дашборд загружен",
+                    reply_markup=wb_menu_keyboard()
+                )
+            else:
+                await message.answer(
+                    "✅ Кабинет успешно подключен!\n"
+                    "🔄 Первичная синхронизация запущена.\n"
+                    "📊 Данные будут готовы через 2 минуты.\n\n"
+                    "Теперь вы можете пользоваться ботом!",
+                    reply_markup=wb_menu_keyboard()
+                )
+        else:
+            await message.answer(
+                "✅ Кабинет успешно подключен!\n"
+                "⚠️ Синхронизация будет запущена автоматически позже.\n\n"
+                "Теперь вы можете пользоваться ботом!",
+                reply_markup=wb_menu_keyboard()
+            )
     else:
         await state.set_state(WBCabinetStates.connection_error)
         error_message = format_error_message(response.error, response.status_code)
@@ -104,8 +148,18 @@ async def process_api_key(message: Message, state: FSMContext):
     if api_key.lower() in ['/cancel', 'отмена', 'cancel']:
         await state.clear()
         await message.answer(
-            "❌ Подключение отменено",
-            reply_markup=main_keyboard()
+            "❌ Подключение отменено\n\n"
+            "Для работы с ботом необходимо подключить кабинет Wildberries.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(
+                    text="🔑 Подключить кабинет",
+                    callback_data="settings_api_key"
+                )],
+                [InlineKeyboardButton(
+                    text="ℹ️ Помощь",
+                    callback_data="help"
+                )]
+            ])
         )
         return
     
@@ -129,10 +183,35 @@ async def process_api_key(message: Message, state: FSMContext):
     
     if response.success:
         await state.set_state(WBConnectionStates.connection_success)
+        
+        # Запускаем первичную синхронизацию
         await message.answer(
-            response.telegram_text or "✅ Кабинет успешно подключен!",
-            reply_markup=wb_menu_keyboard()
+            "🔄 Запускаю первичную синхронизацию данных...\n"
+            "⏳ Это займет около 2 минут. Пожалуйста, подождите.",
+            reply_markup=None
         )
+        
+        # Запускаем синхронизацию
+        sync_response = await bot_api_client.start_sync(
+            user_id=message.from_user.id
+        )
+        
+        if sync_response.success:
+            await message.answer(
+                "✅ Кабинет успешно подключен!\n"
+                "🔄 Первичная синхронизация запущена.\n"
+                "📊 Данные будут готовы через 2 минуты.\n\n"
+                "Теперь вы можете пользоваться ботом!",
+                reply_markup=wb_menu_keyboard()
+            )
+        else:
+            await message.answer(
+                "✅ Кабинет успешно подключен!\n"
+                "⚠️ Синхронизация будет запущена автоматически позже.\n\n"
+                "Теперь вы можете пользоваться ботом!",
+                reply_markup=wb_menu_keyboard()
+            )
+        
         await state.clear()
     else:
         await state.set_state(WBConnectionStates.connection_error)
@@ -175,8 +254,18 @@ async def check_cabinet_status(callback: CallbackQuery):
     else:
         error_message = format_error_message(response.error, response.status_code)
         await callback.message.edit_text(
-            f"❌ Ошибка получения статуса:\n\n{error_message}",
-            reply_markup=main_keyboard()
+            f"❌ Ошибка получения статуса:\n\n{error_message}\n\n"
+            "Для работы с ботом необходимо подключить кабинет Wildberries.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(
+                    text="🔑 Подключить кабинет",
+                    callback_data="settings_api_key"
+                )],
+                [InlineKeyboardButton(
+                    text="ℹ️ Помощь",
+                    callback_data="help"
+                )]
+            ])
         )
     
     await callback.answer()
@@ -203,11 +292,31 @@ async def cancel_operation(message: Message, state: FSMContext):
     if current_state:
         await state.clear()
         await message.answer(
-            "❌ Операция отменена",
-            reply_markup=main_keyboard()
+            "❌ Операция отменена\n\n"
+            "Для работы с ботом необходимо подключить кабинет Wildberries.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(
+                    text="🔑 Подключить кабинет",
+                    callback_data="settings_api_key"
+                )],
+                [InlineKeyboardButton(
+                    text="ℹ️ Помощь",
+                    callback_data="help"
+                )]
+            ])
         )
     else:
         await message.answer(
-            "ℹ️ Нет активных операций для отмены",
-            reply_markup=main_keyboard()
+            "ℹ️ Нет активных операций для отмены\n\n"
+            "Для работы с ботом необходимо подключить кабинет Wildberries.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(
+                    text="🔑 Подключить кабинет",
+                    callback_data="settings_api_key"
+                )],
+                [InlineKeyboardButton(
+                    text="ℹ️ Помощь",
+                    callback_data="help"
+                )]
+            ])
         )

@@ -11,19 +11,15 @@ def main_keyboard() -> InlineKeyboardMarkup:
 def wb_menu_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text="📊 Дашборд", callback_data="dashboard"),
-            InlineKeyboardButton(text="🛒 Заказы", callback_data="orders")
+            InlineKeyboardButton(text="🛒 Заказы", callback_data="orders"),
+            InlineKeyboardButton(text="📦 Склад", callback_data="stock")
         ],
         [
-            InlineKeyboardButton(text="📦 Склад", callback_data="stock"),
-            InlineKeyboardButton(text="⭐ Отзывы", callback_data="reviews")
+            InlineKeyboardButton(text="⭐ Отзывы", callback_data="reviews"),
+            InlineKeyboardButton(text="📈 Аналитика", callback_data="analytics")
         ],
         [
-            InlineKeyboardButton(text="📈 Аналитика", callback_data="analytics"),
-            InlineKeyboardButton(text="💰 Цены", callback_data="prices")
-        ],
-        [
-            InlineKeyboardButton(text="🔄 Синхронизация", callback_data="sync"),
+            InlineKeyboardButton(text="💰 Цены", callback_data="prices"),
             InlineKeyboardButton(text="🔔 Уведомления", callback_data="notifications")
         ],
         [

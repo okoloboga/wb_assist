@@ -144,6 +144,7 @@ class BotAPIService:
                 )
             ).first()
             
+            
             if not order:
                 return {
                     "success": False,
@@ -159,18 +160,58 @@ class BotAPIService:
             ).first()
             
             # Получаем остатки товара
-            stocks = self.db.query(WBStock).filter(
-                and_(
-                    WBStock.cabinet_id == order.cabinet_id,
-                    WBStock.nm_id == order.nm_id
-                )
-            ).all()
+            stocks = []
+            logger.info(f"DEBUG stocks: order.nm_id={order.nm_id}, type={type(order.nm_id)}, bool={bool(order.nm_id)}")
+            if order.nm_id:
+                logger.info(f"DEBUG stocks: Searching by nm_id={order.nm_id}")
+                # Если есть nm_id, ищем по нему
+                stocks = self.db.query(WBStock).filter(
+                    and_(
+                        WBStock.cabinet_id == order.cabinet_id,
+                        WBStock.nm_id == order.nm_id
+                    )
+                ).all()
+                logger.info(f"DEBUG stocks: Found {len(stocks)} stocks by nm_id")
+            else:
+                # Если nm_id нет, ищем по названию товара
+                logger.warning(f"Order {order.id} has no nm_id, searching stocks by product name: '{order.name}'")
+                stocks = self.db.query(WBStock).filter(
+                    and_(
+                        WBStock.cabinet_id == order.cabinet_id,
+                        WBStock.subject == order.name  # Ищем по названию товара
+                    )
+                ).all()
+                logger.warning(f"Found {len(stocks)} stocks for product name '{order.name}'")
+                
+                # Если не нашли по точному названию, попробуем найти по частичному совпадению
+                if not stocks:
+                    # Ищем по частичному совпадению названия
+                    partial_stocks = self.db.query(WBStock).filter(
+                        and_(
+                            WBStock.cabinet_id == order.cabinet_id,
+                            WBStock.subject.like(f"%{order.name}%")  # Частичное совпадение
+                        )
+                    ).all()
+                    logger.warning(f"Found {len(partial_stocks)} stocks with partial match for '{order.name}'")
+                    stocks = partial_stocks
+                
+                # Если все еще не нашли, показываем все остатки для этого кабинета
+                if not stocks:
+                    all_stocks = self.db.query(WBStock).filter(WBStock.cabinet_id == order.cabinet_id).all()
+                    logger.warning(f"All stocks for cabinet {order.cabinet_id}: {[(s.subject, s.size, s.quantity) for s in all_stocks[:3]]}")
+                    # Берем первые несколько остатков как пример
+                    stocks = all_stocks[:5]
             
             # Формируем остатки по размерам
             stocks_dict = {}
+            logger.info(f"DEBUG stocks_dict: Processing {len(stocks)} stocks")
             for stock in stocks:
                 size = stock.size or "ONE SIZE"
-                stocks_dict[size] = stock.quantity or 0
+                quantity = stock.quantity or 0
+                stocks_dict[size] = quantity
+                logger.info(f"DEBUG stocks_dict: size={size}, quantity={quantity}")
+            logger.info(f"DEBUG stocks_dict: Final result={stocks_dict}")
+            logger.info(f"DEBUG: After stocks_dict formation")
             
             # Получаем статистику отзывов для товара
             reviews_count = self.db.query(WBReview).filter(
@@ -179,9 +220,14 @@ class BotAPIService:
                     WBReview.nm_id == order.nm_id
                 )
             ).count()
+            logger.info(f"DEBUG: After reviews_count query")
             
             # Получаем статистику продаж для товара
-            product_stats = await self._get_product_statistics(cabinet.id, order.nm_id)
+            try:
+                product_stats = await self._get_product_statistics(cabinet.id, order.nm_id)
+            except Exception as e:
+                logger.error(f"Ошибка получения статистики товара: {e}")
+                product_stats = {"buyout_rates": {}, "order_speed": {}, "sales_periods": {}}
             
             # Форматируем данные заказа
             order_data = {
@@ -224,6 +270,8 @@ class BotAPIService:
             # Отладочный лог
             logger.info(f"Order data for order {order_id}: spp_percent={order.spp_percent}, customer_price={order.customer_price}, discount_percent={order.discount_percent}")
             logger.info(f"Order data keys: {list(order_data.keys())}")
+            logger.info(f"DEBUG final stocks: {order_data.get('stocks', {})}")
+            logger.info(f"DEBUG final nm_id: {order_data.get('nm_id', 'NOT_FOUND')}")
             
             # Форматируем Telegram сообщение
             telegram_text = self.formatter.format_order_detail({"order": order_data})

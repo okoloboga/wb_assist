@@ -59,6 +59,9 @@ class OrderData(BaseModel):
     customer_price: Optional[float] = None
     discount_percent: Optional[float] = None
     logistics_amount: Optional[float] = None
+    # Поля для остатков и nm_id
+    nm_id: Optional[int] = None
+    stocks: Optional[Dict[str, int]] = None
 
 
 class OrdersStatistics(BaseModel):

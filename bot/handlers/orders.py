@@ -11,7 +11,7 @@ from aiogram.filters import Command
 
 from api.client import bot_api_client
 from keyboards.keyboards import wb_menu_keyboard, main_keyboard, create_orders_keyboard
-from utils.formatters import format_error_message
+from utils.formatters import format_error_message, safe_edit_message, handle_telegram_errors
 
 logger = logging.getLogger(__name__)
 
@@ -51,29 +51,25 @@ async def show_orders_menu(callback: CallbackQuery):
                        "Заказы появятся здесь после первой продажи.")
             new_markup = wb_menu_keyboard()
         
-        # Проверяем, изменилось ли содержимое
-        if (callback.message.text != new_text or 
-            callback.message.reply_markup != new_markup):
-            await callback.message.edit_text(
-                new_text,
-                reply_markup=new_markup
-            )
-        else:
-            logger.info("🔍 DEBUG: Содержимое не изменилось, пропускаем редактирование")
+        # Безопасно редактируем сообщение
+        await safe_edit_message(
+            callback=callback,
+            text=new_text,
+            reply_markup=new_markup,
+            user_id=callback.from_user.id
+        )
     else:
         error_message = format_error_message(response.error, response.status_code)
         new_text = f"❌ Ошибка загрузки заказов:\n\n{error_message}"
         new_markup = wb_menu_keyboard()
         
-        # Проверяем, изменилось ли содержимое
-        if (callback.message.text != new_text or 
-            callback.message.reply_markup != new_markup):
-            await callback.message.edit_text(
-                new_text,
-                reply_markup=new_markup
-            )
-        else:
-            logger.info("🔍 DEBUG: Содержимое не изменилось, пропускаем редактирование")
+        # Безопасно редактируем сообщение
+        await safe_edit_message(
+            callback=callback,
+            text=new_text,
+            reply_markup=new_markup,
+            user_id=callback.from_user.id
+        )
     
     await callback.answer()
 

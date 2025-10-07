@@ -17,41 +17,7 @@ from utils.formatters import format_error_message, format_relative_time
 router = Router()
 
 
-@router.callback_query(F.data == "sync")
-async def show_sync_menu(callback: CallbackQuery):
-    """Показать меню синхронизации"""
-    # Получаем статус синхронизации
-    response = await bot_api_client.get_sync_status(
-        user_id=callback.from_user.id
-    )
-    
-    if response.success and response.data:
-        sync_status = response.data.get("status", "unknown")
-        last_sync = response.data.get("last_sync", "Неизвестно")
-        progress = response.data.get("progress", 0)
-        
-        text = f"🔄 СИНХРОНИЗАЦИЯ ДАННЫХ\n\n"
-        text += f"📊 Статус: {sync_status}\n"
-        text += f"⏰ Последняя синхронизация: {last_sync}\n"
-        text += f"📈 Прогресс: {progress}%\n\n"
-        
-        if sync_status == "running":
-            text += "⏳ Синхронизация выполняется...\n"
-            text += "Дождитесь завершения."
-        else:
-            text += "🔄 Нажмите кнопку для запуска синхронизации."
-        
-        keyboard = create_sync_keyboard(sync_status == "running")
-        
-        await callback.message.edit_text(text, reply_markup=keyboard)
-    else:
-        error_message = format_error_message(response.error, response.status_code)
-        await callback.message.edit_text(
-            f"❌ Ошибка получения статуса синхронизации:\n\n{error_message}",
-            reply_markup=wb_menu_keyboard()
-        )
-    
-    await callback.answer()
+# Обработчик sync убран, так как кнопка удалена из меню
 
 
 @router.callback_query(F.data == "start_sync")
