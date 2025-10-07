@@ -410,15 +410,8 @@ class BotAPIService:
                     "error": "Cabinet already connected"
                 }
             
-            # Проверяем, не используется ли уже этот API ключ
-            existing_key = self.db.query(WBCabinet).filter(
-                WBCabinet.api_key == api_key
-            ).first()
-            if existing_key:
-                return {
-                    "success": False,
-                    "error": "API key already in use"
-                }
+            # API ключ может использоваться несколькими пользователями
+            # Убираем проверку на уникальность
             
             # Валидируем API ключ через WB API
             logger.info(f"Creating WBAPIClient with api_key: {api_key}")
