@@ -27,9 +27,9 @@ async def register_user(message: Message, state: FSMContext):
     # Регистрируем пользователя на сервере
     payload = {
         "telegram_id": user_id,
-        "username": message.from_user.username or "",
+        "username": message.from_user.username or None,
         "first_name": first_name,
-        "last_name": message.from_user.last_name or ""
+        "last_name": message.from_user.last_name or None
     }
 
     status, _ = await register_user_on_server(payload)
