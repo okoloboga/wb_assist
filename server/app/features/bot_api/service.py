@@ -410,11 +410,24 @@ class BotAPIService:
                     "error": "Cabinet already connected"
                 }
             
-            # API ключ может использоваться несколькими пользователями
-            # Убираем проверку на уникальность
+            # Проверяем, существует ли уже кабинет с этим API ключом
+            existing_cabinet = self.db.query(WBCabinet).filter(
+                WBCabinet.api_key == api_key
+            ).first()
             
-            # Валидируем API ключ через WB API
-            logger.info(f"Creating WBAPIClient with api_key: {api_key}")
+            if existing_cabinet:
+                # Кабинет уже существует - пользователь присоединяется к нему
+                logger.info(f"User {user['id']} joining existing cabinet {existing_cabinet.id}")
+                
+                return {
+                    "success": True,
+                    "message": "Вы присоединились к существующему кабинету",
+                    "cabinet_id": existing_cabinet.id,
+                    "telegram_text": f"✅ Вы присоединились к кабинету WB!\n\n🏢 Кабинет: {existing_cabinet.name}\n🔑 API ключ: {api_key[:20]}...\n📊 Статус: Активен\n\nТеперь вы можете получать уведомления о новых заказах и остатках!"
+                }
+            
+            # API ключ новый - создаем новый кабинет
+            logger.info(f"Creating new cabinet for user {user['id']}")
             from app.features.wb_api.client import WBAPIClient
             
             # Создаем временный объект кабинета для валидации
