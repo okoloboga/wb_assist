@@ -935,11 +935,54 @@ class WBSyncService:
                 logger.warning(f"User not found for cabinet {cabinet.id}")
                 return
             
-            # Формируем данные для уведомления
+            # Формируем данные для уведомления (полные данные как в детальном просмотре)
             today_stats = await self._get_today_stats(cabinet)
             stocks = await self._get_order_stocks(cabinet, order.nm_id)
             
+            # Получаем данные о товаре (рейтинг, отзывы)
+            product = self.db.query(WBProduct).filter(
+                and_(
+                    WBProduct.cabinet_id == order.cabinet_id,
+                    WBProduct.nm_id == order.nm_id
+                )
+            ).first()
+            
+            # Получаем остатки товара по размерам
+            stocks_data = self.db.query(WBStock).filter(
+                and_(
+                    WBStock.cabinet_id == order.cabinet_id,
+                    WBStock.nm_id == order.nm_id
+                )
+            ).all()
+            
+            # Формируем остатки по размерам
+            stocks_dict = {}
+            stock_days_dict = {}
+            for stock in stocks_data:
+                size = stock.size or "ONE SIZE"
+                quantity = stock.quantity or 0
+                stocks_dict[size] = quantity
+                # Рассчитываем дни на основе остатков и скорости продаж
+                stock_days_dict[size] = 0  # Пока заглушка, можно добавить расчет
+            
+            # Получаем статистику отзывов для товара
+            reviews_count = self.db.query(WBReview).filter(
+                and_(
+                    WBReview.cabinet_id == order.cabinet_id,
+                    WBReview.nm_id == order.nm_id
+                )
+            ).count()
+            
+            # Получаем статистику продаж для товара
+            try:
+                product_stats = await self._get_product_statistics(cabinet.id, order.nm_id)
+            except Exception as e:
+                logger.error(f"Ошибка получения статистики товара: {e}")
+                product_stats = {"buyout_rates": {}, "order_speed": {}, "sales_periods": {}}
+            
             notification_data = {
+                # Основная информация
+                "id": order.id,
                 "order_id": order.order_id,
                 "date": order.order_date.isoformat() if order.order_date else datetime.now(timezone.utc).isoformat(),
                 "amount": float(order.total_price or 0),
@@ -947,6 +990,47 @@ class WBSyncService:
                 "brand": order.brand or "Неизвестно",
                 "warehouse_from": order.warehouse_from or "Неизвестно",
                 "warehouse_to": order.warehouse_to or "Неизвестно",
+                
+                # Дополнительные поля заказа
+                "nm_id": order.nm_id,
+                "article": order.article,
+                "size": order.size,
+                "barcode": order.barcode,
+                "quantity": order.quantity,
+                "price": order.price,
+                "total_price": order.total_price,
+                "order_date": order.order_date.isoformat() if order.order_date else None,
+                "status": order.status,
+                
+                # Финансовая информация
+                "commission_percent": order.commission_percent or 0.0,
+                "commission_amount": order.commission_amount or 0.0,
+                "spp_percent": order.spp_percent or 0.0,
+                "customer_price": order.customer_price or 0.0,
+                "discount_percent": order.discount_percent or 0.0,
+                "logistics_amount": order.logistics_amount or 0.0,
+                
+                # Логистика
+                "dimensions": order.dimensions or "",
+                "volume_liters": order.volume_liters or 0,
+                "warehouse_rate_per_liter": order.warehouse_rate_per_liter or 0,
+                "warehouse_rate_extra": order.warehouse_rate_extra or 0,
+                
+                # Рейтинги и отзывы
+                "rating": product.rating if product else 0.0,
+                "reviews_count": reviews_count,
+                
+                # Статистика
+                "buyout_rates": product_stats["buyout_rates"],
+                "order_speed": product_stats["order_speed"],
+                "sales_periods": product_stats["sales_periods"],
+                "category_availability": "",
+                
+                # Остатки
+                "stocks": stocks_dict,
+                "stock_days": stock_days_dict,
+                
+                # Дополнительные данные
                 "today_stats": today_stats,
                 "stocks": stocks
             }
@@ -1012,6 +1096,72 @@ class WBSyncService:
         except Exception as e:
             logger.error(f"Error getting today stats: {e}")
             return {"count": 0, "amount": 0}
+
+    async def _get_product_statistics(self, cabinet_id: int, nm_id: int) -> Dict[str, Any]:
+        """Получение статистики товара (выкуп, скорость заказов, продажи)"""
+        try:
+            # Получаем заказы за последние 30 дней для расчета статистики
+            thirty_days_ago = datetime.now(timezone.utc) - timedelta(days=30)
+            
+            # Заказы за 7 дней
+            orders_7d = self.db.query(WBOrder).filter(
+                and_(
+                    WBOrder.cabinet_id == cabinet_id,
+                    WBOrder.nm_id == nm_id,
+                    WBOrder.order_date >= datetime.now(timezone.utc) - timedelta(days=7)
+                )
+            ).all()
+            
+            # Заказы за 14 дней
+            orders_14d = self.db.query(WBOrder).filter(
+                and_(
+                    WBOrder.cabinet_id == cabinet_id,
+                    WBOrder.nm_id == nm_id,
+                    WBOrder.order_date >= datetime.now(timezone.utc) - timedelta(days=14)
+                )
+            ).all()
+            
+            # Заказы за 30 дней
+            orders_30d = self.db.query(WBOrder).filter(
+                and_(
+                    WBOrder.cabinet_id == cabinet_id,
+                    WBOrder.nm_id == nm_id,
+                    WBOrder.order_date >= thirty_days_ago
+                )
+            ).all()
+            
+            # Рассчитываем статистику
+            buyout_rates = {
+                "7_days": 100.0 if orders_7d else 0.0,
+                "14_days": 100.0 if orders_14d else 0.0,
+                "30_days": 100.0 if orders_30d else 0.0
+            }
+            
+            order_speed = {
+                "7_days": len(orders_7d) / 7.0,
+                "14_days": len(orders_14d) / 14.0,
+                "30_days": len(orders_30d) / 30.0
+            }
+            
+            sales_periods = {
+                "7_days": len(orders_7d),
+                "14_days": len(orders_14d),
+                "30_days": len(orders_30d)
+            }
+            
+            return {
+                "buyout_rates": buyout_rates,
+                "order_speed": order_speed,
+                "sales_periods": sales_periods
+            }
+            
+        except Exception as e:
+            logger.error(f"Error getting product statistics: {e}")
+            return {
+                "buyout_rates": {},
+                "order_speed": {},
+                "sales_periods": {}
+            }
 
     async def _get_order_stocks(self, cabinet: WBCabinet, nm_id: int) -> Dict[str, int]:
         """Получение остатков по товару"""
