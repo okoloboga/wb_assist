@@ -996,6 +996,7 @@ class WBSyncService:
                 "article": order.article,
                 "size": order.size,
                 "barcode": order.barcode,
+                "supplier_article": order.article,  # Используем article как supplier_article
                 "quantity": order.quantity,
                 "price": order.price,
                 "total_price": order.total_price,
@@ -1010,11 +1011,11 @@ class WBSyncService:
                 "discount_percent": order.discount_percent or 0.0,
                 "logistics_amount": order.logistics_amount or 0.0,
                 
-                # Логистика
-                "dimensions": order.dimensions or "",
-                "volume_liters": order.volume_liters or 0,
-                "warehouse_rate_per_liter": order.warehouse_rate_per_liter or 0,
-                "warehouse_rate_extra": order.warehouse_rate_extra or 0,
+                # Логистика (поля не существуют в модели WBOrder)
+                "dimensions": "",
+                "volume_liters": 0,
+                "warehouse_rate_per_liter": 0,
+                "warehouse_rate_extra": 0,
                 
                 # Рейтинги и отзывы
                 "rating": product.rating if product else 0.0,
