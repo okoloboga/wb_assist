@@ -46,6 +46,11 @@ class APIKeyCheckMiddleware(BaseMiddleware):
         if isinstance(event, Message) and event.text and event.text.startswith('/start'):
             return await handler(event, data)
         
+        # Пропускаем callback кнопки подключения кабинета
+        if isinstance(event, CallbackQuery) and event.data in ['settings_api_key', 'connect_wb']:
+            logger.info(f"🔍 API_KEY_CHECK: Пропускаем проверку - пользователь {user_id} нажимает кнопку подключения кабинета")
+            return await handler(event, data)
+        
         # Пропускаем если пользователь уже проверен в этой сессии
         if user_id in self._checked_users:
             return await handler(event, data)
@@ -57,7 +62,8 @@ class APIKeyCheckMiddleware(BaseMiddleware):
             state = data.get('state')
             if state:
                 current_state = await state.get_state()
-                if current_state and 'api_key' in str(current_state):
+                if current_state and ('api_key' in str(current_state) or 'waiting_for_api_key' in str(current_state)):
+                    logger.info(f"🔍 API_KEY_CHECK: Пропускаем проверку - пользователь {user_id} в состоянии ввода API ключа: {current_state}")
                     return await handler(event, data)
         
         # Проверяем наличие API ключа
