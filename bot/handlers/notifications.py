@@ -152,21 +152,62 @@ async def handle_new_order_notification(message: Message, data: dict):
     """Обработать уведомление о новом заказе"""
     order_data = data.get("data", {})
     
-    text = f"🎉 НОВЫЙ ЗАКАЗ!\n\n"
-    text += f"🧾 #{order_data.get('order_id', 'N/A')} | {order_data.get('amount', 0):,}₽\n"
-    text += f"👑 {order_data.get('brand', 'N/A')}\n"
-    text += f"✏ {order_data.get('product_name', 'N/A')}\n"
-    text += f"🚛 {order_data.get('warehouse_from', 'N/A')} → {order_data.get('warehouse_to', 'N/A')}\n\n"
+    order_id = order_data.get('order_id', 'N/A')
+    order_date = order_data.get('date', 'N/A')
+    brand = order_data.get('brand', 'N/A')
+    product_name = order_data.get('product_name', 'N/A')
+    nm_id = order_data.get('nm_id', 'N/A')
+    supplier_article = order_data.get('supplier_article', '')
+    size = order_data.get('size', '')
+    barcode = order_data.get('barcode', '')
+    warehouse_from = order_data.get('warehouse_from', 'N/A')
+    warehouse_to = order_data.get('warehouse_to', 'N/A')
+    order_amount = order_data.get('amount', 0)
+    commission_percent = order_data.get('commission_percent', 0)
+    commission_amount = order_data.get('commission_amount', 0)
+    spp_percent = order_data.get('spp_percent', 0)
+    customer_price = order_data.get('customer_price', 0)
+    logistics_amount = order_data.get('logistics_amount', 0)
+    dimensions = order_data.get('dimensions', '')
+    volume_liters = order_data.get('volume_liters', 0)
+    warehouse_rate_per_liter = order_data.get('warehouse_rate_per_liter', 0)
+    warehouse_rate_extra = order_data.get('warehouse_rate_extra', 0)
+    rating = order_data.get('rating', 0)
+    reviews_count = order_data.get('reviews_count', 0)
+    buyout_rates = order_data.get('buyout_rates', {})
+    order_speed = order_data.get('order_speed', {})
+    sales_periods = order_data.get('sales_periods', {})
+    category_availability = order_data.get('category_availability', '')
+    stocks = order_data.get('stocks', {})
+    stock_days = order_data.get('stock_days', {})
     
-    today_stats = order_data.get("today_stats", {})
-    if today_stats:
-        text += f"📊 Сегодня: {today_stats.get('count', 0)} заказов на {today_stats.get('amount', 0):,}₽\n"
-    
-    stocks = order_data.get("stocks", {})
-    if stocks:
-        text += f"📦 Остаток: {format_stocks_summary(stocks)}\n"
-    
-    text += f"\n💡 Нажмите /order_{order_data.get('order_id', 'N/A')} для полного отчета"
+    text = f"🧾 Заказ [#{order_id}] {order_date}\n\n"
+    text += f"👑 {brand} ({brand})\n"
+    text += f"✏ Название: {product_name}\n"
+    text += f"🆔 {nm_id} / {supplier_article} / ({size})\n"
+    text += f"🎹 {barcode}\n"
+    text += f"🚛 {warehouse_from} ⟶ {warehouse_to}\n"
+    text += f"💰 Цена заказа: {order_amount:,.0f}₽\n"
+    text += f"💶 Комиссия WB: {commission_percent}% ({commission_amount:,.0f}₽)\n"
+    text += f"🛍 СПП: {spp_percent}% (Цена для покупателя: {customer_price:,.0f}₽)\n"
+    text += f"💶 Логистика WB: {logistics_amount:,.1f}₽\n"
+    text += f"        Габариты: {dimensions}. ({volume_liters}л.)\n"
+    text += f"        Тариф склада: {warehouse_rate_per_liter:,.1f}₽ за 1л. | {warehouse_rate_extra:,.1f}₽ за л. свыше)\n"
+    text += f"🌟 Оценка: {rating}\n"
+    text += f"💬 Отзывы: {reviews_count}\n"
+    text += f"⚖️ Выкуп/с учетом возврата (7/14/30):\n"
+    text += f"        {buyout_rates.get('7_days', 0):.1f}% / {buyout_rates.get('14_days', 0):.1f}% / {buyout_rates.get('30_days', 0):.1f}%\n"
+    text += f"💠 Скорость заказов за 7/14/30 дней:\n"
+    text += f"        {order_speed.get('7_days', 0):.2f} | {order_speed.get('14_days', 0):.1f} | {order_speed.get('30_days', 0):.1f} шт. в день\n"
+    text += f"📖 Продаж за 7 / 14 / 30 дней:\n"
+    text += f"        {sales_periods.get('7_days', 0)} | {sales_periods.get('14_days', 0)} | {sales_periods.get('30_days', 0)} шт.\n"
+    text += f"💈 Оборачиваемость категории 90:\n"
+    text += f"        {category_availability}\n"
+    text += f"📦 Остаток:\n"
+    for size in ["L", "M", "S", "XL"]:
+        stock_count = stocks.get(size, 0)
+        stock_days_count = stock_days.get(size, 0)
+        text += f"        {size} ({stock_count} шт.) ≈ на {stock_days_count} дн.\n"
     
     await message.answer(text)
 

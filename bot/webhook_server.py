@@ -92,26 +92,64 @@ async def handle_new_order_webhook(telegram_id: int, data: Dict[str, Any]):
                     text = order_data.get("telegram_text", "🧾 Детали заказа")
                     logger.info(f"✅ Получен полный формат заказа {data.get('order_id')}")
                 else:
-                    # Fallback к простому формату
-                    logger.warning(f"⚠️ API недоступен для заказа {data.get('order_id')}, используем простой формат")
-                    text = f"🎉 НОВЫЙ ЗАКАЗ!\n\n"
-                    text += f"🧾 #{data.get('order_id', 'N/A')} | {data.get('amount', 0):,}₽\n"
-                    text += f"👑 {data.get('brand', 'N/A')}\n"
-                    text += f"✏ {data.get('product_name', 'N/A')}\n"
-                    text += f"🚛 {data.get('warehouse_from', 'N/A')} → {data.get('warehouse_to', 'N/A')}\n\n"
+                    # Fallback к полному формату
+                    logger.warning(f"⚠️ API недоступен для заказа {data.get('order_id')}, используем полный формат")
+                    order_id = data.get('order_id', 'N/A')
+                    order_date = data.get('date', 'N/A')
+                    brand = data.get('brand', 'N/A')
+                    product_name = data.get('product_name', 'N/A')
+                    nm_id = data.get('nm_id', 'N/A')
+                    supplier_article = data.get('supplier_article', '')
+                    size = data.get('size', '')
+                    barcode = data.get('barcode', '')
+                    warehouse_from = data.get('warehouse_from', 'N/A')
+                    warehouse_to = data.get('warehouse_to', 'N/A')
+                    order_amount = data.get('amount', 0)
+                    commission_percent = data.get('commission_percent', 0)
+                    commission_amount = data.get('commission_amount', 0)
+                    spp_percent = data.get('spp_percent', 0)
+                    customer_price = data.get('customer_price', 0)
+                    logistics_amount = data.get('logistics_amount', 0)
+                    dimensions = data.get('dimensions', '')
+                    volume_liters = data.get('volume_liters', 0)
+                    warehouse_rate_per_liter = data.get('warehouse_rate_per_liter', 0)
+                    warehouse_rate_extra = data.get('warehouse_rate_extra', 0)
+                    rating = data.get('rating', 0)
+                    reviews_count = data.get('reviews_count', 0)
+                    buyout_rates = data.get('buyout_rates', {})
+                    order_speed = data.get('order_speed', {})
+                    sales_periods = data.get('sales_periods', {})
+                    category_availability = data.get('category_availability', '')
+                    stocks = data.get('stocks', {})
+                    stock_days = data.get('stock_days', {})
                     
-                    # Добавляем статистику за сегодня
-                    today_stats = data.get("today_stats", {})
-                    if today_stats:
-                        text += f"📊 Сегодня: {today_stats.get('count', 0)} заказов на {today_stats.get('amount', 0):,}₽\n"
-                    
-                    # Добавляем остатки
-                    stocks = data.get("stocks", {})
-                    if stocks:
-                        stocks_text = " ".join([f"{size}({qty})" for size, qty in stocks.items()])
-                        text += f"📦 Остаток: {stocks_text}\n"
-                    
-                    text += f"\n💡 Нажмите /order_{data.get('order_id', 'N/A')} для полного отчета"
+                    text = f"🧾 Заказ [#{order_id}] {order_date}\n\n"
+                    text += f"👑 {brand} ({brand})\n"
+                    text += f"✏ Название: {product_name}\n"
+                    text += f"🆔 {nm_id} / {supplier_article} / ({size})\n"
+                    text += f"🎹 {barcode}\n"
+                    text += f"🚛 {warehouse_from} ⟶ {warehouse_to}\n"
+                    text += f"💰 Цена заказа: {order_amount:,.0f}₽\n"
+                    text += f"💶 Комиссия WB: {commission_percent}% ({commission_amount:,.0f}₽)\n"
+                    text += f"🛍 СПП: {spp_percent}% (Цена для покупателя: {customer_price:,.0f}₽)\n"
+                    text += f"💶 Логистика WB: {logistics_amount:,.1f}₽\n"
+                    text += f"        Габариты: {dimensions}. ({volume_liters}л.)\n"
+                    text += f"        Тариф склада: {warehouse_rate_per_liter:,.1f}₽ за 1л. | {warehouse_rate_extra:,.1f}₽ за л. свыше)\n"
+                    text += f"🌟 Оценка: {rating}\n"
+                    text += f"💬 Отзывы: {reviews_count}\n"
+                    text += f"⚖️ Выкуп/с учетом возврата (7/14/30):\n"
+                    text += f"        {buyout_rates.get('7_days', 0):.1f}% / {buyout_rates.get('14_days', 0):.1f}% / {buyout_rates.get('30_days', 0):.1f}%\n"
+                    text += f"💠 Скорость заказов за 7/14/30 дней:\n"
+                    text += f"        {order_speed.get('7_days', 0):.2f} | {order_speed.get('14_days', 0):.1f} | {order_speed.get('30_days', 0):.1f} шт. в день\n"
+                    text += f"📖 Продаж за 7 / 14 / 30 дней:\n"
+                    text += f"        {sales_periods.get('7_days', 0)} | {sales_periods.get('14_days', 0)} | {sales_periods.get('30_days', 0)} шт.\n"
+                    text += f"💈 Оборачиваемость категории 90:\n"
+                    text += f"        {category_availability}\n"
+                    text += f"📦 Остаток:\n"
+                    for size in ["L", "M", "S", "XL"]:
+                        stock_count = stocks.get(size, 0)
+                        stock_days_count = stock_days.get(size, 0)
+                        text += f"        {size} ({stock_count} шт.) ≈ на {stock_days_count} дн.\n"
         
         # Логируем текст сообщения
         logger.info(f"📤 SENDING MESSAGE to user {telegram_id}:")
