@@ -340,9 +340,14 @@ async def connect_cabinet(
 ):
     """Подключение нового WB кабинета через API ключ"""
     try:
+        logger.info(f"🔗 CONNECT_CABINET: Пользователь {telegram_id} пытается подключить кабинет с API ключом")
+        logger.info(f"🔗 CONNECT_CABINET: API ключ: {request.api_key[:20]}...")
+        
         user = await bot_service.get_user_by_telegram_id(telegram_id)
         if not user:
             raise HTTPException(status_code=500, detail="Ошибка создания пользователя")
+        
+        logger.info(f"🔗 CONNECT_CABINET: Пользователь найден/создан: {user['id']}")
         
         result = await bot_service.connect_cabinet(user, request.api_key)
         

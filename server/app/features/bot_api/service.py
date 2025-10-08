@@ -27,6 +27,8 @@ class BotAPIService:
     async def get_user_by_telegram_id(self, telegram_id: int) -> Optional[Dict[str, Any]]:
         """Получение пользователя по telegram_id с автоматическим созданием"""
         try:
+            logger.info(f"🔍 Ищем пользователя {telegram_id} в базе данных")
+            
             # Используем прямой SQL запрос вместо ORM
             result = self.db.execute(
                 text("SELECT id, telegram_id, username, first_name, last_name, created_at FROM users WHERE telegram_id = :telegram_id"),
@@ -35,7 +37,7 @@ class BotAPIService:
             
             if not result:
                 # Пользователь не найден - создаем его автоматически
-                logger.info(f"Пользователь {telegram_id} не найден, создаем автоматически")
+                logger.info(f"❌ Пользователь {telegram_id} не найден, создаем автоматически")
                 
                 # Создаем пользователя с базовыми данными
                 from app.features.user.schemas import UserCreate
@@ -52,9 +54,9 @@ class BotAPIService:
                 user, created = user_crud.create_or_update_user(user_data)
                 
                 if created:
-                    logger.info(f"Автоматически создан пользователь: {telegram_id}")
+                    logger.info(f"✅ Автоматически создан пользователь: {telegram_id}")
                 else:
-                    logger.info(f"Найден существующий пользователь: {telegram_id}")
+                    logger.info(f"🔄 Найден существующий пользователь: {telegram_id}")
                 
                 return {
                     "id": user.id,
@@ -64,6 +66,8 @@ class BotAPIService:
                     "last_name": user.last_name,
                     "created_at": user.created_at
                 }
+            else:
+                logger.info(f"✅ Пользователь {telegram_id} найден в базе данных (ID: {result[0]})")
             
             return {
                 "id": result[0],
@@ -75,7 +79,7 @@ class BotAPIService:
             }
             
         except Exception as e:
-            logger.error(f"Ошибка получения/создания пользователя: {e}")
+            logger.error(f"❌ Ошибка получения/создания пользователя: {e}")
             return None
 
     async def get_user_cabinet(self, telegram_id: int) -> Optional[WBCabinet]:
