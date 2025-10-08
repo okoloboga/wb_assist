@@ -409,14 +409,24 @@ class WBSyncService:
                             )
                             
                             self.db.add(order)
-                            self.db.flush()  # Принудительно выполняем вставку для проверки уникальности
                             
-                            # Отправляем уведомление о новом заказе только если разрешено
-                            if should_notify:
-                                await self._send_new_order_notification(cabinet, order_data, order)
-                            
-                            # logger.info(f"Created order {order_id}: commission_percent={commission_percent}, commission_amount={commission_amount}")
-                            created += 1
+                            try:
+                                self.db.flush()  # Принудительно выполняем вставку для проверки уникальности
+                                
+                                # Отправляем уведомление о новом заказе только если разрешено
+                                if should_notify:
+                                    await self._send_new_order_notification(cabinet, order_data, order)
+                                
+                                # logger.info(f"Created order {order_id}: commission_percent={commission_percent}, commission_amount={commission_amount}")
+                                created += 1
+                            except Exception as flush_error:
+                                # Если заказ уже существует (race condition), пропускаем его
+                                if "duplicate key" in str(flush_error).lower() or "unique constraint" in str(flush_error).lower() or "uniqueviolation" in str(flush_error).lower():
+                                    logger.warning(f"Order {order_id} already exists, skipping: {flush_error}")
+                                    self.db.rollback()  # Откатываем транзакцию
+                                    continue
+                                else:
+                                    raise flush_error
                         except Exception as insert_error:
                             # Если заказ уже существует (race condition), пропускаем его
                             if "duplicate key" in str(insert_error).lower() or "unique constraint" in str(insert_error).lower():
