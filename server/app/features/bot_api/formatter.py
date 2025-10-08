@@ -338,33 +338,10 @@ class BotMessageFormatter:
             return "❌ Ошибка форматирования данных синхронизации"
 
     def format_new_order_notification(self, data: Dict[str, Any]) -> str:
-        """Форматирование уведомления о новом заказе"""
+        """Форматирование уведомления о новом заказе в полном формате"""
         try:
-            order_id = data.get("order_id", "N/A")
-            order_date = self._format_datetime(data.get("date", ""))
-            amount = data.get("amount", 0)
-            product_name = data.get("product_name", "N/A")
-            brand = data.get("brand", "N/A")
-            warehouse_from = data.get("warehouse_from", "N/A")
-            warehouse_to = data.get("warehouse_to", "N/A")
-            today_stats = data.get("today_stats", {})
-            stocks = data.get("stocks", {})
-            
-            stocks_str = self._format_stocks(stocks)
-            
-            message = f"""🎉 НОВЫЙ ЗАКАЗ!
-
-🧾 #{order_id} | {order_date} | {amount:,.0f}₽
-👑 {brand}
-✏ {product_name}
-🚛 {warehouse_from} → {warehouse_to}
-
-📊 Сегодня: {today_stats.get('count', 0)} заказов на {today_stats.get('amount', 0):,.0f}₽
-📦 Остаток: {stocks_str}
-
-💡 Нажмите /order_{order_id} для полного отчета"""
-            
-            return self._truncate_message(message)
+            # Используем полный формат заказа
+            return self.format_order_detail({"order": data})
             
         except Exception as e:
             logger.error(f"Ошибка форматирования уведомления о заказе: {e}")

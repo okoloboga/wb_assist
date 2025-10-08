@@ -74,13 +74,12 @@ async def handle_new_order_webhook(telegram_id: int, data: Dict[str, Any]):
         from aiogram import Bot
         bot = Bot(token=config.bot_token)
         
-        # Используем тот же формат, что и при просмотре заказа
-        # Получаем полную информацию о заказе через API с задержкой
+        # Получаем полный формат заказа через API
         import aiohttp
         import asyncio
         
         # Ждем немного, чтобы заказ успел обработаться
-        await asyncio.sleep(2)
+        await asyncio.sleep(3)
         
         async with aiohttp.ClientSession() as session:
             async with session.get(
