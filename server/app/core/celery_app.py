@@ -22,6 +22,11 @@ celery_app.conf.update(
     result_serializer="json",
     timezone="UTC",
     enable_utc=True,
+    # Настройки очередей
+    task_routes={
+        "app.features.sync.tasks.sync_all_cabinets": {"queue": "sync_queue"},
+        "app.features.sync.tasks.sync_cabinet_data": {"queue": "sync_queue"},
+    },
     # Настройки для периодических задач
     beat_schedule={
         "sync-all-cabinets": {

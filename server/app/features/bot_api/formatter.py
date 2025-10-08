@@ -246,8 +246,7 @@ class BotMessageFormatter:
                 ("Сегодня", "today"),
                 ("Вчера", "yesterday"),
                 ("За 7 дней", "7_days"),
-                ("За 30 дней", "30_days"),
-                ("За 90 дней", "90_days")
+                ("За 30 дней", "30_days")
             ]:
                 period_data = sales_periods.get(period_key, {})
                 count = period_data.get("count", 0)
@@ -565,8 +564,8 @@ class BotMessageFormatter:
             message += f"        {order_speed.get('7_days', 0):.2f} | {order_speed.get('14_days', 0):.1f} | {order_speed.get('30_days', 0):.1f} шт. в день\n"
             
             # Продажи
-            message += f"📖 Продаж за 7 / 14 / 30 / 60 / 90 дней:\n"
-            message += f"        {sales_periods.get('7_days', 0)} | {sales_periods.get('14_days', 0)} | {sales_periods.get('30_days', 0)} | {sales_periods.get('60_days', 0)} | {sales_periods.get('90_days', 0)} шт.\n"
+            message += f"📖 Продаж за 7 / 14 / 30 дней:\n"
+            message += f"        {sales_periods.get('7_days', 0)} | {sales_periods.get('14_days', 0)} | {sales_periods.get('30_days', 0)} шт.\n"
             
             # Оборачиваемость
             message += f"💈 Оборачиваемость категории 90:\n"

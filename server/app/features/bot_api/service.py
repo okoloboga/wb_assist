@@ -1004,8 +1004,7 @@ class BotAPIService:
                 "today": self._get_orders_period(cabinet.id, today_start, now),
                 "yesterday": self._get_orders_period(cabinet.id, yesterday_start, today_start),
                 "7_days": self._get_orders_period(cabinet.id, week_start, now),
-                "30_days": self._get_orders_period(cabinet.id, month_start, now),
-                "90_days": self._get_orders_period(cabinet.id, quarter_start, now)
+                "30_days": self._get_orders_period(cabinet.id, month_start, now)
             }
             
             # Динамика
@@ -1035,8 +1034,7 @@ class BotAPIService:
                     "today": {"count": 0, "amount": 0},
                     "yesterday": {"count": 0, "amount": 0},
                     "7_days": {"count": 0, "amount": 0},
-                    "30_days": {"count": 0, "amount": 0},
-                    "90_days": {"count": 0, "amount": 0}
+                    "30_days": {"count": 0, "amount": 0}
                 },
                 "dynamics": {
                     "yesterday_growth_percent": 0.0,
@@ -1220,9 +1218,7 @@ class BotAPIService:
             periods = {
                 "7_days": now - timedelta(days=7),
                 "14_days": now - timedelta(days=14),
-                "30_days": now - timedelta(days=30),
-                "60_days": now - timedelta(days=60),
-                "90_days": now - timedelta(days=90)
+                "30_days": now - timedelta(days=30)
             }
             
             # Получаем заказы товара за разные периоды
@@ -1267,5 +1263,5 @@ class BotAPIService:
             return {
                 "buyout_rates": {"7_days": 0.0, "14_days": 0.0, "30_days": 0.0},
                 "order_speed": {"7_days": 0.0, "14_days": 0.0, "30_days": 0.0},
-                "sales_periods": {"7_days": 0, "14_days": 0, "30_days": 0, "60_days": 0, "90_days": 0}
+                "sales_periods": {"7_days": 0, "14_days": 0, "30_days": 0}
             }

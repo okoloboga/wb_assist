@@ -42,7 +42,8 @@ def sync_cabinet_data(self, cabinet_id: int) -> Dict[str, Any]:
         result = asyncio.run(sync_service.sync_all_data(cabinet))
         
         # Обновляем время последней синхронизации
-        cabinet.last_sync = datetime.utcnow()
+        from datetime import timezone
+        cabinet.last_sync_at = datetime.now(timezone.utc)
         db.commit()
         
         logger.info(f"Синхронизация кабинета {cabinet_id} завершена: {result}")
@@ -109,7 +110,7 @@ def should_sync_cabinet(cabinet: WBCabinet) -> bool:
     """
     Определяет, нужно ли синхронизировать кабинет
     """
-    if not cabinet.last_sync:
+    if not cabinet.last_sync_at:
         # Если никогда не синхронизировался, синхронизируем сразу
         return True
     
@@ -117,15 +118,22 @@ def should_sync_cabinet(cabinet: WBCabinet) -> bool:
     next_sync_time = calculate_next_sync_time(cabinet)
     
     # Проверяем, пора ли синхронизироваться
-    return datetime.utcnow() >= next_sync_time
+    from datetime import timezone
+    return datetime.now(timezone.utc) >= next_sync_time
 
 
 def calculate_next_sync_time(cabinet: WBCabinet) -> datetime:
     """
     Вычисляет время следующей синхронизации для кабинета
     """
+    from datetime import timezone
+    
     # Базовое время - время первой синхронизации
-    first_sync = cabinet.last_sync
+    first_sync = cabinet.last_sync_at
+    
+    # Если время в базе naive, делаем его aware
+    if first_sync.tzinfo is None:
+        first_sync = first_sync.replace(tzinfo=timezone.utc)
     
     # Добавляем случайный офсет 0-4 минуты для распределения нагрузки
     random_offset = random.randint(0, 4 * 60)  # 0-4 минуты в секундах
@@ -154,12 +162,13 @@ def schedule_cabinet_sync(cabinet_id: int) -> None:
             return
         
         # Вычисляем время первой синхронизации (сейчас + случайный офсет)
-        now = datetime.utcnow()
+        from datetime import timezone
+        now = datetime.now(timezone.utc)
         random_offset = random.randint(0, 4 * 60)  # 0-4 минуты
         first_sync_time = now + timedelta(seconds=random_offset)
         
         # Обновляем время последней синхронизации
-        cabinet.last_sync = first_sync_time
+        cabinet.last_sync_at = first_sync_time
         db.commit()
         
         logger.info(f"Запланирована первая синхронизация кабинета {cabinet_id} на {first_sync_time}")

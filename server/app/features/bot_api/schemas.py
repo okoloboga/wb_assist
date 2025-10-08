@@ -185,7 +185,6 @@ class SalesPeriods(BaseModel):
     yesterday: SalesPeriod
     days_7: SalesPeriod = Field(alias="7_days")
     days_30: SalesPeriod = Field(alias="30_days")
-    days_90: SalesPeriod = Field(alias="90_days")
 
 
 class SalesDynamics(BaseModel):
