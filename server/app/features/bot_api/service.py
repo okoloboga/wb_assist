@@ -25,7 +25,7 @@ class BotAPIService:
         self.formatter = BotMessageFormatter()
 
     async def get_user_by_telegram_id(self, telegram_id: int) -> Optional[Dict[str, Any]]:
-        """Получение пользователя по telegram_id"""
+        """Получение пользователя по telegram_id с автоматическим созданием"""
         try:
             # Используем прямой SQL запрос вместо ORM
             result = self.db.execute(
@@ -34,7 +34,36 @@ class BotAPIService:
             ).fetchone()
             
             if not result:
-                return None
+                # Пользователь не найден - создаем его автоматически
+                logger.info(f"Пользователь {telegram_id} не найден, создаем автоматически")
+                
+                # Создаем пользователя с базовыми данными
+                from app.features.user.schemas import UserCreate
+                from app.features.user.crud import UserCRUD
+                
+                user_crud = UserCRUD(self.db)
+                user_data = UserCreate(
+                    telegram_id=telegram_id,
+                    username=None,
+                    first_name=f"User_{telegram_id}",  # Временное имя
+                    last_name=None
+                )
+                
+                user, created = user_crud.create_or_update_user(user_data)
+                
+                if created:
+                    logger.info(f"Автоматически создан пользователь: {telegram_id}")
+                else:
+                    logger.info(f"Найден существующий пользователь: {telegram_id}")
+                
+                return {
+                    "id": user.id,
+                    "telegram_id": user.telegram_id,
+                    "username": user.username,
+                    "first_name": user.first_name,
+                    "last_name": user.last_name,
+                    "created_at": user.created_at
+                }
             
             return {
                 "id": result[0],
@@ -46,7 +75,7 @@ class BotAPIService:
             }
             
         except Exception as e:
-            logger.error(f"Ошибка получения пользователя: {e}")
+            logger.error(f"Ошибка получения/создания пользователя: {e}")
             return None
 
     async def get_user_cabinet(self, telegram_id: int) -> Optional[WBCabinet]:
@@ -966,10 +995,10 @@ class BotAPIService:
                 "new_reviews": reviews_list,  # Список отзывов
                 "unanswered_questions": [],  # Пока пустой список вопросов
                 "statistics": {
-                    "total_reviews": total_reviews,
+                "total_reviews": total_reviews,
                     "new_today": new_reviews,
                     "unanswered": unanswered_reviews,
-                    "average_rating": round(avg_rating, 1),
+                "average_rating": round(avg_rating, 1),
                     "answered_count": total_reviews - unanswered_reviews,
                     "answered_percent": round((total_reviews - unanswered_reviews) / total_reviews * 100, 1) if total_reviews > 0 else 0.0,
                     "attention_needed": len([r for r in reviews if r.rating and r.rating <= 3]),
