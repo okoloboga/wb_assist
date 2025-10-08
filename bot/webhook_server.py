@@ -75,8 +75,13 @@ async def handle_new_order_webhook(telegram_id: int, data: Dict[str, Any]):
         bot = Bot(token=config.bot_token)
         
         # Используем тот же формат, что и при просмотре заказа
-        # Получаем полную информацию о заказе через API
+        # Получаем полную информацию о заказе через API с задержкой
         import aiohttp
+        import asyncio
+        
+        # Ждем немного, чтобы заказ успел обработаться
+        await asyncio.sleep(2)
+        
         async with aiohttp.ClientSession() as session:
             async with session.get(
                 f"http://server:8000/api/v1/bot/orders/{data.get('order_id')}",
@@ -86,8 +91,10 @@ async def handle_new_order_webhook(telegram_id: int, data: Dict[str, Any]):
                 if response.status == 200:
                     order_data = await response.json()
                     text = order_data.get("telegram_text", "🧾 Детали заказа")
+                    logger.info(f"✅ Получен полный формат заказа {data.get('order_id')}")
                 else:
                     # Fallback к простому формату
+                    logger.warning(f"⚠️ API недоступен для заказа {data.get('order_id')}, используем простой формат")
                     text = f"🎉 НОВЫЙ ЗАКАЗ!\n\n"
                     text += f"🧾 #{data.get('order_id', 'N/A')} | {data.get('amount', 0):,}₽\n"
                     text += f"👑 {data.get('brand', 'N/A')}\n"
