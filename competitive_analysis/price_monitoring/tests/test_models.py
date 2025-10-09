@@ -28,6 +28,515 @@ class TestProduct:
         assert product.article == 'TEST001'
         assert product.category == 'Электроника'
         assert product.current_price == 1000.0
+
+
+class TestPriceHistory:
+    """Тесты для класса PriceHistory."""
+    
+    def test_initialization(self):
+        """Тест инициализации истории цен."""
+        from price_monitoring.models.price_history import PriceHistory
+        
+        history = PriceHistory(product_id="PROD001")
+        assert history.product_id == "PROD001"
+        assert len(history.entries) == 0
+        assert isinstance(history.created_at, datetime)
+    
+    def test_add_entry(self):
+        """Тест добавления записи в историю цен."""
+        from price_monitoring.models.price_history import PriceHistory, PriceHistoryEntry, PriceSource, PriceChangeType
+        
+        history = PriceHistory(product_id="PROD001")
+        entry = PriceHistoryEntry(
+            timestamp=datetime.now(),
+            price=1000.0,
+            source=PriceSource.MANUAL,
+            change_type=PriceChangeType.INCREASE
+        )
+        
+        history.add_entry(entry)
+        assert len(history.entries) == 1
+        assert history.entries[0] == entry
+    
+    def test_get_price_at_date(self):
+        """Тест получения цены на определенную дату."""
+        from price_monitoring.models.price_history import PriceHistory, PriceHistoryEntry, PriceSource, PriceChangeType
+        from datetime import timedelta
+        
+        history = PriceHistory(product_id="PROD001")
+        base_date = datetime.now()
+        
+        # Добавляем записи с разными датами
+        for i in range(5):
+            entry = PriceHistoryEntry(
+                timestamp=base_date - timedelta(days=i),
+                price=1000.0 + i * 100,
+                source=PriceSource.MANUAL,
+                change_type=PriceChangeType.INCREASE
+            )
+            history.add_entry(entry)
+        
+        # Тестируем получение цены
+        price = history.get_price_at_date(base_date - timedelta(days=2))
+        assert price == 1200.0
+        
+        # Тест с датой, для которой нет записи
+        future_price = history.get_price_at_date(base_date + timedelta(days=1))
+        assert future_price is None
+    
+    def test_get_price_changes(self):
+        """Тест получения изменений цен."""
+        from price_monitoring.models.price_history import PriceHistory, PriceHistoryEntry, PriceSource, PriceChangeType
+        from datetime import timedelta
+        
+        history = PriceHistory(product_id="PROD001")
+        base_date = datetime.now()
+        
+        # Добавляем записи с изменениями цен
+        prices = [1000.0, 1100.0, 1050.0, 1200.0, 1150.0]
+        for i, price in enumerate(prices):
+            change_type = PriceChangeType.INCREASE if i == 0 or price > prices[i-1] else PriceChangeType.DECREASE
+            entry = PriceHistoryEntry(
+                timestamp=base_date - timedelta(days=len(prices)-i-1),
+                price=price,
+                source=PriceSource.MANUAL,
+                change_type=change_type
+            )
+            history.add_entry(entry)
+        
+        changes = history.get_price_changes(days=7)
+        assert len(changes) > 0
+        
+        # Проверяем, что изменения отсортированы по дате
+        for i in range(1, len(changes)):
+            assert changes[i-1].timestamp <= changes[i].timestamp
+    
+    def test_get_statistics(self):
+        """Тест получения статистики по истории цен."""
+        from price_monitoring.models.price_history import PriceHistory, PriceHistoryEntry, PriceSource, PriceChangeType
+        from datetime import timedelta
+        
+        history = PriceHistory(product_id="PROD001")
+        base_date = datetime.now()
+        
+        prices = [1000.0, 1100.0, 1050.0, 1200.0, 1150.0]
+        for i, price in enumerate(prices):
+            entry = PriceHistoryEntry(
+                timestamp=base_date - timedelta(days=len(prices)-i-1),
+                price=price,
+                source=PriceSource.MANUAL,
+                change_type=PriceChangeType.INCREASE
+            )
+            history.add_entry(entry)
+        
+        stats = history.get_statistics()
+        assert stats['min_price'] == 1000.0
+        assert stats['max_price'] == 1200.0
+        assert stats['avg_price'] == sum(prices) / len(prices)
+        assert stats['total_entries'] == len(prices)
+    
+    def test_to_dict_and_from_dict(self):
+        """Тест сериализации и десериализации истории цен."""
+        from price_monitoring.models.price_history import PriceHistory, PriceHistoryEntry, PriceSource, PriceChangeType
+        
+        history = PriceHistory(product_id="PROD001")
+        entry = PriceHistoryEntry(
+            timestamp=datetime.now(),
+            price=1000.0,
+            source=PriceSource.MANUAL,
+            change_type=PriceChangeType.INCREASE,
+            notes="Test entry"
+        )
+        history.add_entry(entry)
+        
+        # Тест to_dict
+        data = history.to_dict()
+        assert data['product_id'] == "PROD001"
+        assert len(data['entries']) == 1
+        
+        # Тест from_dict
+        restored_history = PriceHistory.from_dict(data)
+        assert restored_history.product_id == history.product_id
+        assert len(restored_history.entries) == len(history.entries)
+        assert restored_history.entries[0].price == entry.price
+
+
+class TestPriceHistoryEntry:
+    """Тесты для класса PriceHistoryEntry."""
+    
+    def test_initialization(self):
+        """Тест инициализации записи истории цен."""
+        from price_monitoring.models.price_history import PriceHistoryEntry, PriceSource, PriceChangeType
+        
+        timestamp = datetime.now()
+        entry = PriceHistoryEntry(
+            timestamp=timestamp,
+            price=1000.0,
+            source=PriceSource.MANUAL,
+            change_type=PriceChangeType.INCREASE,
+            notes="Test note"
+        )
+        
+        assert entry.timestamp == timestamp
+        assert entry.price == 1000.0
+        assert entry.source == PriceSource.MANUAL
+        assert entry.change_type == PriceChangeType.INCREASE
+        assert entry.notes == "Test note"
+    
+    def test_to_dict_and_from_dict(self):
+        """Тест сериализации и десериализации записи."""
+        from price_monitoring.models.price_history import PriceHistoryEntry, PriceSource, PriceChangeType
+        
+        timestamp = datetime.now()
+        entry = PriceHistoryEntry(
+            timestamp=timestamp,
+            price=1000.0,
+            source=PriceSource.WILDBERRIES,
+            change_type=PriceChangeType.DECREASE,
+            notes="API update"
+        )
+        
+        # Тест to_dict
+        data = entry.to_dict()
+        assert data['price'] == 1000.0
+        assert data['source'] == PriceSource.WILDBERRIES.value
+        assert data['change_type'] == PriceChangeType.DECREASE.value
+        
+        # Тест from_dict
+        restored_entry = PriceHistoryEntry.from_dict(data)
+        assert restored_entry.price == entry.price
+        assert restored_entry.source == entry.source
+        assert restored_entry.change_type == entry.change_type
+        assert restored_entry.notes == entry.notes
+
+
+class TestCompetitor:
+    """Тесты для класса Competitor."""
+    
+    def test_initialization(self):
+        """Тест инициализации конкурента."""
+        from price_monitoring.models.competitor import Competitor, MarketplaceType, CompetitorType
+        
+        competitor = Competitor(
+            id="COMP001",
+            name="Конкурент 1",
+            marketplace=MarketplaceType.WILDBERRIES,
+            competitor_type=CompetitorType.DIRECT,
+            url="https://example.com",
+            is_active=True
+        )
+        
+        assert competitor.id == "COMP001"
+        assert competitor.name == "Конкурент 1"
+        assert competitor.marketplace == MarketplaceType.WILDBERRIES
+        assert competitor.competitor_type == CompetitorType.DIRECT
+        assert competitor.url == "https://example.com"
+        assert competitor.is_active is True
+        assert len(competitor.products) == 0
+    
+    def test_add_product(self):
+        """Тест добавления товара конкурента."""
+        from price_monitoring.models.competitor import Competitor, CompetitorProduct, MarketplaceType, CompetitorType
+        
+        competitor = Competitor(
+            id="COMP001",
+            name="Конкурент 1",
+            marketplace=MarketplaceType.WILDBERRIES,
+            competitor_type=CompetitorType.DIRECT
+        )
+        
+        product = CompetitorProduct(
+            id="PROD001",
+            name="Товар конкурента",
+            url="https://example.com/product/1",
+            price=1000.0,
+            our_product_id="OUR_PROD001"
+        )
+        
+        competitor.add_product(product)
+        assert len(competitor.products) == 1
+        assert competitor.products[0] == product
+    
+    def test_remove_product(self):
+        """Тест удаления товара конкурента."""
+        from price_monitoring.models.competitor import Competitor, CompetitorProduct, MarketplaceType, CompetitorType
+        
+        competitor = Competitor(
+            id="COMP001",
+            name="Конкурент 1",
+            marketplace=MarketplaceType.WILDBERRIES,
+            competitor_type=CompetitorType.DIRECT
+        )
+        
+        product = CompetitorProduct(
+            id="PROD001",
+            name="Товар конкурента",
+            url="https://example.com/product/1",
+            price=1000.0,
+            our_product_id="OUR_PROD001"
+        )
+        
+        competitor.add_product(product)
+        assert len(competitor.products) == 1
+        
+        competitor.remove_product("PROD001")
+        assert len(competitor.products) == 0
+    
+    def test_get_product_by_our_id(self):
+        """Тест получения товара конкурента по ID нашего товара."""
+        from price_monitoring.models.competitor import Competitor, CompetitorProduct, MarketplaceType, CompetitorType
+        
+        competitor = Competitor(
+            id="COMP001",
+            name="Конкурент 1",
+            marketplace=MarketplaceType.WILDBERRIES,
+            competitor_type=CompetitorType.DIRECT
+        )
+        
+        product1 = CompetitorProduct(
+            id="PROD001",
+            name="Товар 1",
+            url="https://example.com/product/1",
+            price=1000.0,
+            our_product_id="OUR_PROD001"
+        )
+        
+        product2 = CompetitorProduct(
+            id="PROD002",
+            name="Товар 2",
+            url="https://example.com/product/2",
+            price=2000.0,
+            our_product_id="OUR_PROD002"
+        )
+        
+        competitor.add_product(product1)
+        competitor.add_product(product2)
+        
+        found_product = competitor.get_product_by_our_id("OUR_PROD001")
+        assert found_product == product1
+        
+        not_found = competitor.get_product_by_our_id("NONEXISTENT")
+        assert not_found is None
+    
+    def test_to_dict_and_from_dict(self):
+        """Тест сериализации и десериализации конкурента."""
+        from price_monitoring.models.competitor import Competitor, CompetitorProduct, MarketplaceType, CompetitorType
+        
+        competitor = Competitor(
+            id="COMP001",
+            name="Конкурент 1",
+            marketplace=MarketplaceType.WILDBERRIES,
+            competitor_type=CompetitorType.DIRECT,
+            url="https://example.com",
+            is_active=True
+        )
+        
+        product = CompetitorProduct(
+            id="PROD001",
+            name="Товар конкурента",
+            url="https://example.com/product/1",
+            price=1000.0,
+            our_product_id="OUR_PROD001"
+        )
+        competitor.add_product(product)
+        
+        # Тест to_dict
+        data = competitor.to_dict()
+        assert data['id'] == "COMP001"
+        assert data['marketplace'] == MarketplaceType.WILDBERRIES.value
+        assert len(data['products']) == 1
+        
+        # Тест from_dict
+        restored_competitor = Competitor.from_dict(data)
+        assert restored_competitor.id == competitor.id
+        assert restored_competitor.marketplace == competitor.marketplace
+        assert len(restored_competitor.products) == len(competitor.products)
+
+
+class TestCompetitorProduct:
+    """Тесты для класса CompetitorProduct."""
+    
+    def test_initialization(self):
+        """Тест инициализации товара конкурента."""
+        from price_monitoring.models.competitor import CompetitorProduct
+        
+        product = CompetitorProduct(
+            id="PROD001",
+            name="Товар конкурента",
+            url="https://example.com/product/1",
+            price=1000.0,
+            our_product_id="OUR_PROD001",
+            description="Описание товара",
+            brand="Бренд",
+            category="Категория"
+        )
+        
+        assert product.id == "PROD001"
+        assert product.name == "Товар конкурента"
+        assert product.url == "https://example.com/product/1"
+        assert product.price == 1000.0
+        assert product.our_product_id == "OUR_PROD001"
+        assert product.description == "Описание товара"
+        assert product.brand == "Бренд"
+        assert product.category == "Категория"
+        assert isinstance(product.last_updated, datetime)
+    
+    def test_update_price(self):
+        """Тест обновления цены товара конкурента."""
+        from price_monitoring.models.competitor import CompetitorProduct
+        
+        product = CompetitorProduct(
+            id="PROD001",
+            name="Товар конкурента",
+            url="https://example.com/product/1",
+            price=1000.0,
+            our_product_id="OUR_PROD001"
+        )
+        
+        old_updated = product.last_updated
+        product.update_price(1200.0)
+        
+        assert product.price == 1200.0
+        assert product.last_updated > old_updated
+    
+    def test_to_dict_and_from_dict(self):
+        """Тест сериализации и десериализации товара конкурента."""
+        from price_monitoring.models.competitor import CompetitorProduct
+        
+        product = CompetitorProduct(
+            id="PROD001",
+            name="Товар конкурента",
+            url="https://example.com/product/1",
+            price=1000.0,
+            our_product_id="OUR_PROD001",
+            description="Описание",
+            brand="Бренд"
+        )
+        
+        # Тест to_dict
+        data = product.to_dict()
+        assert data['id'] == "PROD001"
+        assert data['price'] == 1000.0
+        assert data['our_product_id'] == "OUR_PROD001"
+        
+        # Тест from_dict
+        restored_product = CompetitorProduct.from_dict(data)
+        assert restored_product.id == product.id
+        assert restored_product.price == product.price
+        assert restored_product.our_product_id == product.our_product_id
+        assert restored_product.description == product.description
+
+
+class TestEnums:
+    """Тесты для перечислений."""
+    
+    def test_price_source_enum(self):
+        """Тест перечисления PriceSource."""
+        from price_monitoring.models.price_history import PriceSource
+        
+        assert PriceSource.MANUAL.value == "manual"
+        assert PriceSource.WILDBERRIES.value == "wildberries"
+        assert PriceSource.API.value == "api"
+        assert PriceSource.IMPORT.value == "import"
+    
+    def test_price_change_type_enum(self):
+        """Тест перечисления PriceChangeType."""
+        from price_monitoring.models.price_history import PriceChangeType
+        
+        assert PriceChangeType.INCREASE.value == "increase"
+        assert PriceChangeType.DECREASE.value == "decrease"
+        assert PriceChangeType.NO_CHANGE.value == "no_change"
+    
+    def test_marketplace_type_enum(self):
+        """Тест перечисления MarketplaceType."""
+        from price_monitoring.models.competitor import MarketplaceType
+        
+        assert MarketplaceType.WILDBERRIES.value == "wildberries"
+        assert MarketplaceType.OZON.value == "ozon"
+        assert MarketplaceType.YANDEX_MARKET.value == "yandex_market"
+        assert MarketplaceType.AVITO.value == "avito"
+        assert MarketplaceType.OTHER.value == "other"
+    
+    def test_competitor_type_enum(self):
+        """Тест перечисления CompetitorType."""
+        from price_monitoring.models.competitor import CompetitorType
+        
+        assert CompetitorType.DIRECT.value == "direct"
+        assert CompetitorType.INDIRECT.value == "indirect"
+        assert CompetitorType.SUBSTITUTE.value == "substitute"
+
+
+class TestModelIntegration:
+    """Интеграционные тесты для взаимодействия моделей."""
+    
+    def test_product_with_price_history(self):
+        """Тест интеграции Product с PriceHistory."""
+        from price_monitoring.models.price_history import PriceHistory, PriceHistoryEntry, PriceSource, PriceChangeType
+        
+        # Создаем продукт
+        product = Product(
+            id='PROD001',
+            name='Тестовый товар',
+            brand='Test Brand',
+            article='TEST001',
+            sku='SKU001',
+            category='Test Category',
+            current_price=1000.0
+        )
+        
+        # Создаем историю цен
+        history = PriceHistory(product_id=product.id)
+        entry = PriceHistoryEntry(
+            timestamp=datetime.now(),
+            price=product.current_price,
+            source=PriceSource.MANUAL,
+            change_type=PriceChangeType.INCREASE
+        )
+        history.add_entry(entry)
+        
+        # Проверяем связь
+        assert history.product_id == product.id
+        assert history.entries[0].price == product.current_price
+    
+    def test_competitor_product_matching(self):
+        """Тест сопоставления товаров конкурентов с нашими товарами."""
+        from price_monitoring.models.competitor import Competitor, CompetitorProduct, MarketplaceType, CompetitorType
+        
+        # Создаем наш товар
+        our_product = Product(
+            id='OUR_PROD001',
+            name='Наш товар',
+            brand='Our Brand',
+            article='OUR001',
+            sku='SKU001',
+            category='Test Category',
+            current_price=1000.0
+        )
+        
+        # Создаем конкурента
+        competitor = Competitor(
+            id="COMP001",
+            name="Конкурент 1",
+            marketplace=MarketplaceType.WILDBERRIES,
+            competitor_type=CompetitorType.DIRECT
+        )
+        
+        # Создаем товар конкурента
+        competitor_product = CompetitorProduct(
+            id="COMP_PROD001",
+            name="Аналогичный товар",
+            url="https://example.com/product/1",
+            price=950.0,
+            our_product_id=our_product.id
+        )
+        
+        competitor.add_product(competitor_product)
+        
+        # Проверяем сопоставление
+        found_product = competitor.get_product_by_our_id(our_product.id)
+        assert found_product is not None
+        assert found_product.our_product_id == our_product.id
+        assert found_product.price < our_product.current_price  # Конкурент дешевле
         assert len(product.competitor_prices) == 5
         assert isinstance(product.last_updated, datetime)
 

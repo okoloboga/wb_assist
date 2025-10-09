@@ -560,6 +560,372 @@ class TestGlobalFunctions(unittest.TestCase):
         self.assertEqual(cleaned["current_price"], 99.99)
 
 
+class TestAdvancedValidation(unittest.TestCase):
+    """Расширенные тесты для валидаторов."""
+    
+    def test_complex_string_validation(self):
+        """Тест сложной валидации строк."""
+        # Тест с множественными ограничениями
+        result = StringValidator.validate(
+            "Test123",
+            min_length=5,
+            max_length=10,
+            pattern=r'^[A-Za-z0-9]+$',
+            allowed_values=["Test123", "Valid456"]
+        )
+        self.assertTrue(result.is_valid)
+        
+        # Тест с нарушением нескольких ограничений
+        result = StringValidator.validate(
+            "a",
+            min_length=5,
+            max_length=10,
+            pattern=r'^[A-Za-z0-9]+$'
+        )
+        self.assertFalse(result.is_valid)
+        self.assertGreater(len(result.errors), 0)
+    
+    def test_number_edge_cases(self):
+        """Тест граничных случаев для чисел."""
+        # Очень большие числа
+        result = NumberValidator.validate(float('inf'))
+        self.assertFalse(result.is_valid)
+        
+        # NaN
+        result = NumberValidator.validate(float('nan'))
+        self.assertFalse(result.is_valid)
+        
+        # Очень маленькие числа
+        result = NumberValidator.validate(1e-10, min_value=0)
+        self.assertTrue(result.is_valid)
+    
+    def test_price_edge_cases(self):
+        """Тест граничных случаев для цен."""
+        # Максимальная цена
+        result = PriceValidator.validate(999999.99)
+        self.assertTrue(result.is_valid)
+        
+        # Превышение максимальной цены
+        result = PriceValidator.validate(1000000.01)
+        self.assertFalse(result.is_valid)
+        
+        # Минимальная положительная цена
+        result = PriceValidator.validate(0.01)
+        self.assertTrue(result.is_valid)
+    
+    def test_url_edge_cases(self):
+        """Тест граничных случаев для URL."""
+        # URL с портом
+        result = URLValidator.validate("https://example.com:8080/path")
+        self.assertTrue(result.is_valid)
+        
+        # URL с параметрами
+        result = URLValidator.validate("https://example.com/path?param=value&other=123")
+        self.assertTrue(result.is_valid)
+        
+        # URL с фрагментом
+        result = URLValidator.validate("https://example.com/path#section")
+        self.assertTrue(result.is_valid)
+        
+        # Очень длинный URL
+        long_url = "https://example.com/" + "a" * 2000
+        result = URLValidator.validate(long_url)
+        self.assertFalse(result.is_valid)
+    
+    def test_email_edge_cases(self):
+        """Тест граничных случаев для email."""
+        # Email с поддоменом
+        result = EmailValidator.validate("user@mail.example.com")
+        self.assertTrue(result.is_valid)
+        
+        # Email с цифрами
+        result = EmailValidator.validate("user123@example123.com")
+        self.assertTrue(result.is_valid)
+        
+        # Email с дефисами
+        result = EmailValidator.validate("user-name@example-domain.com")
+        self.assertTrue(result.is_valid)
+        
+        # Очень длинный email
+        long_email = "a" * 100 + "@example.com"
+        result = EmailValidator.validate(long_email)
+        self.assertFalse(result.is_valid)
+    
+    def test_datetime_edge_cases(self):
+        """Тест граничных случаев для дат."""
+        from datetime import datetime, timedelta
+        
+        # Будущая дата
+        future_date = datetime.now() + timedelta(days=365)
+        result = DateTimeValidator.validate(future_date)
+        self.assertTrue(result.is_valid)
+        
+        # Очень старая дата
+        old_date = datetime(1900, 1, 1)
+        result = DateTimeValidator.validate(old_date, min_date=datetime(1950, 1, 1))
+        self.assertFalse(result.is_valid)
+        
+        # Дата в строковом формате ISO
+        result = DateTimeValidator.validate("2023-12-25T10:30:00")
+        self.assertTrue(result.is_valid)
+    
+    def test_list_complex_validation(self):
+        """Тест сложной валидации списков."""
+        # Список с валидацией элементов
+        def validate_positive_number(item):
+            return NumberValidator.validate(item, min_value=0)
+        
+        result = ListValidator.validate([1, 2, 3, 4, 5], item_validator=validate_positive_number)
+        self.assertTrue(result.is_valid)
+        
+        # Список с невалидными элементами
+        result = ListValidator.validate([1, -2, 3, -4, 5], item_validator=validate_positive_number)
+        self.assertFalse(result.is_valid)
+    
+    def test_product_complex_validation(self):
+        """Тест сложной валидации продуктов."""
+        # Продукт с дополнительными полями
+        product_data = {
+            'id': 'PROD001',
+            'name': 'Тестовый товар',
+            'brand': 'TestBrand',
+            'article': 'ART001',
+            'sku': 'SKU001',
+            'category': 'Electronics',
+            'current_price': 1000.0,
+            'competitor_prices': [950.0, 1050.0, 980.0],
+            'description': 'Описание товара',
+            'url': 'https://example.com/product/1',
+            'image_url': 'https://example.com/image.jpg'
+        }
+        
+        result = ProductValidator.validate(product_data)
+        self.assertTrue(result.is_valid)
+        
+        # Продукт с невалидными дополнительными полями
+        invalid_product = product_data.copy()
+        invalid_product['url'] = 'invalid-url'
+        invalid_product['image_url'] = 'not-a-url'
+        
+        result = ProductValidator.validate(invalid_product)
+        self.assertFalse(result.is_valid)
+
+
+class TestDataCleanerAdvanced(unittest.TestCase):
+    """Расширенные тесты для DataCleaner."""
+    
+    def test_clean_complex_strings(self):
+        """Тест очистки сложных строк."""
+        # Строка с HTML тегами
+        html_string = "<p>Тестовая строка</p><br/>"
+        cleaned = DataCleaner.clean_string(html_string, remove_html=True)
+        self.assertEqual(cleaned, "Тестовая строка")
+        
+        # Строка с множественными пробелами
+        spaced_string = "  Тестовая    строка   с   пробелами  "
+        cleaned = DataCleaner.clean_string(spaced_string)
+        self.assertEqual(cleaned, "Тестовая строка с пробелами")
+        
+        # Строка с специальными символами
+        special_string = "Тест@#$%^&*()строка"
+        cleaned = DataCleaner.clean_string(special_string, remove_special_chars=True)
+        self.assertEqual(cleaned, "Тестстрока")
+    
+    def test_clean_price_formats(self):
+        """Тест очистки различных форматов цен."""
+        # Цена с валютой
+        price_with_currency = "1 000,50 ₽"
+        cleaned = DataCleaner.clean_price(price_with_currency)
+        self.assertEqual(cleaned, 1000.5)
+        
+        # Цена с долларами
+        price_usd = "$1,234.56"
+        cleaned = DataCleaner.clean_price(price_usd)
+        self.assertEqual(cleaned, 1234.56)
+        
+        # Цена с евро
+        price_eur = "1.234,56 €"
+        cleaned = DataCleaner.clean_price(price_eur)
+        self.assertEqual(cleaned, 1234.56)
+        
+        # Невалидная цена
+        invalid_price = "не цена"
+        cleaned = DataCleaner.clean_price(invalid_price)
+        self.assertIsNone(cleaned)
+    
+    def test_normalize_complex_urls(self):
+        """Тест нормализации сложных URL."""
+        # URL с параметрами
+        url_with_params = "https://example.com/path?utm_source=test&param=value"
+        normalized = DataCleaner.normalize_url(url_with_params, remove_utm=True)
+        self.assertEqual(normalized, "https://example.com/path?param=value")
+        
+        # URL с фрагментом
+        url_with_fragment = "https://example.com/path#section"
+        normalized = DataCleaner.normalize_url(url_with_fragment, remove_fragment=True)
+        self.assertEqual(normalized, "https://example.com/path")
+        
+        # URL без схемы
+        url_without_scheme = "example.com/path"
+        normalized = DataCleaner.normalize_url(url_without_scheme, add_scheme="https")
+        self.assertEqual(normalized, "https://example.com/path")
+    
+    def test_clean_product_data_comprehensive(self):
+        """Тест комплексной очистки данных продукта."""
+        dirty_product = {
+            'id': '  PROD001  ',
+            'name': '<p>Тестовый товар</p>',
+            'brand': 'TestBrand@#$',
+            'article': '  ART001  ',
+            'sku': 'SKU001',
+            'category': 'Electronics   ',
+            'current_price': '1 000,50 ₽',
+            'competitor_prices': ['950,00', '1 050', 'invalid'],
+            'description': '  Описание товара  ',
+            'url': 'example.com/product/1',
+            'image_url': '  https://example.com/image.jpg  '
+        }
+        
+        cleaned = DataCleaner.clean_product_data(dirty_product)
+        
+        self.assertEqual(cleaned['id'], 'PROD001')
+        self.assertEqual(cleaned['name'], 'Тестовый товар')
+        self.assertEqual(cleaned['brand'], 'TestBrand')
+        self.assertEqual(cleaned['current_price'], 1000.5)
+        self.assertEqual(len(cleaned['competitor_prices']), 2)  # invalid удален
+        self.assertEqual(cleaned['url'], 'https://example.com/product/1')
+
+
+class TestValidationChaining(unittest.TestCase):
+    """Тесты для цепочки валидаций."""
+    
+    def test_multiple_validators_success(self):
+        """Тест успешной цепочки валидаций."""
+        value = "test@example.com"
+        
+        # Валидация как строка
+        string_result = StringValidator.validate(value, min_length=5, max_length=50)
+        self.assertTrue(string_result.is_valid)
+        
+        # Валидация как email
+        email_result = EmailValidator.validate(value)
+        self.assertTrue(email_result.is_valid)
+        
+        # Общий результат
+        overall_valid = string_result.is_valid and email_result.is_valid
+        self.assertTrue(overall_valid)
+    
+    def test_multiple_validators_failure(self):
+        """Тест неуспешной цепочки валидаций."""
+        value = "a"  # Слишком короткий для email
+        
+        # Валидация как строка (пройдет)
+        string_result = StringValidator.validate(value, min_length=1)
+        self.assertTrue(string_result.is_valid)
+        
+        # Валидация как email (не пройдет)
+        email_result = EmailValidator.validate(value)
+        self.assertFalse(email_result.is_valid)
+        
+        # Общий результат
+        overall_valid = string_result.is_valid and email_result.is_valid
+        self.assertFalse(overall_valid)
+    
+    def test_conditional_validation(self):
+        """Тест условной валидации."""
+        product_data = {
+            'id': 'PROD001',
+            'name': 'Тестовый товар',
+            'brand': 'TestBrand',
+            'article': 'ART001',
+            'sku': 'SKU001',
+            'category': 'Electronics',
+            'current_price': 1000.0,
+            'has_url': True,
+            'url': 'https://example.com/product/1'
+        }
+        
+        # Валидация URL только если has_url = True
+        if product_data.get('has_url', False):
+            url_result = URLValidator.validate(product_data.get('url'))
+            self.assertTrue(url_result.is_valid)
+        
+        # Изменяем данные
+        product_data['has_url'] = False
+        product_data['url'] = 'invalid-url'
+        
+        # URL не валидируется, так как has_url = False
+        if product_data.get('has_url', False):
+            url_result = URLValidator.validate(product_data.get('url'))
+        else:
+            url_result = ValidationResult(is_valid=True)  # Пропускаем валидацию
+        
+        self.assertTrue(url_result.is_valid)
+
+
+class TestPerformanceValidation(unittest.TestCase):
+    """Тесты производительности валидаторов."""
+    
+    def test_large_string_validation(self):
+        """Тест валидации больших строк."""
+        import time
+        
+        large_string = "a" * 10000
+        
+        start_time = time.time()
+        result = StringValidator.validate(large_string, max_length=20000)
+        end_time = time.time()
+        
+        self.assertTrue(result.is_valid)
+        self.assertLess(end_time - start_time, 1.0)  # Должно выполняться быстро
+    
+    def test_large_list_validation(self):
+        """Тест валидации больших списков."""
+        import time
+        
+        large_list = list(range(1000))
+        
+        def simple_validator(item):
+            return NumberValidator.validate(item, min_value=0)
+        
+        start_time = time.time()
+        result = ListValidator.validate(large_list, item_validator=simple_validator)
+        end_time = time.time()
+        
+        self.assertTrue(result.is_valid)
+        self.assertLess(end_time - start_time, 2.0)  # Должно выполняться разумно быстро
+    
+    def test_complex_product_validation_performance(self):
+        """Тест производительности сложной валидации продукта."""
+        import time
+        
+        # Создаем много продуктов
+        products = []
+        for i in range(100):
+            product = {
+                'id': f'PROD{i:03d}',
+                'name': f'Тестовый товар {i}',
+                'brand': f'Brand{i}',
+                'article': f'ART{i:03d}',
+                'sku': f'SKU{i:03d}',
+                'category': 'Electronics',
+                'current_price': 1000.0 + i,
+                'competitor_prices': [950.0 + i, 1050.0 + i],
+                'url': f'https://example.com/product/{i}'
+            }
+            products.append(product)
+        
+        start_time = time.time()
+        valid_count = 0
+        for product in products:
+            result = ProductValidator.validate(product)
+            if result.is_valid:
+                valid_count += 1
+        end_time = time.time()
+        
+        self.assertEqual(valid_count, 100)
+        self.assertLess(end_time - start_time, 5.0)  # Должно обработать 100 продуктов за разумное время
+
+
 if __name__ == '__main__':
-    # Запуск тестов
     unittest.main(verbosity=2)

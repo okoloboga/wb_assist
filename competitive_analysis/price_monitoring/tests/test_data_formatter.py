@@ -301,6 +301,382 @@ class TestGlobalFunctions(unittest.TestCase):
         self.assertEqual(result, expected)
 
 
+class TestAdvancedDataFormatter(unittest.TestCase):
+    """Расширенные тесты для DataFormatter."""
+    
+    def setUp(self):
+        """Настройка тестов."""
+        self.formatter = DataFormatter()
+    
+    def test_format_complex_numbers(self):
+        """Тест форматирования сложных числовых типов."""
+        # Decimal
+        decimal_value = Decimal('123.456')
+        self.assertEqual(self.formatter.format_value(decimal_value), "123.46")
+        
+        # Очень большие числа
+        big_number = 1e15
+        result = self.formatter.format_value(big_number)
+        self.assertIn("1000000000000000", result)
+        
+        # Очень маленькие числа
+        small_number = 1e-10
+        result = self.formatter.format_value(small_number)
+        self.assertIsInstance(result, str)
+        
+        # Бесконечность
+        inf_value = float('inf')
+        result = self.formatter.format_value(inf_value)
+        self.assertEqual(result, "∞")
+        
+        # NaN
+        nan_value = float('nan')
+        result = self.formatter.format_value(nan_value)
+        self.assertEqual(result, "N/A")
+    
+    def test_format_nested_structures(self):
+        """Тест форматирования вложенных структур данных."""
+        # Вложенный словарь
+        nested_dict = {
+            "product": {
+                "name": "Товар",
+                "details": {
+                    "price": 100.0,
+                    "category": "Electronics"
+                }
+            }
+        }
+        result = self.formatter.format_value(nested_dict)
+        self.assertIn("product:", result)
+        self.assertIn("name: Товар", result)
+        
+        # Список словарей
+        list_of_dicts = [
+            {"name": "Товар 1", "price": 100},
+            {"name": "Товар 2", "price": 200}
+        ]
+        result = self.formatter.format_value(list_of_dicts)
+        self.assertIn("name: Товар 1", result)
+        self.assertIn("name: Товар 2", result)
+        
+        # Словарь со списками
+        dict_with_lists = {
+            "categories": ["Electronics", "Computers"],
+            "prices": [100, 200, 300]
+        }
+        result = self.formatter.format_value(dict_with_lists)
+        self.assertIn("categories: Electronics, Computers", result)
+        self.assertIn("prices: 100, 200, 300", result)
+    
+    def test_format_custom_objects(self):
+        """Тест форматирования пользовательских объектов."""
+        class CustomObject:
+            def __init__(self, name, value):
+                self.name = name
+                self.value = value
+            
+            def __str__(self):
+                return f"CustomObject({self.name}, {self.value})"
+        
+        custom_obj = CustomObject("test", 42)
+        result = self.formatter.format_value(custom_obj)
+        self.assertEqual(result, "CustomObject(test, 42)")
+    
+    def test_format_with_custom_settings(self):
+        """Тест форматирования с пользовательскими настройками."""
+        # Создаем форматтер с пользовательскими настройками
+        custom_formatter = DataFormatter(
+            date_format="%Y-%m-%d",
+            number_precision=3,
+            boolean_true="YES",
+            boolean_false="NO"
+        )
+        
+        # Тестируем дату
+        test_date = datetime(2024, 1, 15, 14, 30, 45)
+        self.assertEqual(custom_formatter.format_value(test_date), "2024-01-15")
+        
+        # Тестируем число
+        self.assertEqual(custom_formatter.format_value(3.14159), "3.142")
+        
+        # Тестируем булевы значения
+        self.assertEqual(custom_formatter.format_value(True), "YES")
+        self.assertEqual(custom_formatter.format_value(False), "NO")
+    
+    def test_format_edge_cases(self):
+        """Тест граничных случаев форматирования."""
+        # Пустая строка
+        self.assertEqual(self.formatter.format_value(""), "")
+        
+        # Строка с пробелами
+        self.assertEqual(self.formatter.format_value("   "), "   ")
+        
+        # Строка с специальными символами
+        special_string = "Тест\n\t\r"
+        result = self.formatter.format_value(special_string)
+        self.assertEqual(result, special_string)
+        
+        # Очень длинная строка
+        long_string = "a" * 1000
+        result = self.formatter.format_value(long_string)
+        self.assertEqual(len(result), 1000)
+    
+    def test_format_unicode(self):
+        """Тест форматирования Unicode символов."""
+        # Эмодзи
+        emoji_string = "Товар 📱"
+        self.assertEqual(self.formatter.format_value(emoji_string), emoji_string)
+        
+        # Различные языки
+        multilang_dict = {
+            "english": "Product",
+            "русский": "Товар",
+            "中文": "产品",
+            "العربية": "منتج"
+        }
+        result = self.formatter.format_value(multilang_dict)
+        for key, value in multilang_dict.items():
+            self.assertIn(f"{key}: {value}", result)
+
+
+class TestTypeConverterAdvanced(unittest.TestCase):
+    """Расширенные тесты для TypeConverter."""
+    
+    def test_to_float_edge_cases(self):
+        """Тест граничных случаев конвертации в float."""
+        # Строки с пробелами
+        self.assertEqual(TypeConverter.to_float("  123.45  "), 123.45)
+        
+        # Строки с валютными символами
+        self.assertEqual(TypeConverter.to_float("$123.45"), 123.45)
+        self.assertEqual(TypeConverter.to_float("123.45₽"), 123.45)
+        self.assertEqual(TypeConverter.to_float("€123.45"), 123.45)
+        
+        # Строки с разделителями тысяч
+        self.assertEqual(TypeConverter.to_float("1,234.56"), 1234.56)
+        self.assertEqual(TypeConverter.to_float("1 234,56"), 1234.56)
+        
+        # Научная нотация
+        self.assertEqual(TypeConverter.to_float("1.23e2"), 123.0)
+        self.assertEqual(TypeConverter.to_float("1.23E-2"), 0.0123)
+        
+        # Отрицательные числа
+        self.assertEqual(TypeConverter.to_float("-123.45"), -123.45)
+        
+        # Проценты
+        self.assertEqual(TypeConverter.to_float("50%"), 50.0)
+    
+    def test_to_int_edge_cases(self):
+        """Тест граничных случаев конвертации в int."""
+        # Дробные числа (должны округляться)
+        self.assertEqual(TypeConverter.to_int(123.7), 124)
+        self.assertEqual(TypeConverter.to_int(123.3), 123)
+        
+        # Строки с дробными числами
+        self.assertEqual(TypeConverter.to_int("123.7"), 124)
+        
+        # Очень большие числа
+        big_int = 2**63 - 1
+        self.assertEqual(TypeConverter.to_int(str(big_int)), big_int)
+        
+        # Шестнадцатеричные числа
+        self.assertEqual(TypeConverter.to_int("0xFF"), 255)
+        self.assertEqual(TypeConverter.to_int("0x10"), 16)
+        
+        # Восьмеричные числа
+        self.assertEqual(TypeConverter.to_int("0o10"), 8)
+        
+        # Двоичные числа
+        self.assertEqual(TypeConverter.to_int("0b1010"), 10)
+    
+    def test_to_bool_edge_cases(self):
+        """Тест граничных случаев конвертации в bool."""
+        # Числовые значения
+        self.assertTrue(TypeConverter.to_bool(1))
+        self.assertTrue(TypeConverter.to_bool(-1))
+        self.assertTrue(TypeConverter.to_bool(0.1))
+        self.assertFalse(TypeConverter.to_bool(0))
+        self.assertFalse(TypeConverter.to_bool(0.0))
+        
+        # Строки с разным регистром
+        self.assertTrue(TypeConverter.to_bool("TRUE"))
+        self.assertTrue(TypeConverter.to_bool("True"))
+        self.assertTrue(TypeConverter.to_bool("YES"))
+        self.assertTrue(TypeConverter.to_bool("yes"))
+        self.assertTrue(TypeConverter.to_bool("ДА"))
+        self.assertTrue(TypeConverter.to_bool("да"))
+        
+        self.assertFalse(TypeConverter.to_bool("FALSE"))
+        self.assertFalse(TypeConverter.to_bool("False"))
+        self.assertFalse(TypeConverter.to_bool("NO"))
+        self.assertFalse(TypeConverter.to_bool("no"))
+        self.assertFalse(TypeConverter.to_bool("НЕТ"))
+        self.assertFalse(TypeConverter.to_bool("нет"))
+        
+        # Коллекции
+        self.assertTrue(TypeConverter.to_bool([1, 2, 3]))
+        self.assertFalse(TypeConverter.to_bool([]))
+        self.assertTrue(TypeConverter.to_bool({"key": "value"}))
+        self.assertFalse(TypeConverter.to_bool({}))
+    
+    def test_to_datetime_edge_cases(self):
+        """Тест граничных случаев конвертации в datetime."""
+        # Различные форматы дат
+        formats_and_dates = [
+            ("2024-01-15", "%Y-%m-%d"),
+            ("15/01/2024", "%d/%m/%Y"),
+            ("01-15-2024", "%m-%d-%Y"),
+            ("15.01.2024", "%d.%m.%Y"),
+            ("2024/01/15 14:30", "%Y/%m/%d %H:%M"),
+            ("15 Jan 2024", "%d %b %Y"),
+            ("January 15, 2024", "%B %d, %Y")
+        ]
+        
+        for date_str, expected_format in formats_and_dates:
+            result = TypeConverter.to_datetime(date_str)
+            self.assertIsInstance(result, datetime)
+        
+        # Timestamp
+        timestamp = 1705315200  # 2024-01-15 12:00:00 UTC
+        result = TypeConverter.to_datetime(timestamp)
+        self.assertIsInstance(result, datetime)
+        
+        # ISO формат с timezone
+        iso_with_tz = "2024-01-15T14:30:00+03:00"
+        result = TypeConverter.to_datetime(iso_with_tz)
+        self.assertIsInstance(result, datetime)
+
+
+class TestDataFormatterPerformance(unittest.TestCase):
+    """Тесты производительности DataFormatter."""
+    
+    def test_format_large_dataset(self):
+        """Тест форматирования больших наборов данных."""
+        import time
+        
+        formatter = DataFormatter()
+        
+        # Создаем большой набор данных
+        large_data = []
+        for i in range(1000):
+            data = {
+                'id': f'PROD{i:04d}',
+                'name': f'Товар {i}',
+                'price': 100.0 + i,
+                'active': i % 2 == 0,
+                'created_at': datetime.now(),
+                'tags': [f'tag{j}' for j in range(5)]
+            }
+            large_data.append(data)
+        
+        start_time = time.time()
+        formatted_data = [formatter.format_row(item) for item in large_data]
+        end_time = time.time()
+        
+        self.assertEqual(len(formatted_data), 1000)
+        self.assertLess(end_time - start_time, 5.0)  # Должно выполняться за разумное время
+    
+    def test_format_deep_nesting(self):
+        """Тест форматирования глубоко вложенных структур."""
+        # Создаем глубоко вложенную структуру
+        deep_data = {"level1": {"level2": {"level3": {"level4": {"level5": "deep_value"}}}}}
+        
+        formatter = DataFormatter()
+        result = formatter.format_value(deep_data)
+        
+        self.assertIn("deep_value", result)
+        self.assertIsInstance(result, str)
+    
+    def test_format_circular_reference_protection(self):
+        """Тест защиты от циклических ссылок."""
+        # Создаем структуру с циклической ссылкой
+        data = {"name": "test"}
+        data["self"] = data  # Циклическая ссылка
+        
+        formatter = DataFormatter()
+        
+        # Форматирование не должно зависнуть
+        try:
+            result = formatter.format_value(data)
+            self.assertIsInstance(result, str)
+        except RecursionError:
+            self.fail("DataFormatter должен защищать от циклических ссылок")
+
+
+class TestDataFormatterIntegration(unittest.TestCase):
+    """Интеграционные тесты для DataFormatter."""
+    
+    def test_format_product_complete(self):
+        """Тест полного форматирования продукта."""
+        from models import Product, PriceHistory, PriceHistoryEntry
+        from datetime import datetime
+        
+        # Создаем продукт с историей цен
+        product = Product(
+            id="PROD001",
+            name="Тестовый товар",
+            brand="TestBrand",
+            article="ART001",
+            sku="SKU001",
+            category="Electronics",
+            current_price=1000.0
+        )
+        
+        # Добавляем историю цен
+        product.price_history.add_entry(PriceHistoryEntry(
+            date=datetime.now(),
+            price=950.0,
+            source="manual"
+        ))
+        
+        # Добавляем цены конкурентов
+        product.add_competitor_price("competitor1", 980.0)
+        product.add_competitor_price("competitor2", 1020.0)
+        
+        formatter = DataFormatter()
+        
+        # Форматируем как словарь
+        product_dict = product.to_dict()
+        formatted = formatter.format_value(product_dict)
+        
+        self.assertIn("PROD001", formatted)
+        self.assertIn("Тестовый товар", formatted)
+        self.assertIn("1000", formatted)
+        self.assertIsInstance(formatted, str)
+        
+        # Форматируем как строку для таблицы
+        row_data = product.to_sheets_row()
+        formatted_row = formatter.format_row(row_data)
+        
+        self.assertIsInstance(formatted_row, list)
+        self.assertGreater(len(formatted_row), 0)
+    
+    def test_format_monitoring_results(self):
+        """Тест форматирования результатов мониторинга."""
+        monitoring_results = {
+            'timestamp': datetime.now(),
+            'products_checked': 150,
+            'price_changes': 23,
+            'errors': 2,
+            'success_rate': 0.9867,
+            'average_response_time': 1.234,
+            'details': {
+                'new_products': 5,
+                'updated_products': 18,
+                'failed_products': ['PROD001', 'PROD002']
+            }
+        }
+        
+        formatter = DataFormatter()
+        formatted = formatter.format_value(monitoring_results)
+        
+        self.assertIn("150", formatted)  # products_checked
+        self.assertIn("23", formatted)   # price_changes
+        self.assertIn("98.67", formatted)  # success_rate as percentage
+        self.assertIn("1.23", formatted)   # average_response_time
+        self.assertIn("PROD001, PROD002", formatted)  # failed_products list
+
+
 if __name__ == '__main__':
     # Запуск тестов
     unittest.main(verbosity=2)
