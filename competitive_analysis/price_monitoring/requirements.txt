@@ -1,0 +1,35 @@
+# Основные зависимости для модуля мониторинга цен
+
+# Google APIs
+google-api-python-client
+google-auth-httplib2
+google-auth-oauthlib
+google-auth
+
+# HTTP запросы
+requests
+
+# Работа с JSON и сериализацией
+jsonschema
+
+# Логирование и конфигурация
+python-dotenv
+
+# Тестирование (для разработки)
+pytest
+pytest-cov
+pytest-mock
+
+# Дополнительные утилиты
+python-dateutil
+
+# Опциональные зависимости для уведомлений
+# Раскомментируйте при необходимости:
+# telegram-bot-api
+# smtplib (встроен в Python)
+
+# Опциональные зависимости для базы данных
+# Раскомментируйте при необходимости:
+# sqlite3 (встроен в Python)
+# psycopg2-binary  # для PostgreSQL
+# pymongo  # для MongoDB

@@ -1,0 +1,73 @@
+{
+  "google_sheets": {
+    "credentials_file": "credentials.json",
+    "token_file": "token.pickle",
+    "scopes": [
+      "https://www.googleapis.com/auth/spreadsheets",
+      "https://www.googleapis.com/auth/drive.file"
+    ],
+    "api_version": "v4",
+    "batch_size": 100,
+    "retry_attempts": 3,
+    "retry_delay": 1.0,
+    "default_sheet_title": "Мониторинг цен конкурентов",
+    "default_worksheet_name": "Товары",
+    "date_format": "%Y-%m-%d %H:%M:%S",
+    "number_format": "0.00",
+    "currency_format": "#,##0.00₽"
+  },
+  "monitoring": {
+    "update_interval_hours": 6,
+    "full_scan_interval_days": 1,
+    "default_price_threshold": 5.0,
+    "significant_change_threshold": 15.0,
+    "max_competitors_per_product": 10,
+    "max_products_per_scan": 100,
+    "request_timeout": 30,
+    "page_load_timeout": 60,
+    "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+    "delay_between_requests": 1.0,
+    "max_retries": 3,
+    "backoff_factor": 2.0
+  },
+  "notifications": {
+    "enabled": true,
+    "email_enabled": false,
+    "telegram_enabled": false,
+    "webhook_enabled": false,
+    "smtp_server": "smtp.gmail.com",
+    "smtp_port": 587,
+    "email_from": "",
+    "email_password": "",
+    "email_to": [],
+    "telegram_bot_token": "",
+    "telegram_chat_ids": [],
+    "webhook_url": "",
+    "webhook_headers": {},
+    "batch_notifications": true,
+    "notification_cooldown_minutes": 60
+  },
+  "logging": {
+    "level": "INFO",
+    "log_file": "price_monitoring.log",
+    "error_log_file": "price_monitoring_errors.log",
+    "log_format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    "date_format": "%Y-%m-%d %H:%M:%S",
+    "max_file_size_mb": 10,
+    "backup_count": 5,
+    "console_output": true,
+    "console_level": "INFO"
+  },
+  "database": {
+    "db_type": "sqlite",
+    "sqlite_file": "price_monitoring.db",
+    "host": "localhost",
+    "port": 5432,
+    "database": "price_monitoring",
+    "username": "",
+    "password": "",
+    "pool_size": 5,
+    "max_overflow": 10,
+    "pool_timeout": 30
+  }
+}
