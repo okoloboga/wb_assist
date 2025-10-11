@@ -45,6 +45,84 @@ class BotAPIClient:
             logger.error("❌ API_SECRET_KEY не найден в переменных окружения.")
             raise ValueError("API_SECRET_KEY не найден в переменных окружения.")
 
+    async def _make_request_with_timeout(
+        self, 
+        method: str, 
+        endpoint: str, 
+        params: Optional[Dict] = None,
+        json_data: Optional[Dict] = None,
+        timeout: int = 300
+    ) -> BotAPIResponse:
+        """Базовый метод для выполнения HTTP запросов с настраиваемым таймаутом"""
+        url = f"{self.base_url}{endpoint}"
+        
+        # Отладочные логи
+        logger.info(f"🚀 Отправляем запрос к серверу (таймаут: {timeout}s):")
+        logger.info(f"   📍 URL: {url}")
+        logger.info(f"   🔧 Method: {method}")
+        logger.info(f"   📋 Params: {params}")
+        logger.info(f"   📦 JSON: {json_data}")
+        logger.info(f"   🔑 Headers: {self.headers}")
+        
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.request(
+                    method=method,
+                    url=url,
+                    headers=self.headers,
+                    params=params,
+                    json=json_data,
+                    timeout=aiohttp.ClientTimeout(total=timeout)
+                ) as resp:
+                    logger.info(f"📡 Получен ответ от сервера:")
+                    logger.info(f"   📊 Status: {resp.status}")
+                    logger.info(f"   📋 Headers: {dict(resp.headers)}")
+                    
+                    try:
+                        response_data = await resp.json()
+                        logger.info(f"   📦 Response data: {response_data}")
+                    except aiohttp.ContentTypeError:
+                        response_data = {"error": "Invalid response format"}
+                        logger.error(f"   ❌ Ошибка парсинга JSON: Invalid response format")
+                    
+                    result = BotAPIResponse(
+                        success=resp.status < 400,
+                        data=response_data,
+                        telegram_text=response_data.get("telegram_text") if isinstance(response_data, dict) else None,
+                        error=response_data.get("error") if isinstance(response_data, dict) else None,
+                        status_code=resp.status
+                    )
+                    
+                    logger.info(f"✅ Запрос выполнен успешно: {result.success}")
+                    return result
+                    
+        except asyncio.TimeoutError:
+            logger.error(f"⏰ Таймаут запроса:")
+            logger.error(f"   🔗 Таймаут при запросе к {url}")
+            return BotAPIResponse(
+                success=False,
+                error="Request timeout",
+                status_code=408
+            )
+        except aiohttp.ClientConnectorError as e:
+            logger.error(f"🔌 Ошибка соединения с сервером:")
+            logger.error(f"   🔗 URL: {url}")
+            logger.error(f"   ❌ Ошибка: {e}")
+            return BotAPIResponse(
+                success=False,
+                error="Connection error",
+                status_code=503
+            )
+        except Exception as e:
+            logger.error(f"💥 Непредвиденная ошибка при запросе к API:")
+            logger.error(f"   🔗 URL: {url}")
+            logger.error(f"   ❌ Ошибка: {e}")
+            return BotAPIResponse(
+                success=False,
+                error="Internal error",
+                status_code=500
+            )
+
     async def _make_request(
         self, 
         method: str, 
@@ -71,7 +149,7 @@ class BotAPIClient:
                     headers=self.headers,
                     params=params,
                     json=json_data,
-                    timeout=aiohttp.ClientTimeout(total=30)
+                    timeout=aiohttp.ClientTimeout(total=300)  # 5 минут для синхронизации
                 ) as resp:
                     logger.info(f"📡 Получен ответ от сервера:")
                     logger.info(f"   📊 Status: {resp.status}")
@@ -178,6 +256,11 @@ class BotAPIClient:
         """Запустить ручную синхронизацию данных"""
         params = {"telegram_id": user_id}
         return await self._make_request("POST", "/sync/start", params=params)
+    
+    async def start_initial_sync(self, user_id: int) -> BotAPIResponse:
+        """Запустить первичную синхронизацию с увеличенным таймаутом"""
+        params = {"telegram_id": user_id}
+        return await self._make_request_with_timeout("POST", "/sync/start", params=params, timeout=600)  # 10 минут
 
     async def get_sync_status(self, user_id: int) -> BotAPIResponse:
         """Получить статус синхронизации"""

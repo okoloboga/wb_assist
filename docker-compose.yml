@@ -21,12 +21,18 @@ services:
 
   redis:
     image: redis:7-alpine
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
     ports:
       - "6379:6379"
     volumes:
       - redis_data:/data
     networks:
       - app-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
 
   server:
     build:
@@ -39,7 +45,7 @@ services:
       db:
         condition: service_healthy
       redis:
-        condition: service_started
+        condition: service_healthy
     environment:
       - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
       - API_SECRET_KEY=${API_SECRET_KEY}
@@ -56,7 +62,7 @@ services:
       db:
         condition: service_healthy
       redis:
-        condition: service_started
+        condition: service_healthy
     environment:
       - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
       - REDIS_URL=redis://redis:6379/0
@@ -72,7 +78,7 @@ services:
       db:
         condition: service_healthy
       redis:
-        condition: service_started
+        condition: service_healthy
     environment:
       - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
       - REDIS_URL=redis://redis:6379/0
@@ -91,6 +97,7 @@ services:
       - BOT_TOKEN=${BOT_TOKEN}
       - SERVER_HOST=http://server:8000
       - API_SECRET_KEY=${API_SECRET_KEY}
+      - REQUEST_TIMEOUT=600
     networks:
       - app-network
 
@@ -107,6 +114,7 @@ services:
       - BOT_TOKEN=${BOT_TOKEN}
       - SERVER_HOST=http://server:8000
       - API_SECRET_KEY=${API_SECRET_KEY}
+      - REQUEST_TIMEOUT=600
     networks:
       - app-network
 

@@ -17,10 +17,10 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-@celery_app.task(bind=True, max_retries=3)
+@celery_app.task(bind=True, max_retries=5, autoretry_for=(Exception,), retry_kwargs={'max_retries': 5, 'countdown': 60})
 def sync_cabinet_data(self, cabinet_id: int) -> Dict[str, Any]:
     """
-    Синхронизация данных для конкретного кабинета
+    Синхронизация данных для конкретного кабинета с retry логикой для Redis Sentinel
     """
     try:
         logger.info(f"Начинаем синхронизацию кабинета {cabinet_id}")
@@ -52,10 +52,16 @@ def sync_cabinet_data(self, cabinet_id: int) -> Dict[str, Any]:
     except Exception as e:
         logger.error(f"Ошибка синхронизации кабинета {cabinet_id}: {e}")
         
-        # Повторяем через 1 минуту при ошибке
-        if self.request.retries < self.max_retries:
-            logger.info(f"Повторная попытка синхронизации кабинета {cabinet_id} через 1 минуту")
-            raise self.retry(countdown=60)
+        # Специальная обработка для Redis Sentinel ошибок
+        if "UNBLOCKED" in str(e) or "master -> replica" in str(e) or "ResponseError" in str(e):
+            logger.warning(f"Redis Sentinel переключение обнаружено для кабинета {cabinet_id}, повторяем через 30 секунд")
+            if self.request.retries < self.max_retries:
+                raise self.retry(countdown=30, exc=e)
+        else:
+            # Обычные ошибки - повторяем через 1 минуту
+            if self.request.retries < self.max_retries:
+                logger.info(f"Повторная попытка синхронизации кабинета {cabinet_id} через 1 минуту")
+                raise self.retry(countdown=60, exc=e)
         
         return {"status": "error", "message": str(e)}
     
@@ -64,10 +70,11 @@ def sync_cabinet_data(self, cabinet_id: int) -> Dict[str, Any]:
             db.close()
 
 
-@celery_app.task
-def sync_all_cabinets() -> Dict[str, Any]:
+@celery_app.task(bind=True, max_retries=3, autoretry_for=(Exception,), retry_kwargs={'max_retries': 3, 'countdown': 30})
+def sync_all_cabinets(self) -> Dict[str, Any]:
     """
     Проверяет все кабинеты и запускает синхронизацию для тех, кому пора
+    С retry логикой для Redis Sentinel
     """
     try:
         logger.info("Проверяем кабинеты для синхронизации")
@@ -99,6 +106,18 @@ def sync_all_cabinets() -> Dict[str, Any]:
         
     except Exception as e:
         logger.error(f"Ошибка проверки кабинетов: {e}")
+        
+        # Специальная обработка для Redis Sentinel ошибок
+        if "UNBLOCKED" in str(e) or "master -> replica" in str(e) or "ResponseError" in str(e):
+            logger.warning(f"Redis Sentinel переключение обнаружено при проверке кабинетов, повторяем через 30 секунд")
+            if self.request.retries < self.max_retries:
+                raise self.retry(countdown=30, exc=e)
+        else:
+            # Обычные ошибки - повторяем через 1 минуту
+            if self.request.retries < self.max_retries:
+                logger.info(f"Повторная попытка проверки кабинетов через 1 минуту")
+                raise self.retry(countdown=60, exc=e)
+        
         return {"status": "error", "message": str(e)}
     
     finally:
@@ -138,8 +157,8 @@ def calculate_next_sync_time(cabinet: WBCabinet) -> datetime:
     # Добавляем случайный офсет 0-4 минуты для распределения нагрузки
     random_offset = random.randint(0, 4 * 60)  # 0-4 минуты в секундах
     
-    # Интервал синхронизации (5 минут)
-    sync_interval = 5 * 60  # 5 минут в секундах
+    # Интервал синхронизации (10 минут)
+    sync_interval = 10 * 60  # 10 минут в секундах
     
     # Вычисляем время следующей синхронизации
     next_sync = first_sync + timedelta(seconds=random_offset + sync_interval)
