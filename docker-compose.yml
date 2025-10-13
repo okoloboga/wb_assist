@@ -9,8 +9,8 @@ services:
       POSTGRES_DB: ${POSTGRES_DB}
     volumes:
       - pgdata:/var/lib/postgresql/data
-    ports:
-      - "${POSTGRES_PORT}:5432"
+    # ports:
+    #   - "${POSTGRES_PORT}:5432"  # Закрыто для безопасности - доступ только внутри Docker сети
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 5s
@@ -22,8 +22,8 @@ services:
   redis:
     image: redis:7-alpine
     command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
-    ports:
-      - "6379:6379"
+    # ports:
+    #   - "6379:6379"  # Закрыто для безопасности - доступ только внутри Docker сети
     volumes:
       - redis_data:/data
     networks:
