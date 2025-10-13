@@ -1,5 +1,5 @@
 """
-Celery конфигурация для фоновых задач синхронизации с Redis Sentinel
+Celery конфигурация для фоновых задач синхронизации с Redis
 """
 from celery import Celery
 from celery.schedules import crontab
@@ -14,7 +14,7 @@ redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 logger.info(f"Redis configuration:")
 logger.info(f"  Redis URL: {redis_url}")
 
-# Создаем экземпляр Celery с Redis Sentinel
+# Создаем экземпляр Celery с Redis
 celery_app = Celery(
     "wb_assist",
     broker=redis_url,
@@ -56,7 +56,7 @@ celery_app.conf.update(
     task_default_retry_delay=60,  # 1 минута между попытками
     task_max_retries=3,
     
-    # Настройки для работы с Redis Sentinel
+    # Настройки для работы с Redis
     worker_prefetch_multiplier=1,
     task_acks_late=True,
     worker_disable_rate_limits=True,
