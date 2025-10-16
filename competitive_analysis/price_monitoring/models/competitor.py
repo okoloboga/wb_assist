@@ -1,144 +1,33 @@
 """
-Модель конкурента для хранения информации о конкурентах и их товарах.
+Модель конкурента: фасад и логика управления товарами.
 
-Содержит информацию о конкурентах, их товарах, ценах и методы
-для анализа конкурентной позиции.
+Файл облегчён: типы и модели вынесены в отдельные модули
+(`enums.py`, `competitor_product.py`, `analysis.py`). Этот модуль
+оставляет только класс Competitor и реэкспорт ключевых сущностей
+для обратной совместимости импорта `models.competitor`.
 """
 
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
-from typing import List, Optional, Dict, Any, Set
-from enum import Enum
+from datetime import datetime
+from typing import List, Optional, Dict, Any
 import json
 import statistics
 
-
-class CompetitorType(Enum):
-    """Тип конкурента."""
-    DIRECT = "direct"           # Прямой конкурент (тот же товар)
-    INDIRECT = "indirect"       # Косвенный конкурент (аналогичный товар)
-    SUBSTITUTE = "substitute"   # Товар-заменитель
-    BRAND = "brand"            # Конкурент по бренду
-
-
-class MarketplaceType(Enum):
-    """Тип маркетплейса."""
-    WILDBERRIES = "wildberries"
-    OZON = "ozon"
-    YANDEX_MARKET = "yandex_market"
-    AVITO = "avito"
-    ALIEXPRESS = "aliexpress"
-    AMAZON = "amazon"
-    OTHER = "other"
-
-
-@dataclass
-class CompetitorProduct:
-    """
-    Товар конкурента.
-    
-    Attributes:
-        id: Уникальный ID товара конкурента
-        name: Название товара
-        brand: Бренд товара
-        article: Артикул товара
-        sku: SKU товара
-        url: URL товара
-        marketplace: Маркетплейс
-        current_price: Текущая цена
-        original_price: Первоначальная цена
-        discount_percent: Процент скидки
-        rating: Рейтинг товара
-        reviews_count: Количество отзывов
-        availability: Доступность товара
-        last_updated: Время последнего обновления
-        metadata: Дополнительные метаданные
-    """
-    
-    id: str
-    name: str
-    brand: str
-    article: str
-    sku: Optional[str] = None
-    url: str = ""
-    marketplace: MarketplaceType = MarketplaceType.OTHER
-    current_price: float = 0.0
-    original_price: Optional[float] = None
-    discount_percent: Optional[float] = None
-    rating: Optional[float] = None
-    reviews_count: int = 0
-    availability: bool = True
-    last_updated: datetime = field(default_factory=datetime.now)
-    metadata: Dict[str, Any] = field(default_factory=dict)
-    
-    def __post_init__(self):
-        """Автоматический расчет скидки."""
-        if (self.original_price is not None and 
-            self.current_price > 0 and 
-            self.discount_percent is None):
-            if self.original_price > self.current_price:
-                self.discount_percent = ((self.original_price - self.current_price) / self.original_price) * 100
-    
-    @property
-    def effective_price(self) -> float:
-        """Эффективная цена с учетом скидки."""
-        return self.current_price
-    
-    @property
-    def price_per_review(self) -> Optional[float]:
-        """Цена за отзыв (показатель популярности)."""
-        if self.reviews_count > 0:
-            return self.current_price / self.reviews_count
-        return None
-    
-    def update_price(self, new_price: float, original_price: Optional[float] = None) -> None:
-        """
-        Обновление цены товара.
-        
-        Args:
-            new_price: Новая цена
-            original_price: Новая первоначальная цена (опционально)
-        """
-        self.current_price = new_price
-        if original_price is not None:
-            self.original_price = original_price
-        
-        # Пересчет скидки
-        self.discount_percent = None
-        self.__post_init__()
-        
-        self.last_updated = datetime.now()
-    
-    def to_dict(self) -> Dict[str, Any]:
-        """Преобразование в словарь."""
-        return {
-            'id': self.id,
-            'name': self.name,
-            'brand': self.brand,
-            'article': self.article,
-            'sku': self.sku,
-            'url': self.url,
-            'marketplace': self.marketplace.value,
-            'current_price': self.current_price,
-            'original_price': self.original_price,
-            'discount_percent': self.discount_percent,
-            'rating': self.rating,
-            'reviews_count': self.reviews_count,
-            'availability': self.availability,
-            'last_updated': self.last_updated.isoformat(),
-            'metadata': self.metadata
-        }
-    
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'CompetitorProduct':
-        """Создание объекта из словаря."""
-        if isinstance(data['last_updated'], str):
-            data['last_updated'] = datetime.fromisoformat(data['last_updated'])
-        
-        if data.get('marketplace'):
-            data['marketplace'] = MarketplaceType(data['marketplace'])
-        
-        return cls(**data)
+# Импорт вынесенных сущностей
+from .enums import CompetitorType, MarketplaceType
+from .competitor_product import CompetitorProduct
+from .analysis import CompetitorAnalysis
+from ..utils.sheets_mapping import (
+    competitor_to_sheets_rows,
+    competitor_sheets_headers,
+)
+from ..utils.serialization import (
+    competitor_to_dict,
+    competitor_from_dict_data,
+    competitor_to_json,
+    competitor_from_json_data,
+    competitor_product_from_dict_data,
+)
 
 
 @dataclass
@@ -353,51 +242,27 @@ class Competitor:
         return updated_count
     
     def to_dict(self) -> Dict[str, Any]:
-        """Преобразование в словарь."""
-        return {
-            'id': self.id,
-            'name': self.name,
-            'type': self.type.value,
-            'marketplace': self.marketplace.value,
-            'website_url': self.website_url,
-            'products': [p.to_dict() for p in self.products],
-            'is_active': self.is_active,
-            'priority': self.priority,
-            'created_at': self.created_at.isoformat(),
-            'updated_at': self.updated_at.isoformat(),
-            'metadata': self.metadata
-        }
+        """Преобразование в словарь (делегировано утилите)."""
+        return competitor_to_dict(self)
     
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'Competitor':
-        """Создание объекта из словаря."""
-        if isinstance(data['created_at'], str):
-            data['created_at'] = datetime.fromisoformat(data['created_at'])
-        
-        if isinstance(data['updated_at'], str):
-            data['updated_at'] = datetime.fromisoformat(data['updated_at'])
-        
-        if data.get('type'):
-            data['type'] = CompetitorType(data['type'])
-        
-        if data.get('marketplace'):
-            data['marketplace'] = MarketplaceType(data['marketplace'])
-        
-        products = [CompetitorProduct.from_dict(p_data) 
-                   for p_data in data.get('products', [])]
-        data['products'] = products
-        
-        return cls(**data)
+        """Создание объекта из словаря (нормализация через утилиту)."""
+        normalized = competitor_from_dict_data(data)
+        products = [CompetitorProduct.from_dict(competitor_product_from_dict_data(p_data))
+                    for p_data in normalized.get('products', [])]
+        normalized['products'] = products
+        return cls(**normalized)
     
     def to_json(self) -> str:
-        """Преобразование в JSON строку."""
-        return json.dumps(self.to_dict(), ensure_ascii=False, indent=2)
+        """Преобразование в JSON строку (делегировано утилите)."""
+        return competitor_to_json(self)
     
     @classmethod
     def from_json(cls, json_str: str) -> 'Competitor':
-        """Создание объекта из JSON строки."""
-        data = json.loads(json_str)
-        return cls.from_dict(data)
+        """Создание объекта из JSON строки (нормализация через утилиту)."""
+        normalized = competitor_from_json_data(json_str)
+        return cls.from_dict(normalized)
     
     def to_sheets_rows(self) -> List[List[Any]]:
         """
@@ -406,27 +271,7 @@ class Competitor:
         Returns:
             Список строк для записи в таблицу
         """
-        rows = []
-        for product in self.products:
-            rows.append([
-                self.id,
-                self.name,
-                self.type.value,
-                self.marketplace.value,
-                product.id,
-                product.name,
-                product.brand,
-                product.article,
-                product.current_price,
-                product.original_price or '',
-                product.discount_percent or '',
-                product.rating or '',
-                product.reviews_count,
-                'Да' if product.availability else 'Нет',
-                product.url,
-                product.last_updated.strftime('%Y-%m-%d %H:%M:%S')
-            ])
-        return rows
+        return competitor_to_sheets_rows(self)
     
     @staticmethod
     def get_sheets_headers() -> List[str]:
@@ -436,24 +281,7 @@ class Competitor:
         Returns:
             Список заголовков столбцов
         """
-        return [
-            'ID конкурента',
-            'Название конкурента',
-            'Тип конкурента',
-            'Маркетплейс',
-            'ID товара',
-            'Название товара',
-            'Бренд',
-            'Артикул',
-            'Текущая цена',
-            'Первоначальная цена',
-            'Скидка (%)',
-            'Рейтинг',
-            'Количество отзывов',
-            'Доступность',
-            'URL товара',
-            'Последнее обновление'
-        ]
+        return competitor_sheets_headers()
     
     def __str__(self) -> str:
         """Строковое представление конкурента."""
@@ -463,151 +291,11 @@ class Competitor:
         """Представление для отладки."""
         return f"Competitor(id='{self.id}', name='{self.name}', type={self.type.value}, products_count={len(self.products)})"
 
-
-@dataclass
-class CompetitorAnalysis:
-    """
-    Анализ конкурентов для конкретного товара.
-    
-    Attributes:
-        product_id: ID анализируемого товара
-        competitors: Список конкурентов
-        analysis_date: Дата анализа
-        market_position: Позиция на рынке
-        price_recommendations: Рекомендации по ценообразованию
-        metadata: Дополнительные метаданные анализа
-    """
-    
-    product_id: str
-    competitors: List[Competitor] = field(default_factory=list)
-    analysis_date: datetime = field(default_factory=datetime.now)
-    market_position: Optional[str] = None
-    price_recommendations: Dict[str, Any] = field(default_factory=dict)
-    metadata: Dict[str, Any] = field(default_factory=dict)
-    
-    def add_competitor(self, competitor: Competitor) -> None:
-        """Добавление конкурента в анализ."""
-        self.competitors.append(competitor)
-    
-    def get_all_competitor_prices(self) -> List[float]:
-        """Получение всех цен конкурентов."""
-        prices = []
-        for competitor in self.competitors:
-            for product in competitor.get_available_products():
-                if product.current_price > 0:
-                    prices.append(product.current_price)
-        return prices
-    
-    def calculate_market_position(self, our_price: float) -> str:
-        """
-        Расчет позиции на рынке относительно конкурентов.
-        
-        Args:
-            our_price: Наша цена
-            
-        Returns:
-            Описание позиции на рынке
-        """
-        competitor_prices = self.get_all_competitor_prices()
-        
-        if not competitor_prices:
-            return "Нет данных о конкурентах"
-        
-        min_price = min(competitor_prices)
-        max_price = max(competitor_prices)
-        avg_price = statistics.mean(competitor_prices)
-        
-        if our_price < min_price:
-            position = "Лидер по цене (самая низкая цена)"
-        elif our_price > max_price:
-            position = "Премиум сегмент (самая высокая цена)"
-        elif our_price <= avg_price:
-            position = "Ниже среднего (конкурентная цена)"
-        else:
-            position = "Выше среднего"
-        
-        self.market_position = position
-        return position
-    
-    def generate_price_recommendations(self, our_price: float) -> Dict[str, Any]:
-        """
-        Генерация рекомендаций по ценообразованию.
-        
-        Args:
-            our_price: Наша текущая цена
-            
-        Returns:
-            Словарь с рекомендациями
-        """
-        competitor_prices = self.get_all_competitor_prices()
-        
-        if not competitor_prices:
-            return {
-                'status': 'no_data',
-                'message': 'Недостаточно данных о конкурентах'
-            }
-        
-        min_price = min(competitor_prices)
-        max_price = max(competitor_prices)
-        avg_price = statistics.mean(competitor_prices)
-        median_price = statistics.median(competitor_prices)
-        
-        recommendations = {
-            'current_price': our_price,
-            'market_stats': {
-                'min_competitor_price': min_price,
-                'max_competitor_price': max_price,
-                'avg_competitor_price': avg_price,
-                'median_competitor_price': median_price,
-                'competitors_count': len(competitor_prices)
-            },
-            'recommendations': []
-        }
-        
-        # Рекомендации на основе позиции
-        if our_price > max_price:
-            recommendations['recommendations'].append({
-                'type': 'price_reduction',
-                'message': 'Рассмотрите снижение цены для повышения конкурентоспособности',
-                'suggested_price': max_price * 0.95,
-                'potential_savings': our_price - (max_price * 0.95)
-            })
-        elif our_price < min_price:
-            recommendations['recommendations'].append({
-                'type': 'price_increase',
-                'message': 'Возможность повышения цены без потери конкурентоспособности',
-                'suggested_price': min_price * 1.05,
-                'potential_profit': (min_price * 1.05) - our_price
-            })
-        else:
-            recommendations['recommendations'].append({
-                'type': 'maintain',
-                'message': 'Цена находится в конкурентном диапазоне',
-                'suggested_price': our_price
-            })
-        
-        self.price_recommendations = recommendations
-        return recommendations
-    
-    def to_dict(self) -> Dict[str, Any]:
-        """Преобразование в словарь."""
-        return {
-            'product_id': self.product_id,
-            'competitors': [c.to_dict() for c in self.competitors],
-            'analysis_date': self.analysis_date.isoformat(),
-            'market_position': self.market_position,
-            'price_recommendations': self.price_recommendations,
-            'metadata': self.metadata
-        }
-    
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'CompetitorAnalysis':
-        """Создание объекта из словаря."""
-        if isinstance(data['analysis_date'], str):
-            data['analysis_date'] = datetime.fromisoformat(data['analysis_date'])
-        
-        competitors = [Competitor.from_dict(c_data) 
-                      for c_data in data.get('competitors', [])]
-        data['competitors'] = competitors
-        
-        return cls(**data)
+# Реэкспорт ключевых сущностей для обратной совместимости
+__all__ = [
+    "Competitor",
+    "CompetitorProduct",
+    "CompetitorAnalysis",
+    "CompetitorType",
+    "MarketplaceType",
+]
