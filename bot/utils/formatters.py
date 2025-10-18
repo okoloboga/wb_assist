@@ -1,6 +1,7 @@
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from datetime import datetime
 import logging
+import re
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import CallbackQuery, Message
 
@@ -256,3 +257,36 @@ def handle_telegram_errors(func):
                     break
     
     return wrapper
+
+
+def escape_markdown_v2(text: str) -> str:
+    """Экранирует спецсимволы MarkdownV2 Телеграма."""
+    if not text:
+        return ""
+    specials = r"_[]()~`>#+-=|{}.!*"
+    return re.sub(f"([{re.escape(specials)}])", r"\\\\\1", text)
+
+
+def split_telegram_message(text: str, limit: int = 4000) -> List[str]:
+    """Разбивает длинный текст на части, не превышающие limit символов."""
+    if not text:
+        return [""]
+    if len(text) <= limit:
+        return [text]
+
+    parts: List[str] = []
+    buf: List[str] = []
+    buf_len = 0
+
+    for line in text.splitlines(keepends=True):
+        if buf_len + len(line) > limit:
+            parts.append("".join(buf))
+            buf = [line]
+            buf_len = len(line)
+        else:
+            buf.append(line)
+            buf_len += len(line)
+
+    if buf:
+        parts.append("".join(buf))
+    return parts
