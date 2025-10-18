@@ -15,6 +15,46 @@ from utils.formatters import format_error_message, format_rating
 router = Router()
 
 
+@router.callback_query(F.data == "reviews")
+async def show_reviews_menu(callback: CallbackQuery):
+    """Показать меню отзывов с реальными данными"""
+    response = await bot_api_client.get_reviews_summary(
+        user_id=callback.from_user.id,
+        limit=10,
+        offset=0
+    )
+    
+    if response.success and response.data:
+        reviews_data = response.data.get("reviews", {})
+        new_reviews = reviews_data.get("new_reviews", [])
+        unanswered_questions = reviews_data.get("unanswered_questions", [])
+        statistics = reviews_data.get("statistics", {})
+        
+        if new_reviews or unanswered_questions:
+            keyboard = create_reviews_keyboard(
+                has_more=len(new_reviews) + len(unanswered_questions) >= 10,
+                offset=0
+            )
+            
+            await callback.message.edit_text(
+                response.telegram_text or "⭐ Отзывы и вопросы",
+                reply_markup=keyboard
+            )
+        else:
+            await callback.message.edit_text(
+                "✅ Новых отзывов и вопросов нет!\n\n"
+                "Все отзывы обработаны.",
+                reply_markup=wb_menu_keyboard()
+            )
+    else:
+        error_message = format_error_message(response.error, response.status_code)
+        await callback.message.edit_text(
+            f"❌ Ошибка загрузки отзывов:\n\n{error_message}",
+            reply_markup=wb_menu_keyboard()
+        )
+    
+    await callback.answer()
+
 
 @router.callback_query(F.data == "new_reviews")
 async def show_new_reviews(callback: CallbackQuery):
@@ -26,9 +66,10 @@ async def show_new_reviews(callback: CallbackQuery):
     )
     
     if response.success and response.data:
-        new_reviews = response.data.get("new_reviews", [])
-        unanswered_questions = response.data.get("unanswered_questions", [])
-        statistics = response.data.get("statistics", {})
+        reviews_data = response.data.get("reviews", {})
+        new_reviews = reviews_data.get("new_reviews", [])
+        unanswered_questions = reviews_data.get("unanswered_questions", [])
+        statistics = reviews_data.get("statistics", {})
         
         if new_reviews or unanswered_questions:
             keyboard = create_reviews_keyboard(
@@ -66,8 +107,9 @@ async def show_critical_reviews(callback: CallbackQuery):
     )
     
     if response.success and response.data:
-        new_reviews = response.data.get("new_reviews", [])
-        statistics = response.data.get("statistics", {})
+        reviews_data = response.data.get("reviews", {})
+        new_reviews = reviews_data.get("new_reviews", [])
+        statistics = reviews_data.get("statistics", {})
         
         # Фильтруем критические отзывы
         critical_reviews = [r for r in new_reviews if r.get("rating", 5) <= 3]
@@ -124,8 +166,9 @@ async def show_reviews_page(callback: CallbackQuery):
     )
     
     if response.success and response.data:
-        new_reviews = response.data.get("new_reviews", [])
-        unanswered_questions = response.data.get("unanswered_questions", [])
+        reviews_data = response.data.get("reviews", {})
+        new_reviews = reviews_data.get("new_reviews", [])
+        unanswered_questions = reviews_data.get("unanswered_questions", [])
         
         keyboard = create_reviews_keyboard(
             has_more=len(new_reviews) + len(unanswered_questions) >= 10,
@@ -158,8 +201,9 @@ async def refresh_reviews(callback: CallbackQuery):
     )
     
     if response.success and response.data:
-        new_reviews = response.data.get("new_reviews", [])
-        unanswered_questions = response.data.get("unanswered_questions", [])
+        reviews_data = response.data.get("reviews", {})
+        new_reviews = reviews_data.get("new_reviews", [])
+        unanswered_questions = reviews_data.get("unanswered_questions", [])
         
         keyboard = create_reviews_keyboard(
             has_more=len(new_reviews) + len(unanswered_questions) >= 10,
@@ -216,8 +260,9 @@ async def cmd_reviews(message: Message):
     )
     
     if response.success and response.data:
-        new_reviews = response.data.get("new_reviews", [])
-        unanswered_questions = response.data.get("unanswered_questions", [])
+        reviews_data = response.data.get("reviews", {})
+        new_reviews = reviews_data.get("new_reviews", [])
+        unanswered_questions = reviews_data.get("unanswered_questions", [])
         
         if new_reviews or unanswered_questions:
             keyboard = create_reviews_keyboard(

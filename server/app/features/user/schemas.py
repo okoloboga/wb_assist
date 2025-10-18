@@ -9,7 +9,7 @@ class UserCreate(BaseModel):
         ..., gt=0, description="Telegram ID пользователя (должен быть положительным)"
     )
     username: Optional[str] = Field(
-        None, min_length=1, max_length=32, description="Username в Telegram (без @)"
+        None, description="Username в Telegram (без @)"
     )
     first_name: str = Field(
         ..., min_length=1, max_length=64, description="Имя пользователя"
@@ -21,7 +21,7 @@ class UserCreate(BaseModel):
     @field_validator('username')
     @classmethod
     def validate_username(cls, v):
-        if v is not None:
+        if v is not None and v.strip():  # Проверяем что не None и не пустая строка
             # Убираем @ если он есть в начале
             if v.startswith('@'):
                 v = v[1:]
@@ -31,6 +31,12 @@ class UserCreate(BaseModel):
                     'Username может содержать только буквы, цифры, '
                     'подчеркивания и дефисы'
                 )
+            # Проверяем длину после обработки
+            if len(v) < 1 or len(v) > 32:
+                raise ValueError("Username должен быть от 1 до 32 символов")
+        elif v is not None and not v.strip():
+            # Если передана пустая строка, делаем None
+            return None
         return v
 
     @field_validator('first_name', 'last_name')

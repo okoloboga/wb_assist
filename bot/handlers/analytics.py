@@ -18,12 +18,26 @@ router = Router()
 
 @router.callback_query(F.data == "analytics")
 async def show_analytics_menu(callback: CallbackQuery):
-    """Показать меню аналитики"""
-    await callback.message.edit_text(
-        "📊 АНАЛИТИКА ПРОДАЖ\n\n"
-        "Выберите период для анализа:",
-        reply_markup=create_analytics_keyboard()
+    """Показать меню аналитики с реальными данными"""
+    response = await bot_api_client.get_analytics_sales(
+        user_id=callback.from_user.id,
+        period="7d"
     )
+    
+    if response.success and response.data:
+        keyboard = create_analytics_keyboard(period="7d")
+        
+        await callback.message.edit_text(
+            response.telegram_text or "📊 Аналитика продаж",
+            reply_markup=keyboard
+        )
+    else:
+        error_message = format_error_message(response.error, response.status_code)
+        await callback.message.edit_text(
+            f"❌ Ошибка загрузки аналитики:\n\n{error_message}",
+            reply_markup=create_analytics_keyboard()
+        )
+    
     await callback.answer()
 
 

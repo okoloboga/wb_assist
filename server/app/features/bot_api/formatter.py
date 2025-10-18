@@ -86,7 +86,6 @@ class BotMessageFormatter:
                     message += f"""🧾 #{order.get('id', 'N/A')} | {order_date} | {order.get('amount', 0):,.0f}₽
    {order.get('product_name', 'N/A')} | {order.get('brand', 'N/A')}
    {order.get('warehouse_from', 'N/A')} → {order.get('warehouse_to', 'N/A')}
-   Комиссия: {order.get('commission_percent', 0):.1f}% | Рейтинг: {order.get('rating', 0):.1f}⭐
 
 """
             
@@ -197,12 +196,10 @@ class BotMessageFormatter:
                     pros = review.get("pros", "")
                     cons = review.get("cons", "")
                     
-                    message += f"""{stars} {review.get('product_name', 'N/A')} | {rating}/5
+                    message += f"""{stars} | {rating}/5
    Пользователь: {user_name} {f"({color})" if color else ""}
-   "{review.get('text', 'N/A')}"
    Плюсы: {pros if pros else "Не указаны"}
    Минусы: {cons if cons else "Не указаны"}
-   Время: {review.get('time_ago', 'N/A')} | ID: #{review.get('order_id', 'N/A')}
 
 """
             
@@ -249,8 +246,7 @@ class BotMessageFormatter:
                 ("Сегодня", "today"),
                 ("Вчера", "yesterday"),
                 ("За 7 дней", "7_days"),
-                ("За 30 дней", "30_days"),
-                ("За 90 дней", "90_days")
+                ("За 30 дней", "30_days")
             ]:
                 period_data = sales_periods.get(period_key, {})
                 count = period_data.get("count", 0)
@@ -342,33 +338,10 @@ class BotMessageFormatter:
             return "❌ Ошибка форматирования данных синхронизации"
 
     def format_new_order_notification(self, data: Dict[str, Any]) -> str:
-        """Форматирование уведомления о новом заказе"""
+        """Форматирование уведомления о новом заказе в полном формате"""
         try:
-            order_id = data.get("order_id", "N/A")
-            order_date = self._format_datetime(data.get("date", ""))
-            amount = data.get("amount", 0)
-            product_name = data.get("product_name", "N/A")
-            brand = data.get("brand", "N/A")
-            warehouse_from = data.get("warehouse_from", "N/A")
-            warehouse_to = data.get("warehouse_to", "N/A")
-            today_stats = data.get("today_stats", {})
-            stocks = data.get("stocks", {})
-            
-            stocks_str = self._format_stocks(stocks)
-            
-            message = f"""🎉 НОВЫЙ ЗАКАЗ!
-
-🧾 #{order_id} | {order_date} | {amount:,.0f}₽
-👑 {brand}
-✏ {product_name}
-🚛 {warehouse_from} → {warehouse_to}
-
-📊 Сегодня: {today_stats.get('count', 0)} заказов на {today_stats.get('amount', 0):,.0f}₽
-📦 Остаток: {stocks_str}
-
-💡 Нажмите /order_{order_id} для полного отчета"""
-            
-            return self._truncate_message(message)
+            # Используем полный формат заказа
+            return self.format_order_detail({"order": data})
             
         except Exception as e:
             logger.error(f"Ошибка форматирования уведомления о заказе: {e}")
@@ -568,8 +541,8 @@ class BotMessageFormatter:
             message += f"        {order_speed.get('7_days', 0):.2f} | {order_speed.get('14_days', 0):.1f} | {order_speed.get('30_days', 0):.1f} шт. в день\n"
             
             # Продажи
-            message += f"📖 Продаж за 7 / 14 / 30 / 60 / 90 дней:\n"
-            message += f"        {sales_periods.get('7_days', 0)} | {sales_periods.get('14_days', 0)} | {sales_periods.get('30_days', 0)} | {sales_periods.get('60_days', 0)} | {sales_periods.get('90_days', 0)} шт.\n"
+            message += f"📖 Продаж за 7 / 14 / 30 дней:\n"
+            message += f"        {sales_periods.get('7_days', 0)} | {sales_periods.get('14_days', 0)} | {sales_periods.get('30_days', 0)} шт.\n"
             
             # Оборачиваемость
             message += f"💈 Оборачиваемость категории 90:\n"

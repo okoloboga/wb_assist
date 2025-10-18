@@ -30,7 +30,7 @@ class BotConfig:
     # Retry настройки
     max_retries: int = 3
     retry_delay: float = 1.0
-    request_timeout: int = 30
+    request_timeout: int = 300  # 5 минут для синхронизации
     
     # Уведомления
     enable_notifications: bool = True

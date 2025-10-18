@@ -1,5 +1,10 @@
 from typing import Dict, Any, Optional
 from datetime import datetime
+import logging
+from aiogram.exceptions import TelegramBadRequest
+from aiogram.types import CallbackQuery, Message
+
+logger = logging.getLogger(__name__)
 
 
 def format_error_message(error: Optional[str], status_code: int) -> str:
@@ -122,3 +127,132 @@ def format_rating(rating: float) -> str:
     stars += "☆" * empty_stars
     
     return f"{stars} {rating:.1f}/5"
+
+
+async def safe_edit_message(
+    callback: CallbackQuery, 
+    text: str, 
+    reply_markup=None,
+    user_id: int = None
+) -> bool:
+    """
+    Безопасно редактировать сообщение с обработкой TelegramBadRequest
+    
+    Returns:
+        bool: True если сообщение было отредактировано, False если не изменилось
+    """
+    try:
+        # Проверяем, изменилось ли содержимое
+        if (callback.message.text == text and 
+            callback.message.reply_markup == reply_markup):
+            logger.info(f"🔍 DEBUG: Содержимое не изменилось для пользователя {user_id or callback.from_user.id}")
+            await callback.answer()
+            return False
+        
+        # Редактируем сообщение
+        await callback.message.edit_text(
+            text=text,
+            reply_markup=reply_markup
+        )
+        return True
+        
+    except TelegramBadRequest as e:
+        error_msg = str(e).lower()
+        
+        if "message is not modified" in error_msg:
+            logger.info(f"🔍 DEBUG: Сообщение не изменилось для пользователя {user_id or callback.from_user.id}")
+            await callback.answer()
+            return False
+        elif "message to edit not found" in error_msg:
+            logger.warning(f"⚠️ Сообщение для редактирования не найдено для пользователя {user_id or callback.from_user.id}")
+            await callback.answer()
+            return False
+        else:
+            logger.error(f"❌ Telegram API error for user {user_id or callback.from_user.id}: {e}")
+            await callback.answer()
+            return False
+    except Exception as e:
+        logger.error(f"❌ Unexpected error for user {user_id or callback.from_user.id}: {e}")
+        await callback.answer()
+        return False
+
+
+async def safe_send_message(
+    message: Message,
+    text: str,
+    reply_markup=None,
+    user_id: int = None
+) -> bool:
+    """
+    Безопасно отправить сообщение с обработкой ошибок
+    
+    Returns:
+        bool: True если сообщение было отправлено, False если ошибка
+    """
+    try:
+        await message.answer(
+            text=text,
+            reply_markup=reply_markup
+        )
+        return True
+        
+    except TelegramBadRequest as e:
+        logger.error(f"❌ Telegram API error for user {user_id or message.from_user.id}: {e}")
+        return False
+    except Exception as e:
+        logger.error(f"❌ Unexpected error for user {user_id or message.from_user.id}: {e}")
+        return False
+
+
+def handle_telegram_errors(func):
+    """
+    Декоратор для автоматической обработки Telegram ошибок в обработчиках
+    """
+    async def wrapper(*args, **kwargs):
+        try:
+            return await func(*args, **kwargs)
+        except TelegramBadRequest as e:
+            # Находим callback или message в аргументах
+            callback = None
+            message = None
+            user_id = None
+            
+            for arg in args:
+                if hasattr(arg, 'from_user') and hasattr(arg, 'answer'):
+                    callback = arg
+                    user_id = arg.from_user.id
+                    break
+                elif hasattr(arg, 'from_user') and hasattr(arg, 'reply'):
+                    message = arg
+                    user_id = arg.from_user.id
+                    break
+            
+            error_msg = str(e).lower()
+            
+            if "message is not modified" in error_msg:
+                logger.info(f"🔍 DEBUG: Сообщение не изменилось для пользователя {user_id}")
+                if callback:
+                    await callback.answer()
+                return
+            elif "message to edit not found" in error_msg:
+                logger.warning(f"⚠️ Сообщение для редактирования не найдено для пользователя {user_id}")
+                if callback:
+                    await callback.answer()
+                return
+            else:
+                logger.error(f"❌ Telegram API error for user {user_id}: {e}")
+                if callback:
+                    await callback.answer()
+                return
+        except Exception as e:
+            logger.error(f"❌ Unexpected error in {func.__name__}: {e}")
+            # Пытаемся найти callback для ответа
+            for arg in args:
+                if hasattr(arg, 'answer'):
+                    try:
+                        await arg.answer()
+                    except:
+                        pass
+                    break
+    
+    return wrapper

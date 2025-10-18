@@ -8,6 +8,7 @@ from sqlalchemy import and_, or_, func
 from .models import WBCabinet, WBProduct, WBOrder, WBStock, WBReview, WBSyncLog
 from .client import WBAPIClient
 from .cache_manager import WBCacheManager
+from app.features.user.models import User
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +25,13 @@ class WBSyncService:
     async def sync_all_data(self, cabinet: WBCabinet) -> Dict[str, Any]:
         """Синхронизация всех данных кабинета"""
         try:
+            # Проверяем, нужно ли отправлять уведомления (один раз в начале)
+            should_notify = await self._should_send_notification(cabinet)
+            if should_notify:
+                logger.info(f"📢 Notifications ENABLED for cabinet {cabinet.id}")
+            else:
+                logger.info(f"🔇 Notifications DISABLED for cabinet {cabinet.id} (first sync or long break)")
+            
             client = WBAPIClient(cabinet)
             
             # Определяем период синхронизации (последние 30 дней)
@@ -36,7 +44,7 @@ class WBSyncService:
             logger.info(f"Starting sync_all_data for cabinet {cabinet.id}")
             sync_tasks = [
                 ("products", self.sync_products(cabinet, client)),
-                ("orders", self.sync_orders(cabinet, client, date_from, date_to)),
+                ("orders", self.sync_orders(cabinet, client, date_from, date_to, should_notify)),
                 ("stocks", self.sync_stocks(cabinet, client, date_from, date_to)),
                 ("reviews", self.sync_reviews(cabinet, client, date_from, date_to))
             ]
@@ -71,6 +79,13 @@ class WBSyncService:
             # Обновляем время последней синхронизации
             cabinet.last_sync_at = datetime.now(timezone.utc)
             self.db.commit()
+            
+            # Планируем автоматическую синхронизацию для нового кабинета
+            if not cabinet.last_sync_at:
+                logger.info(f"Планируем автоматическую синхронизацию для кабинета {cabinet.id}")
+                # Импортируем здесь, чтобы избежать циклического импорта
+                from app.features.sync.tasks import schedule_cabinet_sync
+                schedule_cabinet_sync(cabinet.id)
             
             return {
                 "status": "success",
@@ -185,14 +200,15 @@ class WBSyncService:
         cabinet: WBCabinet, 
         client: WBAPIClient, 
         date_from: str, 
-        date_to: str
+        date_to: str,
+        should_notify: bool = False
     ) -> Dict[str, Any]:
         """Синхронизация заказов"""
         try:
             # Добавляем таймаут для всего процесса
             import asyncio
             return await asyncio.wait_for(
-                self._sync_orders_internal(cabinet, client, date_from, date_to),
+                self._sync_orders_internal(cabinet, client, date_from, date_to, should_notify),
                 timeout=300  # 5 минут максимум
             )
         except asyncio.TimeoutError:
@@ -207,7 +223,8 @@ class WBSyncService:
         cabinet: WBCabinet, 
         client: WBAPIClient, 
         date_from: str, 
-        date_to: str
+        date_to: str,
+        should_notify: bool = False
     ) -> Dict[str, Any]:
         """Внутренний метод синхронизации заказов"""
         try:
@@ -240,19 +257,19 @@ class WBSyncService:
             
             logger.info(f"Processing {len(orders_data)} orders from WB API")
             
+            
             for i, order_data in enumerate(orders_data):
                 try:
-                    order_id = order_data.get("gNumber")  # Исправлено: gNumber вместо orderId
+                    order_id = order_data.get("gNumber")
                     nm_id = order_data.get("nmId")
-                    
-                    # Отладочный лог
-                    if i < 3:  # Логируем только первые 3 заказа
-                        logger.info(f"Order {i}: order_id={order_id}, nm_id={nm_id}, keys={list(order_data.keys())}")
                     
                     # Пропускаем заказы без order_id или nm_id
                     if not order_id or not nm_id:
-                        if i < 3:  # Логируем только первые 3 пропущенных заказа
-                            logger.info(f"Skipping order {i}: order_id={order_id}, nm_id={nm_id}")
+                        continue
+                    
+                    # Специальная обработка для заказов без nm_id в базе
+                    if not nm_id:
+                        logger.warning(f"Order {order_id} has no nm_id in WB API data")
                         continue
                     
                     # Пропускаем дубликаты в рамках одного запроса
@@ -274,6 +291,8 @@ class WBSyncService:
                         existing.nm_id = nm_id
                         if old_nm_id != nm_id:
                             logger.info(f"Updated order {order_id}: nm_id {old_nm_id} -> {nm_id}")
+                        # else:
+                            # Order already has nm_id, no need to log
                         existing.article = order_data.get("supplierArticle")
                         existing.name = order_data.get("subject")  # Исправлено: subject вместо name
                         existing.brand = order_data.get("brand")
@@ -355,6 +374,7 @@ class WBSyncService:
                                 category, subject, total_price, commissions_data
                             )
                             
+                            
                             order = WBOrder(
                                 cabinet_id=cabinet.id,
                                 order_id=str(order_id),
@@ -387,10 +407,26 @@ class WBSyncService:
                                 status="canceled" if order_data.get("isCancel", False) else "active",  # Исправлено: вычисляем статус
                                 order_date=self._parse_datetime(order_data.get("date"))
                             )
+                            
                             self.db.add(order)
-                            self.db.flush()  # Принудительно выполняем вставку для проверки уникальности
-                            # logger.info(f"Created order {order_id}: commission_percent={commission_percent}, commission_amount={commission_amount}")
-                            created += 1
+                            
+                            try:
+                                self.db.flush()  # Принудительно выполняем вставку для проверки уникальности
+                                
+                                # Отправляем уведомление о новом заказе только если разрешено
+                                if should_notify:
+                                    await self._send_new_order_notification(cabinet, order_data, order)
+                                
+                                # logger.info(f"Created order {order_id}: commission_percent={commission_percent}, commission_amount={commission_amount}")
+                                created += 1
+                            except Exception as flush_error:
+                                # Если заказ уже существует (race condition), пропускаем его
+                                if "duplicate key" in str(flush_error).lower() or "unique constraint" in str(flush_error).lower() or "uniqueviolation" in str(flush_error).lower():
+                                    logger.warning(f"Order {order_id} already exists, skipping: {flush_error}")
+                                    self.db.rollback()  # Откатываем транзакцию
+                                    continue
+                                else:
+                                    raise flush_error
                         except Exception as insert_error:
                             # Если заказ уже существует (race condition), пропускаем его
                             if "duplicate key" in str(insert_error).lower() or "unique constraint" in str(insert_error).lower():
@@ -896,3 +932,290 @@ class WBSyncService:
         except Exception as e:
             logger.error(f"Failed to update product ratings: {e}")
             return {"status": "error", "error_message": str(e)}
+
+    async def _send_new_order_notification(self, cabinet: WBCabinet, order_data: Dict[str, Any], order: WBOrder):
+        """Отправка уведомления о новом заказе"""
+        try:
+            # Импортируем WebhookSender здесь, чтобы избежать циклического импорта
+            from app.features.bot_api.webhook import WebhookSender
+            
+            # Получаем пользователя кабинета
+            user = self.db.query(User).filter(User.id == cabinet.user_id).first()
+            if not user:
+                logger.warning(f"User not found for cabinet {cabinet.id}")
+                return
+            
+            # Формируем данные для уведомления (полные данные как в детальном просмотре)
+            today_stats = await self._get_today_stats(cabinet)
+            stocks = await self._get_order_stocks(cabinet, order.nm_id)
+            
+            # Получаем данные о товаре (рейтинг, отзывы)
+            product = self.db.query(WBProduct).filter(
+                and_(
+                    WBProduct.cabinet_id == order.cabinet_id,
+                    WBProduct.nm_id == order.nm_id
+                )
+            ).first()
+            
+            # Получаем остатки товара по размерам
+            stocks_data = self.db.query(WBStock).filter(
+                and_(
+                    WBStock.cabinet_id == order.cabinet_id,
+                    WBStock.nm_id == order.nm_id
+                )
+            ).all()
+            
+            # Формируем остатки по размерам
+            stocks_dict = {}
+            stock_days_dict = {}
+            for stock in stocks_data:
+                size = stock.size or "ONE SIZE"
+                quantity = stock.quantity or 0
+                stocks_dict[size] = quantity
+                # Рассчитываем дни на основе остатков и скорости продаж
+                stock_days_dict[size] = 0  # Пока заглушка, можно добавить расчет
+            
+            # Получаем статистику отзывов для товара
+            reviews_count = self.db.query(WBReview).filter(
+                and_(
+                    WBReview.cabinet_id == order.cabinet_id,
+                    WBReview.nm_id == order.nm_id
+                )
+            ).count()
+            
+            # Получаем статистику продаж для товара
+            try:
+                product_stats = await self._get_product_statistics(cabinet.id, order.nm_id)
+            except Exception as e:
+                logger.error(f"Ошибка получения статистики товара: {e}")
+                product_stats = {"buyout_rates": {}, "order_speed": {}, "sales_periods": {}}
+            
+            notification_data = {
+                # Основная информация
+                "id": order.id,
+                "order_id": order.order_id,
+                "date": order.order_date.isoformat() if order.order_date else datetime.now(timezone.utc).isoformat(),
+                "amount": float(order.total_price or 0),
+                "product_name": order.name or "Неизвестно",
+                "brand": order.brand or "Неизвестно",
+                "warehouse_from": order.warehouse_from or "Неизвестно",
+                "warehouse_to": order.warehouse_to or "Неизвестно",
+                
+                # Дополнительные поля заказа
+                "nm_id": order.nm_id,
+                "article": order.article,
+                "size": order.size,
+                "barcode": order.barcode,
+                "supplier_article": order.article,  # Используем article как supplier_article
+                "quantity": order.quantity,
+                "price": order.price,
+                "total_price": order.total_price,
+                "order_date": order.order_date.isoformat() if order.order_date else None,
+                "status": order.status,
+                
+                # Финансовая информация
+                "commission_percent": order.commission_percent or 0.0,
+                "commission_amount": order.commission_amount or 0.0,
+                "spp_percent": order.spp_percent or 0.0,
+                "customer_price": order.customer_price or 0.0,
+                "discount_percent": order.discount_percent or 0.0,
+                "logistics_amount": order.logistics_amount or 0.0,
+                
+                # Логистика (поля не существуют в модели WBOrder)
+                "dimensions": "",
+                "volume_liters": 0,
+                "warehouse_rate_per_liter": 0,
+                "warehouse_rate_extra": 0,
+                
+                # Рейтинги и отзывы
+                "rating": product.rating if product else 0.0,
+                "reviews_count": reviews_count,
+                
+                # Статистика
+                "buyout_rates": product_stats["buyout_rates"],
+                "order_speed": product_stats["order_speed"],
+                "sales_periods": product_stats["sales_periods"],
+                "category_availability": "",
+                
+                # Остатки
+                "stocks": stocks_dict,
+                "stock_days": stock_days_dict,
+                
+                # Дополнительные данные
+                "today_stats": today_stats,
+                "stocks": stocks
+            }
+            
+            # Логируем данные, которые отправляются в бота
+            logger.info(f"📤 WEBHOOK DATA for user {user.telegram_id}:")
+            logger.info(f"   Order ID: {notification_data['order_id']}")
+            logger.info(f"   Amount: {notification_data['amount']}₽")
+            logger.info(f"   Product: {notification_data['product_name']}")
+            logger.info(f"   Brand: {notification_data['brand']}")
+            logger.info(f"   Route: {notification_data['warehouse_from']} → {notification_data['warehouse_to']}")
+            logger.info(f"   Today stats: {today_stats}")
+            logger.info(f"   Stocks: {stocks}")
+            logger.info(f"   Telegram ID: {user.telegram_id}")
+            logger.info(f"   Cabinet ID: {cabinet.id}")
+            
+            # URL бота для webhook
+            bot_webhook_url = f"http://bot-webhook:8001/webhook/notifications"
+            
+            # Создаем экземпляр WebhookSender
+            webhook_sender = WebhookSender()
+            
+            # Отправляем уведомление
+            result = await webhook_sender.send_new_order_notification(
+                telegram_id=user.telegram_id,
+                order_data=notification_data,
+                bot_webhook_url=bot_webhook_url
+            )
+            
+            if result.get("success"):
+                logger.info(f"✅ WEBHOOK SUCCESS: Order {order.order_id} notification sent to user {user.telegram_id}")
+                logger.info(f"   Attempts: {result.get('attempts', 'N/A')}")
+                logger.info(f"   Status: {result.get('status', 'N/A')}")
+            else:
+                logger.error(f"❌ WEBHOOK FAILED: Order {order.order_id} notification failed for user {user.telegram_id}")
+                logger.error(f"   Error: {result.get('error', 'Unknown error')}")
+                logger.error(f"   Attempts: {result.get('attempts', 'N/A')}")
+                logger.error(f"   Status: {result.get('status', 'N/A')}")
+                
+        except Exception as e:
+            logger.error(f"Error sending new order notification: {e}")
+
+    async def _get_today_stats(self, cabinet: WBCabinet) -> Dict[str, Any]:
+        """Получение статистики за сегодня"""
+        try:
+            today = datetime.now(timezone.utc).date()
+            
+            # Подсчитываем заказы за сегодня
+            orders_today = self.db.query(WBOrder).filter(
+                and_(
+                    WBOrder.cabinet_id == cabinet.id,
+                    func.date(WBOrder.order_date) == today
+                )
+            ).all()
+            
+            count = len(orders_today)
+            amount = sum(float(order.total_price or 0) for order in orders_today)
+            
+            return {
+                "count": count,
+                "amount": amount
+            }
+        except Exception as e:
+            logger.error(f"Error getting today stats: {e}")
+            return {"count": 0, "amount": 0}
+
+    async def _get_product_statistics(self, cabinet_id: int, nm_id: int) -> Dict[str, Any]:
+        """Получение статистики товара (выкуп, скорость заказов, продажи)"""
+        try:
+            # Получаем заказы за последние 30 дней для расчета статистики
+            thirty_days_ago = datetime.now(timezone.utc) - timedelta(days=30)
+            
+            # Заказы за 7 дней
+            orders_7d = self.db.query(WBOrder).filter(
+                and_(
+                    WBOrder.cabinet_id == cabinet_id,
+                    WBOrder.nm_id == nm_id,
+                    WBOrder.order_date >= datetime.now(timezone.utc) - timedelta(days=7)
+                )
+            ).all()
+            
+            # Заказы за 14 дней
+            orders_14d = self.db.query(WBOrder).filter(
+                and_(
+                    WBOrder.cabinet_id == cabinet_id,
+                    WBOrder.nm_id == nm_id,
+                    WBOrder.order_date >= datetime.now(timezone.utc) - timedelta(days=14)
+                )
+            ).all()
+            
+            # Заказы за 30 дней
+            orders_30d = self.db.query(WBOrder).filter(
+                and_(
+                    WBOrder.cabinet_id == cabinet_id,
+                    WBOrder.nm_id == nm_id,
+                    WBOrder.order_date >= thirty_days_ago
+                )
+            ).all()
+            
+            # Рассчитываем статистику
+            buyout_rates = {
+                "7_days": 100.0 if orders_7d else 0.0,
+                "14_days": 100.0 if orders_14d else 0.0,
+                "30_days": 100.0 if orders_30d else 0.0
+            }
+            
+            order_speed = {
+                "7_days": len(orders_7d) / 7.0,
+                "14_days": len(orders_14d) / 14.0,
+                "30_days": len(orders_30d) / 30.0
+            }
+            
+            sales_periods = {
+                "7_days": len(orders_7d),
+                "14_days": len(orders_14d),
+                "30_days": len(orders_30d)
+            }
+            
+            return {
+                "buyout_rates": buyout_rates,
+                "order_speed": order_speed,
+                "sales_periods": sales_periods
+            }
+            
+        except Exception as e:
+            logger.error(f"Error getting product statistics: {e}")
+            return {
+                "buyout_rates": {},
+                "order_speed": {},
+                "sales_periods": {}
+            }
+
+    async def _get_order_stocks(self, cabinet: WBCabinet, nm_id: int) -> Dict[str, int]:
+        """Получение остатков по товару"""
+        try:
+            stocks = self.db.query(WBStock).filter(
+                and_(
+                    WBStock.cabinet_id == cabinet.id,
+                    WBStock.nm_id == nm_id
+                )
+            ).all()
+            
+            stocks_dict = {}
+            for stock in stocks:
+                size = stock.size or "Unknown"
+                quantity = stock.quantity or 0
+                stocks_dict[size] = quantity
+                
+            return stocks_dict
+        except Exception as e:
+            logger.error(f"Error getting order stocks: {e}")
+            return {}
+
+    async def _should_send_notification(self, cabinet: WBCabinet) -> bool:
+        """Проверяет, нужно ли отправлять уведомления (не первая синхронизация)"""
+        try:
+            # Проверяем, была ли уже синхронизация ранее
+            # Если last_sync_at не установлен или очень старый, значит это первая синхронизация
+            if not cabinet.last_sync_at:
+                return False
+            
+            # Проверяем, была ли синхронизация в последние 24 часа
+            # Если нет, значит это первая синхронизация после долгого перерыва
+            from datetime import datetime, timezone, timedelta
+            now = datetime.now(timezone.utc)
+            time_diff = now - cabinet.last_sync_at
+            
+            if time_diff > timedelta(hours=24):
+                return False
+            
+            # Если синхронизация была недавно, отправляем уведомления
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error checking notification eligibility: {e}")
+            # В случае ошибки не отправляем уведомления
+            return False

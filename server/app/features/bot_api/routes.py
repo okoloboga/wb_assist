@@ -44,7 +44,7 @@ async def get_dashboard(
         # Получаем данные dashboard
         user = await bot_service.get_user_by_telegram_id(telegram_id)
         if not user:
-            raise HTTPException(status_code=404, detail="Пользователь не найден")
+            raise HTTPException(status_code=500, detail="Ошибка создания пользователя")
         
         result = await bot_service.get_dashboard(user)
         
@@ -75,7 +75,7 @@ async def get_recent_orders(
     try:
         user = await bot_service.get_user_by_telegram_id(telegram_id)
         if not user:
-            raise HTTPException(status_code=404, detail="Пользователь не найден")
+            raise HTTPException(status_code=500, detail="Ошибка создания пользователя")
         
         result = await bot_service.get_recent_orders(user, limit, offset)
         
@@ -112,7 +112,7 @@ async def get_critical_stocks(
         # Получаем пользователя
         user = await bot_service.get_user_by_telegram_id(telegram_id)
         if not user:
-            raise HTTPException(status_code=404, detail="Пользователь не найден")
+            raise HTTPException(status_code=500, detail="Ошибка создания пользователя")
         
         result = await bot_service.get_critical_stocks(user, limit, offset)
         
@@ -148,7 +148,7 @@ async def get_reviews_summary(
         # Получаем пользователя
         user = await bot_service.get_user_by_telegram_id(telegram_id)
         if not user:
-            raise HTTPException(status_code=404, detail="Пользователь не найден")
+            raise HTTPException(status_code=500, detail="Ошибка создания пользователя")
         
         result = await bot_service.get_reviews_summary(user, limit, offset)
         
@@ -180,7 +180,12 @@ async def get_analytics_sales(
         if not cabinet:
             raise HTTPException(status_code=404, detail="Кабинет WB не найден")
         
-        result = await bot_service.get_analytics_sales(cabinet, period)
+        # Получаем пользователя
+        user = await bot_service.get_user_by_telegram_id(telegram_id)
+        if not user:
+            raise HTTPException(status_code=500, detail="Ошибка создания пользователя")
+        
+        result = await bot_service.get_analytics_sales(user, period)
         
         if not result["success"]:
             raise HTTPException(status_code=500, detail=result["error"])
@@ -211,7 +216,7 @@ async def start_sync(
         
         user = await bot_service.get_user_by_telegram_id(telegram_id)
         if not user:
-            raise HTTPException(status_code=404, detail="Пользователь не найден")
+            raise HTTPException(status_code=500, detail="Ошибка создания пользователя")
         
         result = await bot_service.start_sync(user)
         
@@ -271,7 +276,7 @@ async def get_order_detail(
     try:
         user = await bot_service.get_user_by_telegram_id(telegram_id)
         if not user:
-            raise HTTPException(status_code=404, detail="Пользователь не найден")
+            raise HTTPException(status_code=500, detail="Ошибка создания пользователя")
         
         result = await bot_service.get_order_detail(user, order_id)
         
@@ -304,7 +309,7 @@ async def get_cabinet_status(
     try:
         user = await bot_service.get_user_by_telegram_id(telegram_id)
         if not user:
-            raise HTTPException(status_code=404, detail="Пользователь не найден")
+            raise HTTPException(status_code=500, detail="Ошибка создания пользователя")
         
         result = await bot_service.get_cabinet_status(user)
         
@@ -335,9 +340,14 @@ async def connect_cabinet(
 ):
     """Подключение нового WB кабинета через API ключ"""
     try:
+        logger.info(f"🔗 CONNECT_CABINET: Пользователь {telegram_id} пытается подключить кабинет с API ключом")
+        logger.info(f"🔗 CONNECT_CABINET: API ключ: {request.api_key[:20]}...")
+        
         user = await bot_service.get_user_by_telegram_id(telegram_id)
         if not user:
-            raise HTTPException(status_code=404, detail="Пользователь не найден")
+            raise HTTPException(status_code=500, detail="Ошибка создания пользователя")
+        
+        logger.info(f"🔗 CONNECT_CABINET: Пользователь найден/создан: {user['id']}")
         
         result = await bot_service.connect_cabinet(user, request.api_key)
         

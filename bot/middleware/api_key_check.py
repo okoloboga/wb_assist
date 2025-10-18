@@ -46,6 +46,11 @@ class APIKeyCheckMiddleware(BaseMiddleware):
         if isinstance(event, Message) and event.text and event.text.startswith('/start'):
             return await handler(event, data)
         
+        # Пропускаем callback кнопки подключения кабинета
+        if isinstance(event, CallbackQuery) and event.data in ['settings_api_key', 'connect_wb']:
+            logger.info(f"🔍 API_KEY_CHECK: Пропускаем проверку - пользователь {user_id} нажимает кнопку подключения кабинета")
+            return await handler(event, data)
+        
         # Пропускаем если пользователь уже проверен в этой сессии
         if user_id in self._checked_users:
             return await handler(event, data)
@@ -57,15 +62,16 @@ class APIKeyCheckMiddleware(BaseMiddleware):
             state = data.get('state')
             if state:
                 current_state = await state.get_state()
-                if current_state and 'api_key' in str(current_state):
+                if current_state and ('api_key' in str(current_state) or 'waiting_for_api_key' in str(current_state)):
+                    logger.info(f"🔍 API_KEY_CHECK: Пропускаем проверку - пользователь {user_id} в состоянии ввода API ключа: {current_state}")
                     return await handler(event, data)
         
         # Проверяем наличие API ключа
         has_api_key = await self._check_api_key(user_id)
         
         if not has_api_key:
-            # Блокируем доступ и требуем ввод API ключа
-            await self._block_user_access(event, user_id)
+            # Не блокируем доступ, а предлагаем подключить кабинет
+            await self._suggest_cabinet_connection(event, user_id)
             return
         
         # Добавляем пользователя в кэш проверенных
@@ -98,6 +104,57 @@ class APIKeyCheckMiddleware(BaseMiddleware):
             logger.error(f"Ошибка при проверке API ключа для пользователя {user_id}: {e}")
             return False
     
+    async def _suggest_cabinet_connection(self, event: Message | CallbackQuery, user_id: int):
+        """Предлагает пользователю подключить кабинет вместо блокировки"""
+        from aiogram.exceptions import TelegramBadRequest
+        from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+        
+        message_text = (
+            "🔑 **ТРЕБУЕТСЯ ПОДКЛЮЧЕНИЕ WB КАБИНЕТА**\n\n"
+            "Для использования бота необходимо подключить ваш WB кабинет.\n"
+            "Нажмите кнопку ниже для подключения:\n\n"
+            "💡 **Как получить API ключ:**\n"
+            "1. Зайдите в личный кабинет WB\n"
+            "2. Перейдите в раздел 'Настройки' → 'Доступ к API'\n"
+            "3. Создайте новый токен доступа\n"
+            "4. Скопируйте и отправьте его боту\n\n"
+            "⚠️ **Важно:** API ключ должен быть действительным и иметь права на чтение данных."
+        )
+        
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(
+                text="🔑 Подключить кабинет",
+                callback_data="settings_api_key"
+            )],
+            [InlineKeyboardButton(
+                text="ℹ️ Помощь",
+                callback_data="help"
+            )]
+        ])
+        
+        if isinstance(event, Message):
+            await event.answer(
+                message_text,
+                reply_markup=keyboard,
+                parse_mode="Markdown"
+            )
+        elif isinstance(event, CallbackQuery):
+            try:
+                await event.message.edit_text(
+                    message_text,
+                    reply_markup=keyboard,
+                    parse_mode="Markdown"
+                )
+                await event.answer()
+            except TelegramBadRequest:
+                # Если не можем отредактировать, отправляем новое сообщение
+                await event.message.answer(
+                    message_text,
+                    reply_markup=keyboard,
+                    parse_mode="Markdown"
+                )
+                await event.answer()
+
     async def _block_user_access(self, event: Message | CallbackQuery, user_id: int):
         """Блокирует доступ пользователя и требует ввод API ключа"""
         from aiogram.exceptions import TelegramBadRequest

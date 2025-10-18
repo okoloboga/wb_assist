@@ -27,9 +27,9 @@ async def register_user(message: Message, state: FSMContext):
     # Регистрируем пользователя на сервере
     payload = {
         "telegram_id": user_id,
-        "username": message.from_user.username or "",
+        "username": message.from_user.username or None,
         "first_name": first_name,
-        "last_name": message.from_user.last_name or ""
+        "last_name": message.from_user.last_name or None
     }
 
     status, _ = await register_user_on_server(payload)
@@ -45,11 +45,22 @@ async def register_user(message: Message, state: FSMContext):
     has_api_key = await _check_user_api_key(user_id)
     
     if has_api_key:
-        # Пользователь уже подключен
-        await message.answer(
-            f"Здравствуйте, {first_name}! 👋\nДобро пожаловать обратно!",
-            reply_markup=wb_menu_keyboard()
+        # Пользователь уже подключен - показываем дашборд
+        dashboard_response = await bot_api_client.get_dashboard(
+            user_id=user_id
         )
+        
+        if dashboard_response.success:
+            await message.answer(
+                dashboard_response.telegram_text or "📊 Дашборд загружен",
+                reply_markup=wb_menu_keyboard()
+            )
+        else:
+            # Если дашборд не загрузился, показываем обычное меню
+            await message.answer(
+                "✅ Кабинет подключен\n\nВыберите действие:",
+                reply_markup=wb_menu_keyboard()
+            )
     else:
         # Требуем подключение API ключа
         await _require_api_key(message, first_name, state)
