@@ -21,6 +21,24 @@ router = Router()
 # Обработчик dashboard убран, так как кнопка удалена из меню
 # Данные дашборда теперь показываются в главном меню
 
+async def show_dashboard(callback: CallbackQuery):
+    """Показать дашборд в ответ на callback."""
+    response = await bot_api_client.get_dashboard(
+        user_id=callback.from_user.id
+    )
+    if response.success:
+        text = response.telegram_text or "📊 Дашборд загружен"
+    else:
+        error_message = format_error_message(response.error, response.status_code)
+        text = f"❌ Ошибка загрузки дашборда:\n\n{error_message}"
+    await safe_edit_message(
+        callback=callback,
+        text=text,
+        reply_markup=wb_menu_keyboard(),
+        user_id=callback.from_user.id
+    )
+    await callback.answer()
+
 
 @router.callback_query(F.data == "refresh_dashboard")
 async def refresh_dashboard(callback: CallbackQuery):

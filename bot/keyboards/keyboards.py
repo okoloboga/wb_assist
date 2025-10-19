@@ -261,6 +261,10 @@ def create_analytics_keyboard(period: str = "7d") -> InlineKeyboardMarkup:
             )
         ],
         [InlineKeyboardButton(
+            text="🤖 LLM‑анализ",
+            callback_data="llm_analysis"
+        )],
+        [InlineKeyboardButton(
             text="🔄 Обновить",
             callback_data="refresh_analytics"
         )],

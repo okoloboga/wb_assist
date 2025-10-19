@@ -11,6 +11,9 @@ from aiogram.filters import Command
 from api.client import bot_api_client
 from keyboards.keyboards import wb_menu_keyboard, main_keyboard, create_analytics_keyboard
 from utils.formatters import format_error_message, format_currency, format_percentage
+from utils.formatters import safe_send_message, safe_edit_message
+from gpt_integration.aggregator import aggregate
+from gpt_integration.pipeline import run_analysis
 
 router = Router()
 
@@ -256,3 +259,106 @@ async def cmd_analytics(message: Message):
             f"❌ Ошибка загрузки аналитики:\n\n{error_message}",
             reply_markup=main_keyboard()
         )
+
+
+@router.callback_query(F.data == "llm_analysis")
+async def llm_analysis(callback: CallbackQuery):
+    """Запустить LLM‑анализ и отправить результаты чанками в Telegram"""
+    period = "7d"
+    # Обновляем сообщение, чтобы показать прогресс
+    await safe_edit_message(
+        callback=callback,
+        text="⏳ Запускаю LLM‑анализ…",
+        reply_markup=create_analytics_keyboard(period=period),
+        user_id=callback.from_user.id
+    )
+
+    # Загружаем данные аналитики из Bot API
+    response = await bot_api_client.get_analytics_sales(
+        user_id=callback.from_user.id,
+        period=period
+    )
+
+    if not (response.success and response.data):
+        error_message = format_error_message(response.error, response.status_code)
+        await safe_edit_message(
+            callback=callback,
+            text=f"❌ Ошибка загрузки аналитики для LLM:\n\n{error_message}",
+            reply_markup=create_analytics_keyboard(period=period),
+            user_id=callback.from_user.id
+        )
+        await callback.answer()
+        return
+
+    # Собираем DATA для LLM из доступных полей ответа
+    data_sources = {
+        "meta": {"user_id": callback.from_user.id, "period": period},
+        "sales": {
+            "periods": response.data.get("sales_periods") or {},
+            "metrics": {
+                "avg_check": (response.data.get("dynamics") or {}).get("average_check"),
+                "conversion_percent": (response.data.get("dynamics") or {}).get("conversion_percent"),
+            },
+        },
+        "top_products": response.data.get("top_products") or [],
+        # Поддержка неизвестных ключей через extra
+        "extra": {
+            "dynamics": response.data.get("dynamics") or {}
+        }
+    }
+
+    try:
+        assembled_data = aggregate(data_sources)
+    except Exception as e:
+        await safe_edit_message(
+            callback=callback,
+            text=f"❌ Ошибка агрегации данных:\n\n{e}",
+            reply_markup=create_analytics_keyboard(period=period),
+            user_id=callback.from_user.id
+        )
+        await callback.answer()
+        return
+
+    # Запускаем LLM анализ
+    try:
+        result = run_analysis(
+            data=assembled_data,
+            validate=True
+        )
+    except Exception as e:
+        await safe_edit_message(
+            callback=callback,
+            text=f"❌ Ошибка выполнения LLM‑анализа:\n\n{e}",
+            reply_markup=create_analytics_keyboard(period=period),
+            user_id=callback.from_user.id
+        )
+        await callback.answer()
+        return
+
+    # Отправляем чанки в Telegram
+    chunks = (((result or {}).get("telegram") or {}).get("chunks")) or []
+    if not chunks:
+        # Фолбэк — отправим сырой ответ, если есть
+        raw_text = (result or {}).get("raw_response") or "⚠️ Анализ завершён, но нет сообщений для Telegram."
+        await safe_send_message(
+            message=callback.message,
+            text=raw_text,
+            user_id=callback.from_user.id
+        )
+    else:
+        for part in chunks:
+            await safe_send_message(
+                message=callback.message,
+                text=part,
+                user_id=callback.from_user.id
+            )
+
+    # Финальное сообщение с клавиатурой
+    await safe_send_message(
+        message=callback.message,
+        text="✅ LLM‑анализ завершён",
+        reply_markup=create_analytics_keyboard(period=period),
+        user_id=callback.from_user.id
+    )
+
+    await callback.answer("Готово")

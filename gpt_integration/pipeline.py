@@ -81,8 +81,35 @@ def _normalize_telegram(block: Any) -> Dict[str, Any]:
     return {"chunks": [], "character_count": 0}
 
 
+def _validate_output(parsed: Dict[str, Any], schema_text: Optional[str]) -> List[str]:
+    errors: List[str] = []
+    if not isinstance(parsed, dict):
+        return ["Output is not a JSON object"]
+    expected_keys = ["key_metrics", "anomalies", "insights", "recommendations", "telegram", "sheets"]
+    for k in expected_keys:
+        if k not in parsed:
+            errors.append(f"Missing key: {k}")
+    tg = parsed.get("telegram", {})
+    if isinstance(tg, dict):
+        has_chunks = isinstance(tg.get("chunks"), list)
+        has_mdv2 = isinstance(tg.get("mdv2"), str)
+        if not (has_chunks or has_mdv2):
+            errors.append("telegram must have 'chunks' list or 'mdv2' string")
+    else:
+        errors.append("telegram must be an object")
+    sh = parsed.get("sheets", {})
+    if isinstance(sh, dict):
+        if not isinstance(sh.get("headers"), list):
+            errors.append("sheets.headers must be a list")
+        if not isinstance(sh.get("rows"), list):
+            errors.append("sheets.rows must be a list")
+    else:
+        errors.append("sheets must be an object")
+    return errors
+
+
 def run_analysis(
-    client: GPTClient, data: Dict[str, Any], template_path: Optional[str] = None
+    client: GPTClient, data: Dict[str, Any], template_path: Optional[str] = None, validate: bool = False
 ) -> Dict[str, Any]:
     """
     Orchestrate LLM analysis:
@@ -113,10 +140,17 @@ def run_analysis(
     if not isinstance(sheets.get("rows"), list):
         sheets["rows"] = []
 
-    return {
+    result = {
         "messages": messages,
         "raw_response": text,
         "json": parsed,
         "telegram": telegram,
         "sheets": sheets,
     }
+    if validate:
+        try:
+            schema_text = get_output_json_schema(template_path)
+        except Exception:
+            schema_text = None
+        result["validation_errors"] = _validate_output(parsed, schema_text)
+    return result

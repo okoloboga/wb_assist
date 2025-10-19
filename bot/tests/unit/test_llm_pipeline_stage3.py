@@ -1,6 +1,8 @@
 import json
 from typing import Any, Dict
 
+import pytest
+
 from gpt_integration.pipeline import compose_messages, run_analysis
 
 
@@ -16,40 +18,41 @@ def _sample_data() -> Dict[str, Any]:
 
 
 class FakeClient:
+    def __init__(self, payload: Dict[str, Any]):
+        self.payload = payload
+
     def complete_messages(self, messages):
-        # Ensure messages contain SYSTEM and DATA
-        assert isinstance(messages, list) and len(messages) >= 2
-        assert messages[0]["role"] == "system"
-        assert messages[1]["role"] == "user" and "## DATA" in messages[1]["content"]
-        # Return structured JSON and OUTPUT_TG fallback text
-        return (
-            "OUTPUT_JSON:\n"
-            + json.dumps(
-                {
-                    "summary": {
-                        "kpi": {"sales": 100000, "ads_spend": 25000},
-                        "insights": [
-                            {"title": "Рост продаж", "reason": "Снижение цены"}
-                        ],
-                    },
-                    "recommendations": [
-                        {"action": "Увеличить ставку", "priority": "P1"}
-                    ],
-                    "telegram": {
-                        "chunks": [
-                            "*Сводка*: продажи 100000, реклама 25000",
-                            "Аномалии: снижение цены, рост конверсии",
-                        ]
-                    },
-                    "sheets": {
-                        "headers": ["metric", "value"],
-                        "rows": [["sales", 100000], ["ads_spend", 25000]],
-                    },
-                },
-                ensure_ascii=False,
-            )
-            + "\nOUTPUT_TG:\n*Сводка*: продажи 100000, реклама 25000\n"
-        )
+        return json.dumps(self.payload, ensure_ascii=False)
+
+
+def test_validation_errors_when_missing_keys():
+    data = {"meta": {"shop": "X"}}
+    payload = {
+        "telegram": {"chunks": ["ok"]},
+        "sheets": {"headers": [], "rows": []},
+    }
+    result = run_analysis(FakeClient(payload), data, validate=True)
+    errors = result.get("validation_errors")
+    assert errors and any("Missing key" in e for e in errors)
+
+
+def test_validation_pass_on_minimal_structure():
+    data = {"meta": {"shop": "X"}}
+    payload = {
+        "key_metrics": [],
+        "anomalies": [],
+        "insights": [],
+        "recommendations": [],
+        "telegram": {"chunks": ["ok"]},
+        "sheets": {"headers": [], "rows": []},
+    }
+    result = run_analysis(FakeClient(payload), data, validate=True)
+    assert result.get("validation_errors") == []
+
+
+def test_compose_messages_contains_schema_and_tasks():
+    msgs = compose_messages({}, template_path=None)
+    assert any("OUTPUT_JSON_SCHEMA" in m["content"] for m in msgs if m["role"] == "user")
 
 
 def test_compose_messages_includes_sections():
@@ -66,7 +69,12 @@ def test_compose_messages_includes_sections():
 
 def test_run_analysis_parses_structured_json_and_channels():
     data = _sample_data()
-    client = FakeClient()
+    payload = {
+        "summary": {"kpi": {"sales": 100000, "ads_spend": 25000}},
+        "telegram": {"chunks": ["*Сводка*: продажи 100000, реклама 25000"]},
+        "sheets": {"headers": ["metric", "value"], "rows": [["sales", 100000], ["ads_spend", 25000]]},
+    }
+    client = FakeClient(payload)
     result = run_analysis(client, data)
 
     # raw and messages

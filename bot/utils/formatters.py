@@ -143,16 +143,18 @@ async def safe_edit_message(
         bool: True если сообщение было отредактировано, False если не изменилось
     """
     try:
-        # Проверяем, изменилось ли содержимое
-        if (callback.message.text == text and 
-            callback.message.reply_markup == reply_markup):
+        # Проверяем, изменилось ли содержимое (безопасно обрабатываем отсутствие атрибутов у mock)
+        current_text = getattr(callback.message, "text", None)
+        current_markup = getattr(callback.message, "reply_markup", None)
+        if (current_text == text and 
+            current_markup == reply_markup):
             logger.info(f"🔍 DEBUG: Содержимое не изменилось для пользователя {user_id or callback.from_user.id}")
             await callback.answer()
             return False
         
         # Редактируем сообщение
         await callback.message.edit_text(
-            text=text,
+            text,
             reply_markup=reply_markup
         )
         return True

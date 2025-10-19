@@ -17,6 +17,9 @@ from utils.formatters import safe_edit_message, safe_send_message, split_telegra
 
 from gpt_integration.gpt_client import GPTClient, LLMConfig
 from gpt_integration.template_loader import get_system_prompt
+from gpt_integration.aggregator import aggregate
+from gpt_integration.pipeline import run_analysis
+from api.client import bot_api_client
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -45,6 +48,104 @@ async def start_ai_chat(callback: CallbackQuery, state: FSMContext):
     await safe_send_message(callback.message, escape_markdown_v2(text), user_id=callback.from_user.id)
     await callback.answer()
 
+@router.callback_query(F.data == "ai_examples")
+async def ai_examples(callback: CallbackQuery):
+    """Показать примеры запросов для GPT и LLM‑анализа."""
+    examples = (
+        "❓ Примеры запросов:\n\n"
+        "• Сформируй сводку продаж и рекламных расходов за 7 дней.\n"
+        "• Найди аномалии в динамике выкупов и конверсии.\n"
+        "• Дай рекомендации по ТОП‑5 товарам: цена, контент, рекламные кампании.\n"
+        "• Предложи действия по медленно продающимся позициям.\n"
+        "• Подготовь таблицу для Google Sheets с ключевыми метриками.\n\n"
+        "Для запуска LLM‑анализа перейдите в раздел 📈 Аналитика и нажмите ‘🤖 LLM‑анализ’."
+    )
+    await safe_edit_message(
+        callback=callback,
+        text=escape_markdown_v2(examples),
+        reply_markup=ai_assistant_keyboard(),
+        user_id=callback.from_user.id
+    )
+    await callback.answer()
+
+@router.callback_query(F.data == "ai_export_gs")
+async def ai_export_gs(callback: CallbackQuery):
+    """Подготовить предварительный просмотр выгрузки в Google Sheets из LLM‑анализа."""
+    period = "7d"
+    await safe_edit_message(
+        callback=callback,
+        text="⏳ Готовлю выгрузку в Google Sheets…",
+        reply_markup=ai_assistant_keyboard(),
+        user_id=callback.from_user.id
+    )
+
+    # Загружаем данные и запускаем анализ, чтобы получить секцию sheets
+    response = await bot_api_client.get_analytics_sales(
+        user_id=callback.from_user.id,
+        period=period
+    )
+
+    if not (response.success and response.data):
+        await safe_edit_message(
+            callback=callback,
+            text=escape_markdown_v2("❌ Ошибка загрузки данных аналитики для выгрузки."),
+            reply_markup=ai_assistant_keyboard(),
+            user_id=callback.from_user.id
+        )
+        await callback.answer()
+        return
+
+    data_sources = {
+        "meta": {"user_id": callback.from_user.id, "period": period},
+        "sales": {
+            "periods": response.data.get("sales_periods") or {},
+            "metrics": {
+                "avg_check": (response.data.get("dynamics") or {}).get("average_check"),
+                "conversion_percent": (response.data.get("dynamics") or {}).get("conversion_percent"),
+            },
+        },
+        "top_products": response.data.get("top_products") or [],
+        "extra": {"dynamics": response.data.get("dynamics") or {}},
+    }
+
+    try:
+        assembled_data = aggregate(data_sources)
+        result = run_analysis(assembled_data, validate=True)
+    except Exception as e:
+        await safe_edit_message(
+            callback=callback,
+            text=escape_markdown_v2(f"❌ Ошибка подготовки выгрузки: {e}"),
+            reply_markup=ai_assistant_keyboard(),
+            user_id=callback.from_user.id
+        )
+        await callback.answer()
+        return
+
+    sheets = (result or {}).get("sheets") or {"headers": [], "rows": []}
+    headers = sheets.get("headers") or []
+    rows = sheets.get("rows") or []
+
+    preview_lines = []
+    if headers:
+        preview_lines.append(" | ".join(map(str, headers)))
+    for r in rows[:10]:  # ограничим предпросмотр первыми 10 строками
+        if isinstance(r, (list, tuple)):
+            preview_lines.append(" | ".join(map(lambda x: str(x) if x is not None else "", r)))
+        else:
+            preview_lines.append(str(r))
+
+    preview_text = (
+        "📤 Предпросмотр таблицы для Google Sheets\n\n" +
+        ("\n".join(preview_lines) if preview_lines else "Нет данных для выгрузки.") +
+        "\n\nПримечание: это текстовый предпросмотр. Интеграция с Google API будет добавлена позже."
+    )
+
+    await safe_send_message(
+        message=callback.message,
+        text=escape_markdown_v2(preview_text),
+        user_id=callback.from_user.id
+    )
+    await callback.answer()
 
 @router.message(Command("gpt"))
 async def cmd_gpt(message: Message, state: FSMContext):
