@@ -13,9 +13,10 @@ from aiogram.fsm.context import FSMContext
 
 from core.states import GPTStates
 from keyboards.keyboards import ai_assistant_keyboard
-from utils.formatters import safe_edit_message, safe_send_message, split_telegram_message
+from utils.formatters import safe_edit_message, safe_send_message, split_telegram_message, escape_markdown_v2
 
 from gpt_integration.gpt_client import GPTClient, LLMConfig
+from gpt_integration.template_loader import get_system_prompt
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -41,7 +42,7 @@ async def start_ai_chat(callback: CallbackQuery, state: FSMContext):
         "Чтобы выйти — отправьте команду /exit"
     )
 
-    await safe_send_message(callback.message, text, user_id=callback.from_user.id)
+    await safe_send_message(callback.message, escape_markdown_v2(text), user_id=callback.from_user.id)
     await callback.answer()
 
 
@@ -56,7 +57,7 @@ async def cmd_gpt(message: Message, state: FSMContext):
         "Напишите вопрос или задачу.\n"
         "Чтобы выйти — отправьте команду /exit"
     )
-    await safe_send_message(message, text, user_id=message.from_user.id)
+    await safe_send_message(message, escape_markdown_v2(text), user_id=message.from_user.id)
 
 
 @router.message(Command("exit"))
@@ -65,7 +66,7 @@ async def cmd_exit(message: Message, state: FSMContext):
     await state.clear()
     await safe_send_message(
         message,
-        "🔙 Вы вышли из GPT-режима. Выберите действие в меню AI-помощника.",
+        escape_markdown_v2("🔙 Вы вышли из GPT-режима. Выберите действие в меню AI-помощника."),
         reply_markup=ai_assistant_keyboard(),
         user_id=message.from_user.id,
     )
@@ -92,8 +93,14 @@ async def handle_user_prompt(message: Message, state: FSMContext):
     if len(history) > 10:
         history = history[-10:]
 
+    # Добавляем системный промпт из окружения или из шаблона
+    system_prompt = (_gpt_client.config.system_prompt if _gpt_client else None) or get_system_prompt()
+    messages = history.copy()
+    if system_prompt:
+        messages = [{"role": "system", "content": system_prompt}] + messages
+
     try:
-        answer_text = _gpt_client.complete_messages(history)
+        answer_text = _gpt_client.complete_messages(messages)
     except Exception as e:
         logger.error("GPT request error for user %s: %r", message.from_user.id, e)
         await safe_send_message(
@@ -107,8 +114,8 @@ async def handle_user_prompt(message: Message, state: FSMContext):
     history.append({"role": "assistant", "content": answer_text})
     await state.update_data(gpt_history=history)
 
-    # Если ответ длинный — отправляем частями
-    parts = split_telegram_message(answer_text)
+    # Если ответ длинный — отправляем частями, предварительно экранировав MarkdownV2
+    parts = split_telegram_message(escape_markdown_v2(answer_text))
     for part in parts:
         await safe_send_message(message, part, user_id=message.from_user.id)
 

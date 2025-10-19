@@ -89,31 +89,31 @@ services:
 
   bot:
     build:
-      context: ./bot
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: ./bot/Dockerfile
     depends_on:
       - server
+    env_file:
+      - ./bot/.env
     environment:
-      - BOT_TOKEN=${BOT_TOKEN}
       - SERVER_HOST=http://server:8000
-      - API_SECRET_KEY=${API_SECRET_KEY}
       - REQUEST_TIMEOUT=600
     networks:
       - app-network
 
   bot-webhook:
     build:
-      context: ./bot
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: ./bot/Dockerfile
     command: python webhook_server.py
     ports:
       - "8001:8001"
     depends_on:
       - server
+    env_file:
+      - ./bot/.env
     environment:
-      - BOT_TOKEN=${BOT_TOKEN}
       - SERVER_HOST=http://server:8000
-      - API_SECRET_KEY=${API_SECRET_KEY}
       - REQUEST_TIMEOUT=600
     networks:
       - app-network
