@@ -408,8 +408,10 @@ class NotificationService:
             
             # Отправляем через webhook
             result = await self._send_webhook_notification(
-                bot_webhook_url, 
-                formatted_message
+                user_id=user_id,
+                notification=test_notification,
+                telegram_text=formatted_message,
+                bot_webhook_url=bot_webhook_url
             )
             
             return {

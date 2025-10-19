@@ -26,7 +26,7 @@ async def get_notification_settings(
     """
     try:
         # Получаем пользователя по telegram_id
-        user_crud = UserCRUD()
+        user_crud = UserCRUD(db)
         user = user_crud.get_user_by_telegram_id(telegram_id)
         if not user:
             raise HTTPException(
@@ -34,14 +34,14 @@ async def get_notification_settings(
                 detail="User not found"
             )
         
-        # Получаем настройки
+        # Получаем настройки (должны существовать, так как создаются автоматически)
         settings_crud = NotificationSettingsCRUD()
         settings = settings_crud.get_user_settings(db, user.id)
         
         if not settings:
             raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Settings not found"
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Notification settings should exist for user"
             )
         
         settings_data = NotificationSettingsResponse.model_validate(settings)
@@ -77,7 +77,7 @@ async def update_notification_settings(
     """
     try:
         # Получаем пользователя по telegram_id
-        user_crud = UserCRUD()
+        user_crud = UserCRUD(db)
         user = user_crud.get_user_by_telegram_id(telegram_id)
         if not user:
             raise HTTPException(
@@ -85,13 +85,13 @@ async def update_notification_settings(
                 detail="User not found"
             )
         
-        # Проверяем существование настроек
+        # Получаем настройки (должны существовать, так как создаются автоматически)
         settings_crud = NotificationSettingsCRUD()
         existing_settings = settings_crud.get_user_settings(db, user.id)
         if not existing_settings:
             raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Settings not found"
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Notification settings should exist for user"
             )
         
         # Обновляем настройки

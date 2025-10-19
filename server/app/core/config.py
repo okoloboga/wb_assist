@@ -36,6 +36,9 @@ class Settings:
     # === НАСТРОЙКИ БЕЗОПАСНОСТИ ===
     TRUSTED_HOSTS: List[str] = os.getenv("TRUSTED_HOSTS", "*").split(",")
     API_SECRET_KEY: str = os.getenv("API_SECRET_KEY")
+    
+    # === НАСТРОЙКИ УВЕДОМЛЕНИЙ ===
+    BOT_WEBHOOK_URL: str = os.getenv("BOT_WEBHOOK_URL", "http://bot:8001/webhook/notifications")
 
     # === НАСТРОЙКИ ЛОГИРОВАНИЯ ===
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")

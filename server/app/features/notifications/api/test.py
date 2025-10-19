@@ -26,7 +26,7 @@ async def send_test_notification(
     """
     try:
         # Получаем пользователя по telegram_id
-        user_crud = UserCRUD()
+        user_crud = UserCRUD(db)
         user = user_crud.get_user_by_telegram_id(telegram_id)
         if not user:
             raise HTTPException(
@@ -34,12 +34,9 @@ async def send_test_notification(
                 detail="User not found"
             )
         
-        # Проверяем наличие webhook URL
-        if not user.bot_webhook_url:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Bot webhook URL not found for user"
-            )
+        # Получаем webhook URL из настроек
+        from app.core.config import settings
+        bot_webhook_url = settings.BOT_WEBHOOK_URL
         
         # Инициализируем notification service
         notification_service = NotificationService(db, None)  # Redis не нужен для теста
@@ -49,14 +46,14 @@ async def send_test_notification(
             user_id=user.id,
             notification_type=test_data.notification_type,
             test_data=test_data.test_data,
-            bot_webhook_url=user.bot_webhook_url
+            bot_webhook_url=bot_webhook_url
         )
         
         return TestNotificationResponse(
             success=result.get("success", False),
             message=result.get("message", "Test notification processed"),
             notification_sent=result.get("notification_sent", False),
-            webhook_url=user.bot_webhook_url,
+            webhook_url=bot_webhook_url,
             error=result.get("error")
         )
         
