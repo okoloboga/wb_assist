@@ -8,6 +8,11 @@ from sqlalchemy.orm import Session
 from app.features.wb_api.models import WBCabinet, WBOrder, WBProduct, WBStock, WBReview
 from sqlalchemy import func, and_, or_, text
 from datetime import datetime, timezone, timedelta
+try:
+    from zoneinfo import ZoneInfo
+    MSK_TZ = ZoneInfo("Europe/Moscow")
+except Exception:
+    MSK_TZ = None
 from app.features.wb_api.cache_manager import WBCacheManager
 from app.features.wb_api.sync_service import WBSyncService
 from .formatter import BotMessageFormatter
@@ -83,16 +88,26 @@ class BotAPIService:
             return None
 
     async def get_user_cabinet(self, telegram_id: int) -> Optional[WBCabinet]:
-        """Получение кабинета пользователя по telegram_id"""
+        """Получение кабинета пользователя по telegram_id (новая система общих кабинетов)"""
         try:
             # Сначала получаем пользователя
             user = await self.get_user_by_telegram_id(telegram_id)
             if not user:
                 return None
             
-            # Получаем кабинет пользователя
+            from app.features.wb_api.crud_cabinet_users import CabinetUserCRUD
+            cabinet_user_crud = CabinetUserCRUD()
+            
+            # Получаем кабинеты пользователя через связующую таблицу
+            cabinet_ids = cabinet_user_crud.get_user_cabinets(self.db, user["id"])
+            
+            if not cabinet_ids:
+                return None
+            
+            # Возвращаем первый активный кабинет
             cabinet = self.db.query(WBCabinet).filter(
-                WBCabinet.user_id == user["id"]
+                WBCabinet.id.in_(cabinet_ids),
+                WBCabinet.is_active == True
             ).first()
             
             return cabinet
@@ -130,7 +145,7 @@ class BotAPIService:
                 "error": str(e)
             }
 
-    async def get_recent_orders(self, user: Dict[str, Any], limit: int = 10, offset: int = 0) -> Dict[str, Any]:
+    async def get_recent_orders(self, user: Dict[str, Any], limit: int = 10, offset: int = 0, status: Optional[str] = None) -> Dict[str, Any]:
         """Получение последних заказов пользователя"""
         try:
             cabinet = await self.get_user_cabinet(user["telegram_id"])
@@ -141,7 +156,7 @@ class BotAPIService:
                 }
             
             # Получаем данные из БД
-            orders_data = await self._fetch_orders_from_db(cabinet, limit, offset)
+            orders_data = await self._fetch_orders_from_db(cabinet, limit, offset, status)
             
             # Форматируем Telegram сообщение
             telegram_text = self.formatter.format_orders(orders_data)
@@ -154,6 +169,53 @@ class BotAPIService:
             
         except Exception as e:
             logger.error(f"Ошибка получения заказов: {e}")
+            return {
+                "success": False,
+                "error": str(e)
+            }
+
+    async def get_orders_statistics(self, user: Dict[str, Any]) -> Dict[str, Any]:
+        """Получение полной статистики по заказам"""
+        try:
+            cabinet = await self.get_user_cabinet(user["telegram_id"])
+            if not cabinet:
+                return {
+                    "success": False,
+                    "error": "Кабинет WB не найден"
+                }
+            
+            # Получаем статистику заказов
+            orders_stats = await self._get_orders_statistics_from_db(cabinet)
+            
+            # Получаем статистику продаж
+            sales_stats = await self._get_sales_statistics_from_db(cabinet)
+            
+            # Формируем полную статистику
+            full_stats = {
+                "orders": orders_stats,
+                "sales": sales_stats,
+                "summary": {
+                    "total_orders": orders_stats["total_orders"],
+                    "active_orders": orders_stats["active_orders"],
+                    "canceled_orders": orders_stats["canceled_orders"],
+                    "total_sales": sales_stats["total_sales"],
+                    "buyouts": sales_stats["buyouts"],
+                    "returns": sales_stats["returns"],
+                    "buyout_rate": sales_stats["buyout_rate"]
+                }
+            }
+            
+            # Форматируем Telegram сообщение
+            telegram_text = self.formatter.format_orders_statistics(full_stats)
+            
+            return {
+                "success": True,
+                "data": full_stats,
+                "telegram_text": telegram_text
+            }
+            
+        except Exception as e:
+            logger.error(f"Ошибка получения статистики заказов: {e}")
             return {
                 "success": False,
                 "error": str(e)
@@ -235,6 +297,7 @@ class BotAPIService:
                 "commission_amount": order.commission_amount or 0.0,
                 "rating": product.rating if product else 0.0,  # Реальный рейтинг из WBProduct
                 "reviews_count": reviews_count,  # Реальное количество отзывов
+                "image_url": product.image_url if product and hasattr(product, 'image_url') else None,  # URL изображения товара
                 # Новые поля из WB API
                 "spp_percent": order.spp_percent or 0.0,
                 "customer_price": order.customer_price or 0.0,
@@ -278,6 +341,87 @@ class BotAPIService:
             return {
                 "success": False,
                 "error": str(e)
+            }
+
+    async def _get_orders_statistics_from_db(self, cabinet: WBCabinet) -> Dict[str, Any]:
+        """Получение статистики заказов из БД"""
+        try:
+            # Общее количество заказов
+            total_orders = self.db.query(WBOrder).filter(WBOrder.cabinet_id == cabinet.id).count()
+            
+            # Активные заказы
+            active_orders = self.db.query(WBOrder).filter(
+                and_(
+                    WBOrder.cabinet_id == cabinet.id,
+                    WBOrder.status == 'active'
+                )
+            ).count()
+            
+            # Отмененные заказы
+            canceled_orders = self.db.query(WBOrder).filter(
+                and_(
+                    WBOrder.cabinet_id == cabinet.id,
+                    WBOrder.status == 'canceled'
+                )
+            ).count()
+            
+            # Заказы без статуса
+            no_status_orders = self.db.query(WBOrder).filter(
+                and_(
+                    WBOrder.cabinet_id == cabinet.id,
+                    WBOrder.status.is_(None)
+                )
+            ).count()
+            
+            return {
+                "total_orders": total_orders,
+                "active_orders": active_orders,
+                "canceled_orders": canceled_orders,
+                "no_status_orders": no_status_orders,
+                "active_percentage": (active_orders / total_orders * 100) if total_orders > 0 else 0,
+                "canceled_percentage": (canceled_orders / total_orders * 100) if total_orders > 0 else 0
+            }
+            
+        except Exception as e:
+            logger.error(f"Ошибка получения статистики заказов: {e}")
+            return {
+                "total_orders": 0,
+                "active_orders": 0,
+                "canceled_orders": 0,
+                "no_status_orders": 0,
+                "active_percentage": 0,
+                "canceled_percentage": 0
+            }
+
+    async def _get_sales_statistics_from_db(self, cabinet: WBCabinet) -> Dict[str, Any]:
+        """Получение статистики продаж из БД"""
+        try:
+            from ..wb_api.crud_sales import WBSalesCRUD
+            sales_crud = WBSalesCRUD()
+            
+            # Получаем статистику продаж
+            stats = sales_crud.get_sales_statistics(self.db, cabinet.id)
+            
+            return {
+                "total_sales": stats.get("total_count", 0),
+                "buyouts": stats.get("buyouts_count", 0),
+                "returns": stats.get("returns_count", 0),
+                "buyout_rate": stats.get("buyout_rate", 0),
+                "total_amount": stats.get("total_amount", 0),
+                "buyouts_amount": stats.get("buyouts_amount", 0),
+                "returns_amount": stats.get("returns_amount", 0)
+            }
+            
+        except Exception as e:
+            logger.error(f"Ошибка получения статистики продаж: {e}")
+            return {
+                "total_sales": 0,
+                "buyouts": 0,
+                "returns": 0,
+                "buyout_rate": 0,
+                "total_amount": 0,
+                "buyouts_amount": 0,
+                "returns_amount": 0
             }
 
     async def get_critical_stocks(self, user, limit: int = 10, offset: int = 0) -> Dict[str, Any]:
@@ -429,47 +573,39 @@ class BotAPIService:
             }
 
     async def connect_cabinet(self, user: Dict[str, Any], api_key: str) -> Dict[str, Any]:
-        """Подключение WB кабинета"""
+        """Подключение WB кабинета или замена существующего (новая система общих кабинетов)"""
         try:
             logger.info(f"connect_cabinet called with user: {user}, api_key: {api_key}")
             logger.info(f"user type: {type(user)}")
-            # Проверяем, есть ли уже кабинет у пользователя
-            existing_cabinet = self.db.query(WBCabinet).filter(
-                WBCabinet.user_id == user["id"]
-            ).first()
-            if existing_cabinet:
-                return {
-                    "success": False,
-                    "error": "Cabinet already connected"
-                }
             
-            # Проверяем, существует ли уже кабинет с этим API ключом
-            existing_cabinet = self.db.query(WBCabinet).filter(
-                WBCabinet.api_key == api_key
-            ).first()
+            from app.features.wb_api.crud_cabinet_users import CabinetUserCRUD
+            cabinet_user_crud = CabinetUserCRUD()
+            
+            # Проверяем, есть ли уже кабинет с этим API ключом
+            existing_cabinet = cabinet_user_crud.find_cabinet_by_api_key(self.db, api_key)
             
             if existing_cabinet:
-                # Кабинет уже существует - создаем новый кабинет для этого пользователя
-                # но с тем же API ключом (чтобы данные синхронизировались)
-                logger.info(f"User {user['id']} creating new cabinet with existing API key {existing_cabinet.id}")
+                # Кабинет с таким API ключом уже существует
+                logger.info(f"Found existing cabinet {existing_cabinet.id} with API key")
                 
-                # Создаем новый кабинет для этого пользователя с тем же API ключом
-                new_cabinet = WBCabinet(
-                    user_id=user["id"],
-                    api_key=api_key,
-                    name=f"WB Cabinet {user['telegram_id']}",
-                    is_active=True
-                )
+                # Проверяем, подключен ли уже пользователь к этому кабинету
+                if cabinet_user_crud.is_user_in_cabinet(self.db, existing_cabinet.id, user["id"]):
+                    return {
+                        "success": False,
+                        "error": "Пользователь уже подключен к этому кабинету"
+                    }
                 
-                self.db.add(new_cabinet)
-                self.db.commit()
-                self.db.refresh(new_cabinet)
+                # Подключаем пользователя к существующему кабинету
+                cabinet_user_crud.add_user_to_cabinet(self.db, existing_cabinet.id, user["id"])
                 
                 return {
                     "success": True,
-                    "message": "Кабинет создан с общим API ключом",
-                    "cabinet_id": str(new_cabinet.id),
-                    "telegram_text": f"✅ Кабинет WB создан!\n\n🏢 Кабинет: {new_cabinet.name}\n🔑 API ключ: {api_key[:20]}...\n📊 Статус: Активен\n\nТеперь вы можете получать уведомления о новых заказах и остатках!"
+                    "message": "Подключен к существующему кабинету",
+                    "cabinet_id": str(existing_cabinet.id),
+                    "cabinet_name": existing_cabinet.name,
+                    "connected_at": existing_cabinet.created_at.isoformat() if existing_cabinet.created_at else None,
+                    "api_key_status": "valid",
+                    "telegram_text": f"✅ Подключен к существующему кабинету!\n\n🏢 Кабинет: {existing_cabinet.name}\n🔑 API ключ: {api_key[:8]}...\n📊 Статус: Активен\n\nТеперь вы можете получать уведомления о новых заказах и остатках!"
                 }
             
             # API ключ новый - создаем новый кабинет
@@ -478,7 +614,6 @@ class BotAPIService:
             
             # Создаем временный объект кабинета для валидации
             temp_cabinet = WBCabinet(
-                user_id=user["id"],
                 api_key=api_key,
                 name="temp",
                 is_active=True
@@ -500,9 +635,8 @@ class BotAPIService:
                     "error": "Invalid API key"
                 }
             
-            # Создаем кабинет
+            # Создаем новый кабинет
             cabinet = WBCabinet(
-                user_id=user["id"],
                 api_key=api_key,
                 name=f"WB Cabinet {user['telegram_id']}",
                 is_active=True
@@ -511,6 +645,9 @@ class BotAPIService:
             self.db.add(cabinet)
             self.db.commit()
             self.db.refresh(cabinet)
+            
+            # Подключаем пользователя к новому кабинету
+            cabinet_user_crud.add_user_to_cabinet(self.db, cabinet.id, user["id"])
             
             # Форматируем ответ
             cabinet_data = {
@@ -538,14 +675,15 @@ class BotAPIService:
             }
 
     async def get_cabinet_status(self, user: Dict[str, Any]) -> Dict[str, Any]:
-        """Получение статуса кабинетов пользователя"""
+        """Получение статуса кабинетов пользователя (новая система общих кабинетов)"""
         try:
-            # Получаем все кабинеты пользователя
-            cabinets = self.db.query(WBCabinet).filter(
-                WBCabinet.user_id == user["id"]
-            ).all()
+            from app.features.wb_api.crud_cabinet_users import CabinetUserCRUD
+            cabinet_user_crud = CabinetUserCRUD()
             
-            if not cabinets:
+            # Получаем все кабинеты пользователя через связующую таблицу
+            cabinet_ids = cabinet_user_crud.get_user_cabinets(self.db, user["id"])
+            
+            if not cabinet_ids:
                 return {
                     "success": True,
                     "data": {
@@ -556,6 +694,9 @@ class BotAPIService:
                     },
                     "telegram_text": "🔑 СТАТУС WB КАБИНЕТОВ\n\n❌ Нет подключенных кабинетов"
                 }
+            
+            # Получаем кабинеты по ID
+            cabinets = self.db.query(WBCabinet).filter(WBCabinet.id.in_(cabinet_ids)).all()
             
             # Форматируем данные кабинетов
             cabinet_data = []
@@ -569,6 +710,7 @@ class BotAPIService:
                     "id": f"cabinet_{cabinet.id}",
                     "name": cabinet.name or "Неизвестный кабинет",
                     "status": "active" if cabinet.is_active else "inactive",
+                    "api_key": cabinet.api_key,  # Добавляем API ключ
                     "api_key_status": "valid" if cabinet.is_active else "invalid",
                     "connected_at": cabinet.created_at.isoformat() if cabinet.created_at else None,
                     "last_sync": cabinet.last_sync_at.isoformat() if cabinet.last_sync_at else None
@@ -598,9 +740,18 @@ class BotAPIService:
     async def _fetch_dashboard_from_db(self, cabinet: WBCabinet) -> Dict[str, Any]:
         """Получение данных дашборда из БД"""
         try:
-            now = datetime.now(timezone.utc)
-            today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-            yesterday_start = today_start - timedelta(days=1)
+            now_utc = datetime.now(timezone.utc)
+            # Начало дня в МСК, затем в UTC для фильтров
+            if MSK_TZ:
+                now_msk = now_utc.astimezone(MSK_TZ)
+                today_start_msk = now_msk.replace(hour=0, minute=0, second=0, microsecond=0)
+                yesterday_start_msk = today_start_msk - timedelta(days=1)
+                today_start = today_start_msk.astimezone(timezone.utc)
+                yesterday_start = yesterday_start_msk.astimezone(timezone.utc)
+            else:
+                # Фолбэк: считаем от UTC как раньше
+                today_start = now_utc.replace(hour=0, minute=0, second=0, microsecond=0)
+                yesterday_start = today_start - timedelta(days=1)
             
             # Товары - считаем уникальные nm_id из остатков (реальные товары на складе)
             total_products = self.db.query(WBStock.nm_id).filter(
@@ -661,7 +812,7 @@ class BotAPIService:
             
             return {
                 "cabinet_name": cabinet.name or "Неизвестный кабинет",
-                "last_sync": cabinet.last_sync_at.strftime("%d.%m.%Y %H:%M") if cabinet.last_sync_at else "Никогда",
+                "last_sync": (cabinet.last_sync_at.astimezone(MSK_TZ).strftime("%d.%m.%Y %H:%M") if (cabinet.last_sync_at and MSK_TZ) else (cabinet.last_sync_at.strftime("%d.%m.%Y %H:%M") if cabinet.last_sync_at else "Никогда")),
                 "status": "Активен" if cabinet.is_active else "Неактивен",
                 "products": {
                     "total": total_products,
@@ -709,20 +860,30 @@ class BotAPIService:
                 "recommendations": ["Ошибка получения данных"]
             }
 
-    async def _fetch_orders_from_db(self, cabinet: WBCabinet, limit: int, offset: int) -> Dict[str, Any]:
+    async def _fetch_orders_from_db(self, cabinet: WBCabinet, limit: int, offset: int, status: Optional[str] = None) -> Dict[str, Any]:
         """Получение заказов из БД"""
         try:
-            now = datetime.now(timezone.utc)
-            today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-            yesterday_start = today_start - timedelta(days=1)
+            now_utc = datetime.now(timezone.utc)
+            if MSK_TZ:
+                now_msk = now_utc.astimezone(MSK_TZ)
+                today_start_msk = now_msk.replace(hour=0, minute=0, second=0, microsecond=0)
+                yesterday_start_msk = today_start_msk - timedelta(days=1)
+                today_start = today_start_msk.astimezone(timezone.utc)
+                yesterday_start = yesterday_start_msk.astimezone(timezone.utc)
+            else:
+                today_start = now_utc.replace(hour=0, minute=0, second=0, microsecond=0)
+                yesterday_start = today_start - timedelta(days=1)
             
-            # Получаем заказы с пагинацией
+            # Получаем заказы с пагинацией (включая отмененные)
             orders_query = self.db.query(WBOrder).filter(
-                and_(
-                    WBOrder.cabinet_id == cabinet.id,
-                    WBOrder.status != 'canceled'
-                )
-            ).order_by(WBOrder.order_date.desc())
+                WBOrder.cabinet_id == cabinet.id
+            )
+            
+            # Применяем фильтр по статусу если указан
+            if status:
+                orders_query = orders_query.filter(WBOrder.status == status)
+            
+            orders_query = orders_query.order_by(WBOrder.order_date.desc())
             
             total_orders = orders_query.count()
             orders = orders_query.offset(offset).limit(limit).all()
@@ -1025,12 +1186,27 @@ class BotAPIService:
     async def _fetch_analytics_from_db(self, cabinet: WBCabinet, period: str) -> Dict[str, Any]:
         """Получение аналитики из БД"""
         try:
-            now = datetime.now(timezone.utc)
-            today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-            yesterday_start = today_start - timedelta(days=1)
-            week_start = today_start - timedelta(days=7)
-            month_start = today_start - timedelta(days=30)
-            quarter_start = today_start - timedelta(days=90)
+            now_utc = datetime.now(timezone.utc)
+            if MSK_TZ:
+                now_msk = now_utc.astimezone(MSK_TZ)
+                today_start_msk = now_msk.replace(hour=0, minute=0, second=0, microsecond=0)
+                yesterday_start_msk = today_start_msk - timedelta(days=1)
+                week_start_msk = today_start_msk - timedelta(days=7)
+                month_start_msk = today_start_msk - timedelta(days=30)
+                quarter_start_msk = today_start_msk - timedelta(days=90)
+                today_start = today_start_msk.astimezone(timezone.utc)
+                yesterday_start = yesterday_start_msk.astimezone(timezone.utc)
+                week_start = week_start_msk.astimezone(timezone.utc)
+                month_start = month_start_msk.astimezone(timezone.utc)
+                quarter_start = quarter_start_msk.astimezone(timezone.utc)
+                now = now_utc
+            else:
+                now = now_utc
+                today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+                yesterday_start = today_start - timedelta(days=1)
+                week_start = today_start - timedelta(days=7)
+                month_start = today_start - timedelta(days=30)
+                quarter_start = today_start - timedelta(days=90)
             
             # Продажи по периодам
             sales_periods = {

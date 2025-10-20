@@ -11,8 +11,16 @@ logger = logging.getLogger(__name__)
 # Получаем конфигурацию Redis
 redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 
+# Получаем интервал синхронизации из переменной окружения
+sync_interval_env = os.getenv("SYNC_INTERVAL")
+if not sync_interval_env:
+    raise ValueError("SYNC_INTERVAL environment variable is required but not set")
+sync_interval = int(sync_interval_env)
+
 logger.info(f"Redis configuration:")
 logger.info(f"  Redis URL: {redis_url}")
+logger.info(f"Sync configuration:")
+logger.info(f"  Sync interval: {sync_interval} seconds ({sync_interval/60:.1f} minutes)")
 
 # Создаем экземпляр Celery с Redis
 celery_app = Celery(
@@ -44,11 +52,11 @@ celery_app.conf.update(
         "app.features.sync.tasks.sync_cabinet_data": {"queue": "sync_queue"},
     },
     
-    # Настройки для периодических задач (изменено на 10 минут)
+    # Настройки для периодических задач
     beat_schedule={
         "sync-all-cabinets": {
             "task": "app.features.sync.tasks.sync_all_cabinets",
-            "schedule": 600.0,  # Каждые 10 минут проверяем, кого нужно синхронизировать
+            "schedule": float(sync_interval),  # Используем переменную окружения SYNC_INTERVAL
         },
     },
     

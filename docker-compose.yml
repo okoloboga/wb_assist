@@ -50,6 +50,7 @@ services:
       - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
       - API_SECRET_KEY=${API_SECRET_KEY}
       - REDIS_URL=redis://redis:6379/0
+      # BOT_WEBHOOK_URL удален - используется только polling
     networks:
       - app-network
 
@@ -66,6 +67,7 @@ services:
     environment:
       - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
       - REDIS_URL=redis://redis:6379/0
+      - SYNC_INTERVAL=${SYNC_INTERVAL}
     networks:
       - app-network
 
@@ -82,6 +84,7 @@ services:
     environment:
       - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
       - REDIS_URL=redis://redis:6379/0
+      - SYNC_INTERVAL=${SYNC_INTERVAL}
     volumes:
       - celery_beat_data:/app/beat_data
     networks:
@@ -89,34 +92,18 @@ services:
 
   bot:
     build:
-      context: .
-      dockerfile: ./bot/Dockerfile
+      context: ./bot
+      dockerfile: Dockerfile
     depends_on:
       - server
-    env_file:
-      - ./bot/.env
     environment:
+      - BOT_TOKEN=${BOT_TOKEN}
       - SERVER_HOST=http://server:8000
+      - API_SECRET_KEY=${API_SECRET_KEY}
       - REQUEST_TIMEOUT=600
     networks:
       - app-network
 
-  bot-webhook:
-    build:
-      context: .
-      dockerfile: ./bot/Dockerfile
-    command: python webhook_server.py
-    ports:
-      - "8001:8001"
-    depends_on:
-      - server
-    env_file:
-      - ./bot/.env
-    environment:
-      - SERVER_HOST=http://server:8000
-      - REQUEST_TIMEOUT=600
-    networks:
-      - app-network
 
 volumes:
   pgdata:

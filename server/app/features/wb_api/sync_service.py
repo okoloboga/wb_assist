@@ -1,6 +1,12 @@
 import asyncio
 import logging
 from datetime import datetime, timezone, timedelta
+from typing import Optional
+try:
+    from zoneinfo import ZoneInfo
+    MSK_TZ = ZoneInfo("Europe/Moscow")
+except Exception:
+    MSK_TZ = None
 from typing import Dict, List, Any, Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, or_, func
@@ -8,6 +14,7 @@ from sqlalchemy import and_, or_, func
 from .models import WBCabinet, WBProduct, WBOrder, WBStock, WBReview, WBSyncLog
 from .client import WBAPIClient
 from .cache_manager import WBCacheManager
+from .cabinet_manager import CabinetManager
 from app.features.user.models import User
 
 logger = logging.getLogger(__name__)
@@ -21,10 +28,34 @@ class WBSyncService:
     def __init__(self, db: Session, cache_manager: WBCacheManager = None):
         self.db = db
         self.cache_manager = cache_manager or WBCacheManager(db)
+        self.cabinet_manager = CabinetManager(db)
     
     async def sync_all_data(self, cabinet: WBCabinet) -> Dict[str, Any]:
         """Синхронизация всех данных кабинета"""
         try:
+            # Валидируем API ключ перед синхронизацией
+            logger.info(f"Validating API key for cabinet {cabinet.id} before sync")
+            validation_result = await self.cabinet_manager.validate_and_cleanup_cabinet(cabinet, max_retries=3)
+            
+            if not validation_result.get("valid", False):
+                if validation_result.get("cabinet_removed", False):
+                    logger.warning(f"Cabinet {cabinet.id} was removed due to invalid API key")
+                    return {
+                        "status": "error",
+                        "message": "Cabinet removed due to invalid API key",
+                        "cabinet_removed": True,
+                        "validation_result": validation_result
+                    }
+                else:
+                    logger.error(f"API validation failed for cabinet {cabinet.id}: {validation_result}")
+                    return {
+                        "status": "error",
+                        "message": "API validation failed",
+                        "validation_result": validation_result
+                    }
+            
+            logger.info(f"API key validation successful for cabinet {cabinet.id}")
+            
             # Проверяем, нужно ли отправлять уведомления (один раз в начале)
             should_notify = await self._should_send_notification(cabinet)
             if should_notify:
@@ -45,8 +76,10 @@ class WBSyncService:
             sync_tasks = [
                 ("products", self.sync_products(cabinet, client)),
                 ("orders", self.sync_orders(cabinet, client, date_from, date_to, should_notify)),
-                ("stocks", self.sync_stocks(cabinet, client, date_from, date_to)),
-                ("reviews", self.sync_reviews(cabinet, client, date_from, date_to))
+                ("stocks", self.sync_stocks(cabinet, client, date_from, date_to, should_notify)),
+                ("reviews", self.sync_reviews(cabinet, client, date_from, date_to)),
+                ("sales", self.sync_sales(cabinet, client, date_from, date_to, should_notify)),
+                ("claims", self.sync_claims(cabinet, client, should_notify))
             ]
             
             for task_name, task in sync_tasks:
@@ -79,6 +112,7 @@ class WBSyncService:
             # Обновляем время последней синхронизации
             cabinet.last_sync_at = datetime.now(timezone.utc)
             self.db.commit()
+            logger.info(f"✅ Синхронизация кабинета {cabinet.id} завершена: {results}")
             
             # Планируем автоматическую синхронизацию для нового кабинета
             if not cabinet.last_sync_at:
@@ -95,6 +129,13 @@ class WBSyncService:
             
         except Exception as e:
             logger.error(f"Sync all data failed: {str(e)}")
+            # Даже при ошибке обновляем время синхронизации, чтобы избежать бесконечных "первых синхронизаций"
+            try:
+                cabinet.last_sync_at = datetime.now(timezone.utc)
+                self.db.commit()
+                logger.info(f"Обновлено время синхронизации кабинета {cabinet.id} несмотря на ошибку")
+            except Exception as commit_error:
+                logger.error(f"Не удалось обновить last_sync_at: {commit_error}")
             return {"status": "error", "error_message": str(e)}
 
     async def sync_products(
@@ -128,6 +169,20 @@ class WBSyncService:
             created = 0
             updated = 0
             
+            # Вспомогательная функция извлечения первой фото-ссылки
+            def extract_first_photo_url(card: dict) -> str:
+                photos = card.get("photos") or []
+                if isinstance(photos, list) and photos:
+                    first = photos[0]
+                    return (
+                        first.get("c516x688")
+                        or first.get("c246x328")
+                        or first.get("big")
+                        or first.get("square")
+                        or first.get("tm")
+                    )
+                return None
+
             for product_data in products_data:
                 nm_id = product_data.get("nmID")  # Исправлено: nmID вместо nmId
                 if not nm_id:
@@ -141,12 +196,16 @@ class WBSyncService:
                     )
                 ).first()
                 
+                photo_url = extract_first_photo_url(product_data)
+
                 if existing:
                     # Обновляем существующий товар
                     existing.name = product_data.get("title")  # Исправлено: title вместо name
                     existing.vendor_code = product_data.get("vendorCode")
                     existing.brand = product_data.get("brand")
                     existing.category = product_data.get("subjectName")  # Исправлено: subjectName вместо category
+                    if photo_url:
+                        existing.image_url = photo_url
                     # Цены и рейтинги получаем из других API (остатки, отзывы)
                     # existing.price = product_data.get("price")  # НЕТ в API товаров
                     # existing.discount_price = product_data.get("discountPrice")  # НЕТ в API товаров
@@ -165,6 +224,7 @@ class WBSyncService:
                         vendor_code=product_data.get("vendorCode"),
                         brand=product_data.get("brand"),
                         category=product_data.get("subjectName"),  # Исправлено: subjectName вместо category
+                        image_url=photo_url,
                         # Цены и рейтинги получаем из других API (остатки, отзывы)
                         # price=product_data.get("price"),  # НЕТ в API товаров
                         # discount_price=product_data.get("discountPrice"),  # НЕТ в API товаров
@@ -242,8 +302,16 @@ class WBSyncService:
             # Получаем комиссии для расчета
             try:
                 commissions_data = await client.get_commissions()
-                logger.info(f"Commissions data type: {type(commissions_data)}, length: {len(commissions_data) if isinstance(commissions_data, list) else 'N/A'}")
-                # logger.info(f"Commissions data content: {commissions_data}")
+                # logger.info(f"Commissions data type: {type(commissions_data)}, length: {len(commissions_data) if isinstance(commissions_data, list) else 'N/A'}")
+                # Печатаем образец данных для отладки (без шума в логах)
+                if isinstance(commissions_data, list) and commissions_data:
+                    sample = commissions_data[0]
+                    # try:
+                    #     # Ограничим ключевые поля для читаемости
+                    #     sample_filtered = {k: sample.get(k) for k in list(sample.keys())[:10]}
+                    #     logger.info(f"Commissions sample: {sample_filtered}")
+                    # except Exception:
+                    #     logger.info("Commissions sample: <unserializable>")
             except Exception as e:
                 logger.error(f"Failed to get commissions: {e}")
                 commissions_data = []
@@ -286,23 +354,68 @@ class WBSyncService:
                     ).first()
                     
                     if existing:
-                        # Обновляем существующий заказ
-                        old_nm_id = existing.nm_id
-                        existing.nm_id = nm_id
-                        if old_nm_id != nm_id:
-                            logger.info(f"Updated order {order_id}: nm_id {old_nm_id} -> {nm_id}")
-                        # else:
-                            # Order already has nm_id, no need to log
-                        existing.article = order_data.get("supplierArticle")
-                        existing.name = order_data.get("subject")  # Исправлено: subject вместо name
-                        existing.brand = order_data.get("brand")
-                        existing.size = order_data.get("techSize")  # Исправлено: techSize вместо size
-                        existing.barcode = order_data.get("barcode")
-                        existing.quantity = 1  # Исправлено: всегда 1, так как нет поля quantity
-                        existing.price = order_data.get("finishedPrice")  # Исправлено: finishedPrice вместо price
-                        existing.total_price = order_data.get("totalPrice")
-                        existing.status = "canceled" if order_data.get("isCancel", False) else "active"  # Исправлено: вычисляем статус
-                        existing.order_date = self._parse_datetime(order_data.get("date"))
+                        # Проверяем, изменились ли данные
+                        new_status = "canceled" if order_data.get("isCancel", False) else "active"
+                        new_total_price = order_data.get("totalPrice")
+                        new_article = order_data.get("supplierArticle")
+                        new_name = order_data.get("subject")
+                        new_brand = order_data.get("brand")
+                        new_size = order_data.get("techSize")
+                        new_price = order_data.get("finishedPrice")
+                        
+                        # Проверяем реальные изменения в критичных полях
+                        status_changed = existing.status != new_status
+                        price_changed = existing.total_price != new_total_price
+                        article_changed = existing.article != new_article
+                        name_changed = existing.name != new_name
+                        brand_changed = existing.brand != new_brand
+                        size_changed = existing.size != new_size
+                        finished_price_changed = existing.price != new_price
+                        
+                        # Обновляем только если есть реальные изменения
+                        if status_changed or price_changed or article_changed or name_changed or brand_changed or size_changed or finished_price_changed:
+                            changes = []
+                            if status_changed:
+                                changes.append(f"status {existing.status} -> {new_status}")
+                            if price_changed:
+                                changes.append(f"total_price {existing.total_price} -> {new_total_price}")
+                            if article_changed:
+                                changes.append(f"article {existing.article} -> {new_article}")
+                            if name_changed:
+                                changes.append(f"name {existing.name} -> {new_name}")
+                            if brand_changed:
+                                changes.append(f"brand {existing.brand} -> {new_brand}")
+                            if size_changed:
+                                changes.append(f"size {existing.size} -> {new_size}")
+                            if finished_price_changed:
+                                changes.append(f"price {existing.price} -> {new_price}")
+                            
+                            logger.info(f"Order {order_id} changed: {', '.join(changes)}")
+                            
+                            # Обновляем только изменившиеся поля
+                            if status_changed:
+                                existing.status = new_status
+                            if price_changed:
+                                existing.total_price = new_total_price
+                            if article_changed:
+                                existing.article = new_article
+                            if name_changed:
+                                existing.name = new_name
+                            if brand_changed:
+                                existing.brand = new_brand
+                            if size_changed:
+                                existing.size = new_size
+                            if finished_price_changed:
+                                existing.price = new_price
+                            
+                            # Обновляем остальные поля
+                            existing.nm_id = nm_id
+                            existing.barcode = order_data.get("barcode")
+                            existing.quantity = 1
+                            existing.order_date = self._parse_datetime(order_data.get("date"))
+                        else:
+                            # Данные не изменились, пропускаем обновление
+                            continue
                         
                         # Получаем категорию и предмет из товара по nmId
                         product = self.db.query(WBProduct).filter(
@@ -323,8 +436,10 @@ class WBSyncService:
                             # logger.info(f"Product not found for nmId={nm_id}, using order data: category='{existing.category}', subject='{existing.subject}'")
                         
                         total_price = order_data.get("totalPrice", 0)
+                        # Выбор поля комиссии с учетом режима заказа
+                        commission_field = self._select_commission_field(order_data)
                         commission_percent, commission_amount = self._calculate_commission(
-                            existing.category, existing.subject, total_price, commissions_data
+                            existing.category, existing.subject, total_price, commissions_data, commission_field
                         )
                         existing.commission_percent = commission_percent
                         existing.commission_amount = commission_amount
@@ -370,8 +485,9 @@ class WBSyncService:
                                 # logger.info(f"Product not found for nmId={nm_id}, using order data: category='{category}', subject='{subject}'")
                             
                             total_price = order_data.get("totalPrice", 0)
+                            commission_field = self._select_commission_field(order_data)
                             commission_percent, commission_amount = self._calculate_commission(
-                                category, subject, total_price, commissions_data
+                                category, subject, total_price, commissions_data, commission_field
                             )
                             
                             
@@ -413,9 +529,8 @@ class WBSyncService:
                             try:
                                 self.db.flush()  # Принудительно выполняем вставку для проверки уникальности
                                 
-                                # Отправляем уведомление о новом заказе только если разрешено
-                                if should_notify:
-                                    await self._send_new_order_notification(cabinet, order_data, order)
+                                # Уведомления о новых заказах обрабатываются через систему уведомлений
+                                # (удален вызов несуществующего метода _send_new_order_notification)
                                 
                                 # logger.info(f"Created order {order_id}: commission_percent={commission_percent}, commission_amount={commission_amount}")
                                 created += 1
@@ -462,7 +577,8 @@ class WBSyncService:
         cabinet: WBCabinet, 
         client: WBAPIClient, 
         date_from: str, 
-        date_to: str
+        date_to: str,
+        should_notify: bool = True
     ) -> Dict[str, Any]:
         """Синхронизация остатков"""
         try:
@@ -493,28 +609,70 @@ class WBSyncService:
                 ).first()
                 
                 if existing:
-                    # Обновляем существующий остаток
-                    existing.article = stock_data.get("supplierArticle")
-                    existing.name = stock_data.get("name")  # НЕТ в API, оставляем как есть
-                    existing.brand = stock_data.get("brand")
-                    existing.size = stock_data.get("techSize")
-                    existing.barcode = stock_data.get("barcode")
-                    existing.quantity = stock_data.get("quantity")
-                    existing.in_way_to_client = stock_data.get("inWayToClient")
-                    existing.in_way_from_client = stock_data.get("inWayFromClient")
-                    existing.warehouse_name = stock_data.get("warehouseName")
-                    existing.last_updated = self._parse_datetime(stock_data.get("lastChangeDate"))
-                    # Новые поля из WB API
-                    existing.category = stock_data.get("category")
-                    existing.subject = stock_data.get("subject")
-                    existing.price = stock_data.get("Price")
-                    existing.discount = stock_data.get("Discount")
-                    existing.quantity_full = stock_data.get("quantityFull")
-                    existing.is_supply = stock_data.get("isSupply")
-                    existing.is_realization = stock_data.get("isRealization")
-                    existing.sc_code = stock_data.get("SCCode")
-                    existing.updated_at = datetime.now(timezone.utc)
-                    updated += 1
+                    # Проверяем, изменились ли данные
+                    new_quantity = stock_data.get("quantity")
+                    new_last_updated = self._parse_datetime(stock_data.get("lastChangeDate"))
+                    new_article = stock_data.get("supplierArticle")
+                    new_brand = stock_data.get("brand")
+                    new_size = stock_data.get("techSize")
+                    
+                    # Проверяем реальные изменения в критичных полях
+                    quantity_changed = existing.quantity != new_quantity
+                    date_changed = existing.last_updated != new_last_updated
+                    article_changed = existing.article != new_article
+                    brand_changed = existing.brand != new_brand
+                    size_changed = existing.size != new_size
+                    
+                    # Обновляем только если есть реальные изменения
+                    if quantity_changed or date_changed or article_changed or brand_changed or size_changed:
+                        changes = []
+                        if quantity_changed:
+                            changes.append(f"quantity {existing.quantity} -> {new_quantity}")
+                        if date_changed:
+                            changes.append(f"date {existing.last_updated} -> {new_last_updated}")
+                        if article_changed:
+                            changes.append(f"article {existing.article} -> {new_article}")
+                        if brand_changed:
+                            changes.append(f"brand {existing.brand} -> {new_brand}")
+                        if size_changed:
+                            changes.append(f"size {existing.size} -> {new_size}")
+                        
+                        # Логирование изменений остатков убрано - слишком много шума
+                        
+                        # Обновляем только изменившиеся поля
+                        if quantity_changed:
+                            existing.quantity = new_quantity
+                        if date_changed:
+                            existing.last_updated = new_last_updated
+                        if article_changed:
+                            existing.article = new_article
+                        if brand_changed:
+                            existing.brand = new_brand
+                        if size_changed:
+                            existing.size = new_size
+                        
+                        # Обновляем остальные поля
+                        existing.barcode = stock_data.get("barcode")
+                        existing.in_way_to_client = stock_data.get("inWayToClient")
+                        existing.in_way_from_client = stock_data.get("inWayFromClient")
+                        existing.warehouse_name = stock_data.get("warehouseName")
+                        
+                        # Новые поля из WB API
+                        existing.category = stock_data.get("category")
+                        existing.subject = stock_data.get("subject")
+                        existing.price = stock_data.get("Price")
+                        existing.discount = stock_data.get("Discount")
+                        existing.quantity_full = stock_data.get("quantityFull")
+                        existing.is_supply = stock_data.get("isSupply")
+                        existing.is_realization = stock_data.get("isRealization")
+                        existing.sc_code = stock_data.get("SCCode")
+                        
+                        # Обновляем updated_at ТОЛЬКО при реальных изменениях
+                        existing.updated_at = datetime.now(timezone.utc)
+                        updated += 1
+                    else:
+                        # Данные не изменились, пропускаем обновление
+                        continue
                 else:
                     # Создаем новый остаток
                     stock = WBStock(
@@ -681,15 +839,26 @@ class WBSyncService:
             return {"status": "error", "error_message": str(e)}
 
     def _parse_datetime(self, date_str: str) -> Optional[datetime]:
-        """Парсинг даты из строки"""
+        """Парсинг даты из строки WB. Если без TZ — считаем МСК и конвертируем в UTC."""
         if not date_str:
             return None
         
         try:
             # Пробуем разные форматы дат
-            for fmt in ["%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"]:
+            for fmt in ["%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%d %H:%M:%S%z", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"]:
                 try:
-                    return datetime.strptime(date_str, fmt).replace(tzinfo=timezone.utc)
+                    dt = datetime.strptime(date_str, fmt)
+                    if dt.tzinfo is None:
+                        # Без TZ: трактуем как МСК и переводим в UTC
+                        if MSK_TZ is not None:
+                            dt = dt.replace(tzinfo=MSK_TZ).astimezone(timezone.utc)
+                        else:
+                            # Фолбэк: сдвиг +3 часа
+                            dt = dt.replace(tzinfo=timezone.utc) - timedelta(hours=3)
+                    else:
+                        # С TZ: приводим к UTC
+                        dt = dt.astimezone(timezone.utc)
+                    return dt
                 except ValueError:
                     continue
             
@@ -729,8 +898,26 @@ class WBSyncService:
             logger.error(f"Get sync status failed: {str(e)}")
             return {"status": "error", "error_message": str(e)}
 
-    def _calculate_commission(self, category: str, subject: str, total_price: float, commissions_data) -> tuple[float, float]:
-        """Расчет комиссии для заказа на основе категории и предмета"""
+    def _select_commission_field(self, order_data: dict) -> str:
+        """Определяет, какое поле комиссии использовать, исходя из режима заказа.
+        Порядок приоритета: pickup -> booking -> supplierExpress -> supplier -> marketplace.
+        Ожидаемые ключи в order_data (по наличию/истине): isPickup, isBooking, isSupplierExpress, isSupplier.
+        """
+        try:
+            if order_data.get("isPickup"):
+                return "kgvpPickup"
+            if order_data.get("isBooking"):
+                return "kgvpBooking"
+            if order_data.get("isSupplierExpress"):
+                return "kgvpSupplierExpress"
+            if order_data.get("isSupplier"):
+                return "kgvpSupplier"
+        except Exception:
+            pass
+        return "kgvpMarketplace"
+
+    def _calculate_commission(self, category: str, subject: str, total_price: float, commissions_data, commission_field: str = "kgvpMarketplace") -> tuple[float, float]:
+        """Расчет комиссии для заказа на основе категории, предмета и режимного поля комиссии."""
         try:
             if not category or not subject or not total_price or not commissions_data:
                 # logger.warning(f"Missing data: category={category}, subject={subject}, total_price={total_price}, commissions_data={bool(commissions_data)}")
@@ -758,22 +945,22 @@ class WBSyncService:
                     
                 parent_name = commission.get("parentName")
                 subject_name = commission.get("subjectName")
-                kgvp_marketplace = commission.get("kgvpMarketplace")
+                percent_value = commission.get(commission_field)
                 
                 # logger.info(f"Commission {i}: parentName='{parent_name}', subjectName='{subject_name}', kgvpMarketplace={kgvp_marketplace}")
                 
                 # Точное совпадение
                 if (parent_name == category and subject_name == subject):
-                    commission_percent = float(kgvp_marketplace) if kgvp_marketplace is not None else 0.0
+                    commission_percent = float(percent_value) if percent_value is not None else 0.0
                     commission_amount = (total_price * commission_percent) / 100
-                    
+                    # logger.info(f"Commission match ({commission_field}) for {category}/{subject}: {commission_percent}% -> {commission_amount}₽")
                     # logger.info(f"Found exact match: {category}/{subject} -> {commission_percent}% = {commission_amount}₽")
                     return commission_percent, commission_amount
                 
                 # Нечеткое совпадение по предмету (если категории совпадают)
                 if (parent_name == category and subject_name and subject and 
                     (subject_name.lower() in subject.lower() or subject.lower() in subject_name.lower())):
-                    commission_percent = float(kgvp_marketplace) if kgvp_marketplace is not None else 0.0
+                    commission_percent = float(percent_value) if percent_value is not None else 0.0
                     commission_amount = (total_price * commission_percent) / 100
                     
                     # logger.info(f"Found fuzzy match: {category}/{subject} ~ {parent_name}/{subject_name} -> {commission_percent}% = {commission_amount}₽")
@@ -786,11 +973,11 @@ class WBSyncService:
                     continue
                 
                 parent_name = commission.get("parentName")
-                kgvp_marketplace = commission.get("kgvpMarketplace")
+                percent_value = commission.get(commission_field)
                 
                 # Точное совпадение по категории
                 if parent_name == category:
-                    commission_percent = float(kgvp_marketplace) if kgvp_marketplace is not None else 0.0
+                    commission_percent = float(percent_value) if percent_value is not None else 0.0
                     commission_amount = (total_price * commission_percent) / 100
                     
                     # logger.info(f"Found exact category match: {category} -> {commission_percent}% = {commission_amount}₽")
@@ -799,7 +986,7 @@ class WBSyncService:
                 # Нечеткое совпадение по категории
                 if (parent_name and category and 
                     (parent_name.lower() in category.lower() or category.lower() in parent_name.lower())):
-                    commission_percent = float(kgvp_marketplace) if kgvp_marketplace is not None else 0.0
+                    commission_percent = float(percent_value) if percent_value is not None else 0.0
                     commission_amount = (total_price * commission_percent) / 100
                     
                     # logger.info(f"Found fuzzy category match: {category} ~ {parent_name} -> {commission_percent}% = {commission_amount}₽")
@@ -933,156 +1120,7 @@ class WBSyncService:
             logger.error(f"Failed to update product ratings: {e}")
             return {"status": "error", "error_message": str(e)}
 
-    async def _send_new_order_notification(self, cabinet: WBCabinet, order_data: Dict[str, Any], order: WBOrder):
-        """Отправка уведомления о новом заказе"""
-        try:
-            # Импортируем WebhookSender здесь, чтобы избежать циклического импорта
-            from app.features.bot_api.webhook import WebhookSender
-            
-            # Получаем пользователя кабинета
-            user = self.db.query(User).filter(User.id == cabinet.user_id).first()
-            if not user:
-                logger.warning(f"User not found for cabinet {cabinet.id}")
-                return
-            
-            # Формируем данные для уведомления (полные данные как в детальном просмотре)
-            today_stats = await self._get_today_stats(cabinet)
-            stocks = await self._get_order_stocks(cabinet, order.nm_id)
-            
-            # Получаем данные о товаре (рейтинг, отзывы)
-            product = self.db.query(WBProduct).filter(
-                and_(
-                    WBProduct.cabinet_id == order.cabinet_id,
-                    WBProduct.nm_id == order.nm_id
-                )
-            ).first()
-            
-            # Получаем остатки товара по размерам
-            stocks_data = self.db.query(WBStock).filter(
-                and_(
-                    WBStock.cabinet_id == order.cabinet_id,
-                    WBStock.nm_id == order.nm_id
-                )
-            ).all()
-            
-            # Формируем остатки по размерам
-            stocks_dict = {}
-            stock_days_dict = {}
-            for stock in stocks_data:
-                size = stock.size or "ONE SIZE"
-                quantity = stock.quantity or 0
-                stocks_dict[size] = quantity
-                # Рассчитываем дни на основе остатков и скорости продаж
-                stock_days_dict[size] = 0  # Пока заглушка, можно добавить расчет
-            
-            # Получаем статистику отзывов для товара
-            reviews_count = self.db.query(WBReview).filter(
-                and_(
-                    WBReview.cabinet_id == order.cabinet_id,
-                    WBReview.nm_id == order.nm_id
-                )
-            ).count()
-            
-            # Получаем статистику продаж для товара
-            try:
-                product_stats = await self._get_product_statistics(cabinet.id, order.nm_id)
-            except Exception as e:
-                logger.error(f"Ошибка получения статистики товара: {e}")
-                product_stats = {"buyout_rates": {}, "order_speed": {}, "sales_periods": {}}
-            
-            notification_data = {
-                # Основная информация
-                "id": order.id,
-                "order_id": order.order_id,
-                "date": order.order_date.isoformat() if order.order_date else datetime.now(timezone.utc).isoformat(),
-                "amount": float(order.total_price or 0),
-                "product_name": order.name or "Неизвестно",
-                "brand": order.brand or "Неизвестно",
-                "warehouse_from": order.warehouse_from or "Неизвестно",
-                "warehouse_to": order.warehouse_to or "Неизвестно",
-                
-                # Дополнительные поля заказа
-                "nm_id": order.nm_id,
-                "article": order.article,
-                "size": order.size,
-                "barcode": order.barcode,
-                "supplier_article": order.article,  # Используем article как supplier_article
-                "quantity": order.quantity,
-                "price": order.price,
-                "total_price": order.total_price,
-                "order_date": order.order_date.isoformat() if order.order_date else None,
-                "status": order.status,
-                
-                # Финансовая информация
-                "commission_percent": order.commission_percent or 0.0,
-                "commission_amount": order.commission_amount or 0.0,
-                "spp_percent": order.spp_percent or 0.0,
-                "customer_price": order.customer_price or 0.0,
-                "discount_percent": order.discount_percent or 0.0,
-                "logistics_amount": order.logistics_amount or 0.0,
-                
-                # Логистика (поля не существуют в модели WBOrder)
-                "dimensions": "",
-                "volume_liters": 0,
-                "warehouse_rate_per_liter": 0,
-                "warehouse_rate_extra": 0,
-                
-                # Рейтинги и отзывы
-                "rating": product.rating if product else 0.0,
-                "reviews_count": reviews_count,
-                
-                # Статистика
-                "buyout_rates": product_stats["buyout_rates"],
-                "order_speed": product_stats["order_speed"],
-                "sales_periods": product_stats["sales_periods"],
-                "category_availability": "",
-                
-                # Остатки
-                "stocks": stocks_dict,
-                "stock_days": stock_days_dict,
-                
-                # Дополнительные данные
-                "today_stats": today_stats,
-                "stocks": stocks
-            }
-            
-            # Логируем данные, которые отправляются в бота
-            logger.info(f"📤 WEBHOOK DATA for user {user.telegram_id}:")
-            logger.info(f"   Order ID: {notification_data['order_id']}")
-            logger.info(f"   Amount: {notification_data['amount']}₽")
-            logger.info(f"   Product: {notification_data['product_name']}")
-            logger.info(f"   Brand: {notification_data['brand']}")
-            logger.info(f"   Route: {notification_data['warehouse_from']} → {notification_data['warehouse_to']}")
-            logger.info(f"   Today stats: {today_stats}")
-            logger.info(f"   Stocks: {stocks}")
-            logger.info(f"   Telegram ID: {user.telegram_id}")
-            logger.info(f"   Cabinet ID: {cabinet.id}")
-            
-            # URL бота для webhook
-            bot_webhook_url = f"http://bot-webhook:8001/webhook/notifications"
-            
-            # Создаем экземпляр WebhookSender
-            webhook_sender = WebhookSender()
-            
-            # Отправляем уведомление
-            result = await webhook_sender.send_new_order_notification(
-                telegram_id=user.telegram_id,
-                order_data=notification_data,
-                bot_webhook_url=bot_webhook_url
-            )
-            
-            if result.get("success"):
-                logger.info(f"✅ WEBHOOK SUCCESS: Order {order.order_id} notification sent to user {user.telegram_id}")
-                logger.info(f"   Attempts: {result.get('attempts', 'N/A')}")
-                logger.info(f"   Status: {result.get('status', 'N/A')}")
-            else:
-                logger.error(f"❌ WEBHOOK FAILED: Order {order.order_id} notification failed for user {user.telegram_id}")
-                logger.error(f"   Error: {result.get('error', 'Unknown error')}")
-                logger.error(f"   Attempts: {result.get('attempts', 'N/A')}")
-                logger.error(f"   Status: {result.get('status', 'N/A')}")
-                
-        except Exception as e:
-            logger.error(f"Error sending new order notification: {e}")
+    # Webhook уведомления удалены - теперь используется только polling система
 
     async def _get_today_stats(self, cabinet: WBCabinet) -> Dict[str, Any]:
         """Получение статистики за сегодня"""
@@ -1219,3 +1257,245 @@ class WBSyncService:
             logger.error(f"Error checking notification eligibility: {e}")
             # В случае ошибки не отправляем уведомления
             return False
+
+    async def sync_sales(
+        self, 
+        cabinet: WBCabinet, 
+        client: WBAPIClient, 
+        date_from: str, 
+        date_to: str,
+        should_notify: bool = False
+    ) -> Dict[str, Any]:
+        """Синхронизация продаж и возвратов"""
+        try:
+            logger.info(f"Starting sales sync for cabinet {cabinet.id}")
+            
+            # Получаем данные продаж из WB API
+            # Для уменьшения нагрузки: после первичной загрузки используем узкое окно и инкрементальный флаг
+            sales_data = await client.get_sales(date_from, flag=1)
+            
+            if not sales_data:
+                logger.warning(f"No sales data received for cabinet {cabinet.id}")
+                return {"status": "success", "records_processed": 0, "records_created": 0}
+            
+            # Импортируем CRUD для продаж
+            from .crud_sales import WBSalesCRUD
+            sales_crud = WBSalesCRUD()
+            
+            records_processed = 0
+            records_created = 0
+            
+            for sale_item in sales_data:
+                try:
+                    # Определяем тип продажи (выкуп или возврат)
+                    sale_type = "buyout"  # По умолчанию выкуп
+                    
+                    # Проверяем, является ли это возвратом
+                    # В WB API возвраты определяются по:
+                    # 1. Отрицательным суммам (totalPrice < 0)
+                    # 2. Префиксу saleID (начинается с "R")
+                    # 3. Полю isCancel = true
+                    total_price = float(sale_item.get("totalPrice", 0))
+                    sale_id = str(sale_item.get("srid", ""))
+                    is_cancel = bool(sale_item.get("isCancel", False))
+                    
+                    if (total_price < 0 or 
+                        sale_id.startswith("R") or 
+                        is_cancel):
+                        sale_type = "return"
+                    
+                    # Подготавливаем данные для сохранения
+                    sale_data = {
+                        "cabinet_id": cabinet.id,
+                        "sale_id": str(sale_item.get("srid", "")),
+                        "order_id": str(sale_item.get("orderId", "")),
+                        "nm_id": sale_item.get("nmId", 0),
+                        "product_name": sale_item.get("subject", ""),
+                        "brand": sale_item.get("brand", ""),
+                        "size": sale_item.get("techSize", ""),
+                        "amount": float(sale_item.get("totalPrice", 0)),
+                        "sale_date": self._parse_wb_date(sale_item.get("date")),
+                        "type": sale_type,
+                        "status": "completed",
+                        "is_cancel": bool(sale_item.get("isCancel", False)),
+                        "last_change_date": self._parse_wb_date(sale_item.get("lastChangeDate"))
+                    }
+                    
+                    # Проверяем, существует ли уже такая запись
+                    existing_sale = sales_crud.get_sale_by_sale_id(self.db, cabinet.id, sale_data["sale_id"])
+                    
+                    if not existing_sale:
+                        # Создаем новую запись
+                        sales_crud.create_sale(self.db, sale_data)
+                        records_created += 1
+                        
+                        # Если нужно отправлять уведомления, обрабатываем новую продажу
+                        if should_notify:
+                            await self._process_sale_notification(cabinet, sale_data)
+                    
+                    records_processed += 1
+                    
+                except Exception as e:
+                    logger.error(f"Error processing sale item: {e}")
+                    continue
+            
+            logger.info(f"Sales sync completed for cabinet {cabinet.id}: {records_processed} processed, {records_created} created")
+            
+            return {
+                "status": "success",
+                "records_processed": records_processed,
+                "records_created": records_created
+            }
+            
+        except Exception as e:
+            logger.error(f"Sales sync failed for cabinet {cabinet.id}: {e}")
+            return {"status": "error", "error_message": str(e)}
+
+    async def sync_claims(
+        self, 
+        cabinet: WBCabinet, 
+        client: WBAPIClient, 
+        should_notify: bool = False
+    ) -> Dict[str, Any]:
+        """Синхронизация возвратов покупателей (Claims API)"""
+        try:
+            logger.info(f"Starting claims sync for cabinet {cabinet.id}")
+            
+            # Получаем активные и архивные возвраты
+            active_claims = await client.get_claims(is_archive=False)
+            archive_claims = await client.get_claims(is_archive=True)
+            
+            all_claims = active_claims + archive_claims
+            logger.info(f"Received {len(all_claims)} total claims for cabinet {cabinet.id}")
+            
+            if not all_claims:
+                return {
+                    "status": "success",
+                    "records_processed": 0,
+                    "records_created": 0,
+                    "records_updated": 0,
+                    "records_errors": 0,
+                    "message": "No claims data to sync"
+                }
+            
+            from .crud_sales import WBSalesCRUD
+            sales_crud = WBSalesCRUD()
+            
+            records_processed = 0
+            records_created = 0
+            records_updated = 0
+            records_errors = 0
+            
+            for claim in all_claims:
+                try:
+                    records_processed += 1
+                    
+                    # Подготавливаем данные для сохранения
+                    claim_data = {
+                        "cabinet_id": cabinet.id,
+                        "sale_id": str(claim.get("srid", "")),
+                        "order_id": str(claim.get("order_dt", "")),
+                        "nm_id": claim.get("nm_id", 0),
+                        "product_name": claim.get("imt_name", ""),
+                        "brand": "",  # В Claims API нет бренда
+                        "size": "",   # В Claims API нет размера
+                        "amount": float(claim.get("price", 0)),
+                        "sale_date": self._parse_wb_date(claim.get("dt")),
+                        "type": "return",  # Все Claims - это возвраты
+                        "status": "completed" if claim.get("status") == 2 else "pending",
+                        "is_cancel": claim.get("status") == 1,  # status=1 означает отклонение
+                        "last_change_date": self._parse_wb_date(claim.get("dt_update"))
+                    }
+                    
+                    # Проверяем, существует ли уже такая запись
+                    existing_sale = sales_crud.get_sale_by_sale_id(self.db, cabinet.id, claim_data["sale_id"])
+                    
+                    if existing_sale:
+                        # Обновляем существующую запись
+                        for key, value in claim_data.items():
+                            if key != "cabinet_id" and key != "sale_id":
+                                setattr(existing_sale, key, value)
+                        records_updated += 1
+                    else:
+                        # Создаем новую запись
+                        sales_crud.create_sale(self.db, claim_data)
+                        records_created += 1
+                    
+                except Exception as e:
+                    records_errors += 1
+                    logger.error(f"Error processing claim {claim.get('id', 'unknown')}: {e}")
+                    continue
+            
+            # Логируем результат синхронизации
+            logger.info(f"Claims sync completed for cabinet {cabinet.id}: "
+                       f"{records_created} created, {records_updated} updated, {records_errors} errors")
+            
+            return {
+                "status": "success",
+                "records_processed": records_processed,
+                "records_created": records_created,
+                "records_updated": records_updated,
+                "records_errors": records_errors,
+                "message": f"Claims sync completed: {records_created} created, {records_updated} updated, {records_errors} errors"
+            }
+            
+        except Exception as e:
+            logger.error(f"Error syncing claims for cabinet {cabinet.id}: {e}")
+            return {
+                "status": "error",
+                "error": str(e),
+                "message": f"Claims sync failed: {str(e)}"
+            }
+    
+    async def _process_sale_notification(self, cabinet: WBCabinet, sale_data: Dict[str, Any]):
+        """Обработка уведомления о новой продаже/возврате"""
+        try:
+            # Импортируем NotificationService
+            from app.features.notifications.notification_service import NotificationService
+            
+            notification_service = NotificationService(self.db, self.cache_manager)
+            
+            # Получаем пользователя
+            # user_id у кабинета более не используется напрямую
+            from app.features.wb_api.crud_cabinet_users import CabinetUserCRUD
+            cabinet_user_crud = CabinetUserCRUD()
+            user_ids = cabinet_user_crud.get_cabinet_users(self.db, cabinet.id)
+            user = self.db.query(User).filter(User.id.in_(user_ids)).first() if user_ids else None
+            if not user:
+                logger.warning(f"User not found for cabinet {cabinet.id}")
+                return
+            
+            # Определяем тип уведомления
+            notification_type = "order_buyout" if sale_data["type"] == "buyout" else "order_return"
+            
+            # Создаем данные для уведомления
+            notification_data = {
+                "order_id": sale_data["order_id"],
+                "product_name": sale_data["product_name"],
+                "amount": sale_data["amount"],
+                "type": sale_data["type"],
+                "sale_date": sale_data["sale_date"].isoformat() if sale_data["sale_date"] else None
+            }
+            
+            # Webhook удален - уведомления отправляются через polling
+            result = {"success": True, "message": "Notification queued for polling"}
+            
+            if result.get("success"):
+                logger.info(f"Sale notification sent for cabinet {cabinet.id}, sale {sale_data['sale_id']}")
+            else:
+                logger.warning(f"Failed to send sale notification: {result.get('error')}")
+                
+        except Exception as e:
+            logger.error(f"Error processing sale notification: {e}")
+    
+    def _parse_wb_date(self, date_str: str) -> Optional[datetime]:
+        """Парсинг даты из WB API"""
+        if not date_str:
+            return None
+        
+        try:
+            # WB API возвращает даты в формате "2025-01-28T12:00:00"
+            return datetime.fromisoformat(date_str.replace('Z', '+00:00'))
+        except Exception as e:
+            logger.error(f"Error parsing date {date_str}: {e}")
+            return None

@@ -30,29 +30,15 @@ class BotConfig:
     # Retry настройки
     max_retries: int = 3
     retry_delay: float = 1.0
-    request_timeout: int = 30
+    request_timeout: int = 300  # 5 минут для синхронизации
     
     # Уведомления
     enable_notifications: bool = True
     notification_retry_attempts: int = 5
-
-    # OpenAI (LLM)
-    openai_api_key: Optional[str] = None
-    openai_base_url: Optional[str] = None
-    openai_model: str = "gpt-4o-mini"
-    openai_temperature: float = 0.2
-    openai_max_tokens: int = 800
-    openai_timeout: int = 30
-    openai_system_prompt: Optional[str] = None
     
-    # Google Sheets
-    gs_enabled: bool = False
-    gs_auth_method: str = "oauth"  # 'oauth' или 'service_account'
-    gs_spreadsheet_id: Optional[str] = None
-    gs_spreadsheet_title: str = "WB Assist LLM Export"
-    gs_credentials_path: str = "config/credentials.json"
-    gs_token_path: str = "config/token.json"
-    gs_oauth_port: int = 8080
+    # Polling настройки
+    polling_interval: int = 60  # Интервал polling в секундах
+    
     def __post_init__(self):
         """Валидация конфигурации после инициализации"""
         if not self.bot_token:
@@ -78,22 +64,7 @@ def load_config() -> BotConfig:
         request_timeout=int(os.getenv("REQUEST_TIMEOUT", "30")),
         enable_notifications=os.getenv("ENABLE_NOTIFICATIONS", "true").lower() == "true",
         notification_retry_attempts=int(os.getenv("NOTIFICATION_RETRY_ATTEMPTS", "5")),
-        # OpenAI (LLM)
-        openai_api_key=os.getenv("OPENAI_API_KEY"),
-        openai_base_url=os.getenv("OPENAI_BASE_URL"),
-        openai_model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
-        openai_temperature=float(os.getenv("OPENAI_TEMPERATURE", "0.2")),
-        openai_max_tokens=int(os.getenv("OPENAI_MAX_TOKENS", "800")),
-        openai_timeout=int(os.getenv("OPENAI_TIMEOUT", "30")),
-        openai_system_prompt=os.getenv("OPENAI_SYSTEM_PROMPT"),
-        # Google Sheets
-        gs_enabled=os.getenv("GS_ENABLED", "false").lower() == "true",
-        gs_auth_method=os.getenv("GS_AUTH_METHOD", "oauth"),
-        gs_spreadsheet_id=os.getenv("GS_SPREADSHEET_ID"),
-        gs_spreadsheet_title=os.getenv("GS_SPREADSHEET_TITLE", "WB Assist LLM Export"),
-        gs_credentials_path=os.getenv("GS_CREDENTIALS_PATH", "config/credentials.json"),
-        gs_token_path=os.getenv("GS_TOKEN_PATH", "config/token.json"),
-        gs_oauth_port=int(os.getenv("GS_OAUTH_PORT", "8080"))
+        polling_interval=int(os.getenv("POLLING_INTERVAL", "60"))
     )
 
 

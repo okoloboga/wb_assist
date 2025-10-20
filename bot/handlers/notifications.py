@@ -1,4 +1,5 @@
 import sys
+import logging
 from pathlib import Path
 
 # Добавляем путь к модулям бота
@@ -9,9 +10,12 @@ from aiogram.types import CallbackQuery, Message, InlineKeyboardMarkup, InlineKe
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 
+logger = logging.getLogger(__name__)
+
 from core.states import NotificationStates
 from core.config import config
 from keyboards.keyboards import wb_menu_keyboard, main_keyboard, create_notification_keyboard
+from api.client import bot_api_client
 from utils.formatters import format_error_message, format_stocks_summary
 
 router = Router()
@@ -44,58 +48,72 @@ async def show_notifications_menu(callback: CallbackQuery):
 
 @router.callback_query(F.data == "settings_notifications")
 async def show_notification_settings(callback: CallbackQuery, state: FSMContext):
-    """Показать настройки уведомлений"""
+    """Показать настройки уведомлений (с сервера)"""
     await state.set_state(NotificationStates.settings_menu)
-    
+
+    user_id = callback.from_user.id
+    response = await bot_api_client.get_notification_settings(user_id)
+
+    if response.success and response.data:
+        settings = response.data.get("data", response.data)  # APIResponse wraps data
+        await callback.message.edit_text(
+            "🔔 НАСТРОЙКИ УВЕДОМЛЕНИЙ\n\n"
+            "Нажмите на тип уведомления для переключения:\n\n"
+            "✅ Вкл | ❌ Выкл",
+            reply_markup=create_notification_keyboard(settings)
+        )
+    else:
+        await callback.message.edit_text(
+            f"❌ Не удалось получить настройки уведомлений.\n\n{response.error or ''}",
+            reply_markup=wb_menu_keyboard()
+        )
+    await callback.answer()
+
+
+async def _toggle_and_refresh(callback: CallbackQuery, key: str):
+    """Вспомогательная: инвертировать флаг key и перерисовать меню"""
+    user_id = callback.from_user.id
+    # Получаем текущие настройки
+    current = await bot_api_client.get_notification_settings(user_id)
+    settings = current.data.get("data", current.data) if current.success and current.data else {}
+    current_value = bool(settings.get(key, False))
+    # Отправляем обновление
+    update = {key: not current_value}
+    upd_resp = await bot_api_client.update_notification_settings(user_id, update)
+    if not upd_resp.success:
+        await callback.answer(f"❌ Ошибка обновления: {upd_resp.error or upd_resp.status_code}", show_alert=True)
+        return
+    # Получаем обновлённые
+    refreshed = await bot_api_client.get_notification_settings(user_id)
+    new_settings = refreshed.data.get("data", refreshed.data) if refreshed.success and refreshed.data else settings
+    # Обновляем текст/клавиатуру
     await callback.message.edit_text(
         "🔔 НАСТРОЙКИ УВЕДОМЛЕНИЙ\n\n"
-        "Выберите типы уведомлений, которые хотите получать:\n\n"
-        "✅ Включено\n"
-        "❌ Выключено\n\n"
-        "Нажмите на тип уведомления для переключения:",
-        reply_markup=create_notification_keyboard()
+        "Нажмите на тип уведомления для переключения:\n\n"
+        "✅ Вкл | ❌ Выкл",
+        reply_markup=create_notification_keyboard(new_settings)
     )
     await callback.answer()
 
 
-@router.callback_query(F.data == "toggle_orders_notifications")
-async def toggle_orders_notifications(callback: CallbackQuery):
-    """Переключить уведомления о заказах"""
-    # TODO: Реализовать переключение через API
-    await callback.answer(
-        "⚠️ Функция переключения уведомлений будет доступна в следующей версии",
-        show_alert=True
-    )
+@router.callback_query(F.data == "toggle_notif_new_orders")
+async def toggle_notif_new_orders(callback: CallbackQuery):
+    await _toggle_and_refresh(callback, "new_orders_enabled")
 
 
-@router.callback_query(F.data == "toggle_stocks_notifications")
-async def toggle_stocks_notifications(callback: CallbackQuery):
-    """Переключить уведомления об остатках"""
-    # TODO: Реализовать переключение через API
-    await callback.answer(
-        "⚠️ Функция переключения уведомлений будет доступна в следующей версии",
-        show_alert=True
-    )
+@router.callback_query(F.data == "toggle_notif_critical_stocks")
+async def toggle_notif_critical_stocks(callback: CallbackQuery):
+    await _toggle_and_refresh(callback, "critical_stocks_enabled")
 
 
-@router.callback_query(F.data == "toggle_reviews_notifications")
-async def toggle_reviews_notifications(callback: CallbackQuery):
-    """Переключить уведомления об отзывах"""
-    # TODO: Реализовать переключение через API
-    await callback.answer(
-        "⚠️ Функция переключения уведомлений будет доступна в следующей версии",
-        show_alert=True
-    )
+@router.callback_query(F.data == "toggle_notif_negative_reviews")
+async def toggle_notif_negative_reviews(callback: CallbackQuery):
+    await _toggle_and_refresh(callback, "negative_reviews_enabled")
 
 
-@router.callback_query(F.data == "toggle_sync_notifications")
-async def toggle_sync_notifications(callback: CallbackQuery):
-    """Переключить уведомления о синхронизации"""
-    # TODO: Реализовать переключение через API
-    await callback.answer(
-        "⚠️ Функция переключения уведомлений будет доступна в следующей версии",
-        show_alert=True
-    )
+@router.callback_query(F.data == "toggle_notif_grouping")
+async def toggle_notif_grouping(callback: CallbackQuery):
+    await _toggle_and_refresh(callback, "grouping_enabled")
 
 
 @router.callback_query(F.data == "test_notification")
@@ -125,29 +143,7 @@ async def cmd_notifications(message: Message, state: FSMContext):
     )
 
 
-# Webhook обработчики для получения уведомлений от сервера
-@router.message()
-async def handle_webhook_notification(message: Message):
-    """Обработать уведомление от webhook"""
-    # Проверяем, является ли сообщение уведомлением от сервера
-    if hasattr(message, 'web_app_data') and message.web_app_data:
-        try:
-            import json
-            data = json.loads(message.web_app_data.data)
-            
-            if data.get("type") == "new_order":
-                await handle_new_order_notification(message, data)
-            elif data.get("type") == "critical_stocks":
-                await handle_critical_stocks_notification(message, data)
-            elif data.get("type") == "new_review":
-                await handle_new_review_notification(message, data)
-            elif data.get("type") == "sync_completed":
-                await handle_sync_completed_notification(message, data)
-                
-        except (json.JSONDecodeError, KeyError) as e:
-            logger.error(f"Ошибка обработки webhook уведомления: {e}")
-
-
+# Polling обработчики для получения уведомлений от сервера
 async def handle_new_order_notification(message: Message, data: dict):
     """Обработать уведомление о новом заказе"""
     order_data = data.get("data", {})
@@ -269,3 +265,75 @@ async def handle_sync_completed_notification(message: Message, data: dict):
     text += "\n💡 Данные обновлены и готовы к использованию"
     
     await message.answer(text)
+
+
+async def handle_cabinet_removal_notification(telegram_id: int, data: dict):
+    """Обработать уведомление об удалении кабинета"""
+    try:
+        # Импортируем бота из основного модуля
+        import sys
+        from pathlib import Path
+        sys.path.insert(0, str(Path(__file__).parent.parent))
+        
+        from core.config import config
+        from aiogram import Bot
+        
+        # Создаем экземпляр бота
+        bot = Bot(token=config.bot_token)
+        
+        from keyboards.keyboards import create_cabinet_removal_keyboard
+        from utils.formatters import format_datetime
+        
+        cabinet_id = data.get('cabinet_id', 'N/A')
+        cabinet_name = data.get('cabinet_name', 'Неизвестный кабинет')
+        removal_reason = data.get('removal_reason', 'Неизвестная причина')
+        removal_timestamp = data.get('removal_timestamp', '')
+        validation_error = data.get('validation_error', {})
+        
+        # Форматируем время удаления
+        if removal_timestamp:
+            try:
+                from datetime import datetime
+                dt = datetime.fromisoformat(removal_timestamp.replace('Z', '+00:00'))
+                formatted_time = dt.strftime('%d.%m.%Y %H:%M')
+            except:
+                formatted_time = removal_timestamp
+        else:
+            formatted_time = 'Неизвестно'
+        
+        # Формируем сообщение
+        text = "🚨 КАБИНЕТ УДАЛЕН\n\n"
+        text += f"Кабинет \"{cabinet_name}\" был автоматически удален из-за недействительного API ключа.\n\n"
+        text += f"**Причина:** {removal_reason}\n"
+        text += f"**Время удаления:** {formatted_time}\n\n"
+        
+        # Добавляем детали ошибки валидации, если есть
+        if validation_error and validation_error.get('message'):
+            text += f"**Детали ошибки:** {validation_error['message']}\n\n"
+        
+        text += "Для продолжения работы подключите новый кабинет с действующим API ключом."
+        
+        # Создаем клавиатуру
+        keyboard = create_cabinet_removal_keyboard()
+        
+        # Отправляем уведомление пользователю
+        await bot.send_message(
+            chat_id=telegram_id,
+            text=text,
+            reply_markup=keyboard,
+            parse_mode="Markdown"
+        )
+        
+        logger.info(f"✅ Cabinet removal notification sent to user {telegram_id}")
+        
+        # Закрываем сессию бота
+        await bot.session.close()
+        
+    except Exception as e:
+        logger.error(f"Error sending cabinet removal notification to user {telegram_id}: {e}")
+        # Закрываем сессию бота в случае ошибки
+        try:
+            await bot.session.close()
+        except:
+            pass
+        raise

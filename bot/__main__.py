@@ -24,7 +24,7 @@ from handlers.analytics import router as analytics_router
 from handlers.sync import router as sync_router
 from handlers.notifications import router as notifications_router
 from handlers.prices import router as prices_router
-from handlers.gpt import router as gpt_router
+from handlers.polling import start_notification_polling, stop_notification_polling
 from keyboards.keyboards import main_keyboard, wb_menu_keyboard
 
 # Настройка логирования
@@ -62,13 +62,18 @@ dp.include_router(analytics_router)
 dp.include_router(sync_router)
 dp.include_router(notifications_router)
 dp.include_router(prices_router)
-dp.include_router(gpt_router)
 
 async def main():
     logger.info("Bot started...")
     try:
+        # Запускаем polling уведомлений в фоне
+        polling_task = asyncio.create_task(start_notification_polling(bot))
+        
+        # Запускаем основной бот
         await dp.start_polling(bot)
     finally:
+        # Останавливаем polling
+        await stop_notification_polling()
         await bot.session.close()
 
 

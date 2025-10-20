@@ -31,7 +31,13 @@ class UserCRUD:
             self.db.add(user)
             self.db.commit()
             self.db.refresh(user)
-            logger.info(f"Создан пользователь: {user_data.telegram_id}")
+            
+            # Автоматически создаем настройки уведомлений по умолчанию
+            from app.features.notifications.crud import NotificationSettingsCRUD
+            settings_crud = NotificationSettingsCRUD()
+            settings_crud.create_default_settings(self.db, user.id)
+            logger.info(f"Создан пользователь: {user_data.telegram_id} с настройками уведомлений")
+            
             return user
         except Exception as e:
             self.db.rollback()
@@ -79,7 +85,7 @@ class UserCRUD:
             )
             return existing_user, False
         else:
-            # Создаем нового пользователя
+            # Создаем нового пользователя (настройки уже создаются в create_user)
             new_user = self.create_user(user_data)
             logger.info(f"Создан новый пользователь: {user_data.telegram_id}")
             return new_user, True
