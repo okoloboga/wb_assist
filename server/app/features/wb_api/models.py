@@ -5,26 +5,31 @@ from datetime import datetime, timezone
 # Используем Base из database.py
 from ...core.database import Base
 
+# Импортируем WBSales для связи
+from .models_sales import WBSales
+from .models_cabinet_users import CabinetUser
+
 
 class WBCabinet(Base):
     """Модель WB кабинета"""
     __tablename__ = "wb_cabinets"
 
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, nullable=False, index=True)  # Убрали ForeignKey
-    api_key = Column(String(500), nullable=False)
+    api_key = Column(String(500), nullable=False, unique=True)  # Уникальный API ключ
     name = Column(String(255), nullable=True)
     is_active = Column(Boolean, default=True, nullable=False)
     last_sync_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
-    # Связи (убрали user)
+    # Связи
     products = relationship("WBProduct", back_populates="cabinet")
     orders = relationship("WBOrder", back_populates="cabinet")
     stocks = relationship("WBStock", back_populates="cabinet")
     reviews = relationship("WBReview", back_populates="cabinet")
+    sales = relationship("WBSales", back_populates="cabinet")
     analytics_cache = relationship("WBAnalyticsCache", back_populates="cabinet")
+    cabinet_users = relationship("CabinetUser", back_populates="cabinet")
 
     def __repr__(self):
         return f"<WBCabinet {self.id} - {self.name}>"

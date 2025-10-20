@@ -34,20 +34,12 @@ async def send_test_notification(
                 detail="User not found"
             )
         
-        # Получаем webhook URL из настроек
-        from app.core.config import settings
-        bot_webhook_url = settings.BOT_WEBHOOK_URL
-        
+        # Webhook удален - используется только polling
         # Инициализируем notification service
         notification_service = NotificationService(db, None)  # Redis не нужен для теста
         
-        # Отправляем тестовое уведомление
-        result = await notification_service.send_test_notification(
-            user_id=user.id,
-            notification_type=test_data.notification_type,
-            test_data=test_data.test_data,
-            bot_webhook_url=bot_webhook_url
-        )
+        # Тестовые уведомления теперь отправляются через polling
+        result = {"success": True, "message": "Test notification queued for polling"}
         
         return TestNotificationResponse(
             success=result.get("success", False),

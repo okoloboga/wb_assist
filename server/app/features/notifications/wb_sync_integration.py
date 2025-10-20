@@ -31,19 +31,15 @@ class WBSyncNotificationIntegration:
     ) -> Dict[str, Any]:
         """Обработка уведомлений после синхронизации данных"""
         try:
-            # Получаем webhook URL пользователя
+            # Webhook удален - используется только polling
+            # Получаем пользователя
             from app.features.user.models import User
             user = self.db.query(User).filter(User.id == cabinet.user_id).first()
             if not user:
                 logger.warning(f"User not found for cabinet {cabinet.id}")
                 return {"status": "error", "error": "User not found"}
             
-            bot_webhook_url = getattr(user, 'bot_webhook_url', None)
-            if not bot_webhook_url:
-                logger.warning(f"Bot webhook URL not found for user {user.id}")
-                return {"status": "error", "error": "Bot webhook URL not found"}
-            
-            # Обрабатываем события через NotificationService
+            # Обрабатываем события через NotificationService (без webhook)
             result = await self.notification_service.process_sync_events(
                 user_id=user.id,
                 cabinet_id=cabinet.id,
@@ -52,8 +48,7 @@ class WBSyncNotificationIntegration:
                 current_reviews=current_reviews or [],
                 previous_reviews=previous_reviews or [],
                 current_stocks=current_stocks or [],
-                previous_stocks=previous_stocks or [],
-                bot_webhook_url=bot_webhook_url
+                previous_stocks=previous_stocks or []
             )
             
             logger.info(f"NotificationService processed {result.get('notifications_sent', 0)} notifications for cabinet {cabinet.id}")
@@ -158,3 +153,143 @@ class WBSyncNotificationIntegration:
                 return await original_method(cabinet, *args, **kwargs)
         
         return wrapper
+    
+    async def process_sales_notifications(
+        self,
+        cabinet: WBCabinet,
+        current_sales: List[Dict[str, Any]] = None,
+        previous_sales: List[Dict[str, Any]] = None,
+        bot_webhook_url: str = None
+    ) -> Dict[str, Any]:
+        """Обработка уведомлений о продажах и возвратах"""
+        try:
+            if not current_sales:
+                current_sales = []
+            if not previous_sales:
+                previous_sales = []
+            
+            # Получаем webhook URL
+            if not bot_webhook_url:
+                from app.core.config import settings
+                bot_webhook_url = settings.BOT_WEBHOOK_URL
+            
+            # Обрабатываем события продаж
+            notifications_sent = await self.notification_service.process_sales_events(
+                user_id=cabinet.user_id,
+                cabinet_id=cabinet.id,
+                current_sales=current_sales,
+                previous_sales=previous_sales,
+                bot_webhook_url=bot_webhook_url
+            )
+            
+            logger.info(f"Sales notifications processed for cabinet {cabinet.id}: {notifications_sent} sent")
+            
+            return {
+                "status": "success",
+                "notifications_sent": notifications_sent,
+                "sales_processed": len(current_sales)
+            }
+            
+        except Exception as e:
+            logger.error(f"Error processing sales notifications for cabinet {cabinet.id}: {e}")
+            return {
+                "status": "error",
+                "error_message": str(e),
+                "notifications_sent": 0
+            }
+    
+    async def send_new_buyout_notification(
+        self,
+        cabinet: WBCabinet,
+        buyout_data: Dict[str, Any],
+        bot_webhook_url: str = None
+    ) -> Dict[str, Any]:
+        """Отправка уведомления о новом выкупе"""
+        try:
+            if not bot_webhook_url:
+                from app.core.config import settings
+                bot_webhook_url = settings.BOT_WEBHOOK_URL
+            
+            # Создаем событие выкупа
+            event = {
+                "type": "new_buyout",
+                "user_id": cabinet.user_id,
+                "sale_id": buyout_data.get("sale_id"),
+                "order_id": buyout_data.get("order_id"),
+                "product_name": buyout_data.get("product_name"),
+                "amount": buyout_data.get("amount"),
+                "sale_date": buyout_data.get("sale_date"),
+                "nm_id": buyout_data.get("nm_id"),
+                "brand": buyout_data.get("brand"),
+                "size": buyout_data.get("size")
+            }
+            
+            # Генерируем уведомление
+            notification = self.notification_service.notification_generator.generate_sales_notification(event)
+            
+            # Форматируем для Telegram
+            telegram_text = self.notification_service._format_sales_notification_for_telegram(notification)
+            
+            # Отправляем webhook
+            result = await self.notification_service._send_webhook_notification(
+                cabinet.user_id, notification, telegram_text, bot_webhook_url
+            )
+            
+            if result.get("success"):
+                logger.info(f"Buyout notification sent for cabinet {cabinet.id}, sale {buyout_data.get('sale_id')}")
+                return {"status": "success", "notification_sent": True}
+            else:
+                logger.warning(f"Failed to send buyout notification: {result.get('error')}")
+                return {"status": "error", "notification_sent": False, "error": result.get("error")}
+                
+        except Exception as e:
+            logger.error(f"Error sending buyout notification for cabinet {cabinet.id}: {e}")
+            return {"status": "error", "notification_sent": False, "error": str(e)}
+    
+    async def send_new_return_notification(
+        self,
+        cabinet: WBCabinet,
+        return_data: Dict[str, Any],
+        bot_webhook_url: str = None
+    ) -> Dict[str, Any]:
+        """Отправка уведомления о новом возврате"""
+        try:
+            if not bot_webhook_url:
+                from app.core.config import settings
+                bot_webhook_url = settings.BOT_WEBHOOK_URL
+            
+            # Создаем событие возврата
+            event = {
+                "type": "new_return",
+                "user_id": cabinet.user_id,
+                "sale_id": return_data.get("sale_id"),
+                "order_id": return_data.get("order_id"),
+                "product_name": return_data.get("product_name"),
+                "amount": return_data.get("amount"),
+                "sale_date": return_data.get("sale_date"),
+                "nm_id": return_data.get("nm_id"),
+                "brand": return_data.get("brand"),
+                "size": return_data.get("size")
+            }
+            
+            # Генерируем уведомление
+            notification = self.notification_service.notification_generator.generate_sales_notification(event)
+            
+            # Форматируем для Telegram
+            telegram_text = self.notification_service._format_sales_notification_for_telegram(notification)
+            
+            # Отправляем webhook
+            result = await self.notification_service._send_webhook_notification(
+                cabinet.user_id, notification, telegram_text, bot_webhook_url
+            )
+            
+            if result.get("success"):
+                logger.info(f"Return notification sent for cabinet {cabinet.id}, sale {return_data.get('sale_id')}")
+                return {"status": "success", "notification_sent": True}
+            else:
+                logger.warning(f"Failed to send return notification: {result.get('error')}")
+                return {"status": "error", "notification_sent": False, "error": result.get("error")}
+                
+        except Exception as e:
+            logger.error(f"Error sending return notification for cabinet {cabinet.id}: {e}")
+            return {"status": "error", "notification_sent": False, "error": str(e)}

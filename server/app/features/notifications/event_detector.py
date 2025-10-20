@@ -79,36 +79,7 @@ class EventDetector:
         
         return events
     
-    def detect_negative_reviews(
-        self, 
-        user_id: int, 
-        current_reviews: List[Dict[str, Any]], 
-        previous_reviews: List[Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
-        """Обнаружение негативных отзывов"""
-        events = []
-        
-        # Получаем ID существующих отзывов
-        previous_review_ids = {review["id"] for review in previous_reviews}
-        
-        # Находим новые негативные отзывы (оценка 1-3)
-        for review in current_reviews:
-            if (review["id"] not in previous_review_ids and 
-                review.get("rating", 5) <= 3):
-                
-                event = {
-                    "type": "negative_review",
-                    "user_id": user_id,
-                    "review_id": review["id"],
-                    "rating": review.get("rating", 0),
-                    "text": review.get("text", ""),
-                    "product_name": review.get("product_name", ""),
-                    "order_id": review.get("order_id"),
-                    "detected_at": datetime.now(timezone.utc)
-                }
-                events.append(event)
-        
-        return events
+    # detect_negative_reviews удален - используется только polling система
     
     def detect_critical_stocks(
         self, 
@@ -181,3 +152,77 @@ class EventDetector:
     def _get_zero_sizes(self, stocks: Dict[str, int]) -> List[str]:
         """Получение размеров с нулевым остатком"""
         return [size for size, quantity in stocks.items() if quantity == 0]
+    
+    def detect_sales_changes(
+        self,
+        user_id: int,
+        current_sales: List[Dict[str, Any]],
+        previous_sales: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """Обнаружение изменений в продажах и возвратах"""
+        events = []
+        
+        # Получаем ID существующих продаж
+        previous_sale_ids = {sale["sale_id"] for sale in previous_sales}
+        
+        # Находим новые продажи
+        for sale in current_sales:
+            if sale["sale_id"] not in previous_sale_ids:
+                event_type = "new_buyout" if sale["type"] == "buyout" else "new_return"
+                event = {
+                    "type": event_type,
+                    "user_id": user_id,
+                    "sale_id": sale["sale_id"],
+                    "order_id": sale.get("order_id"),
+                    "product_name": sale.get("product_name"),
+                    "amount": sale.get("amount"),
+                    "sale_date": sale.get("sale_date"),
+                    "nm_id": sale.get("nm_id"),
+                    "brand": sale.get("brand"),
+                    "size": sale.get("size"),
+                    "detected_at": datetime.now(timezone.utc).isoformat()
+                }
+                events.append(event)
+        
+        # Находим изменения в существующих продажах
+        current_sale_dict = {sale["sale_id"]: sale for sale in current_sales}
+        previous_sale_dict = {sale["sale_id"]: sale for sale in previous_sales}
+        
+        for sale_id in current_sale_dict:
+            if sale_id in previous_sale_dict:
+                current_sale = current_sale_dict[sale_id]
+                previous_sale = previous_sale_dict[sale_id]
+                
+                # Проверяем изменения статуса
+                if current_sale.get("status") != previous_sale.get("status"):
+                    event = {
+                        "type": "sale_status_change",
+                        "user_id": user_id,
+                        "sale_id": sale_id,
+                        "order_id": current_sale.get("order_id"),
+                        "product_name": current_sale.get("product_name"),
+                        "previous_status": previous_sale.get("status"),
+                        "current_status": current_sale.get("status"),
+                        "amount": current_sale.get("amount"),
+                        "sale_date": current_sale.get("sale_date"),
+                        "detected_at": datetime.now(timezone.utc).isoformat()
+                    }
+                    events.append(event)
+                
+                # Проверяем изменения в отмене
+                if current_sale.get("is_cancel") != previous_sale.get("is_cancel"):
+                    event = {
+                        "type": "sale_cancellation_change",
+                        "user_id": user_id,
+                        "sale_id": sale_id,
+                        "order_id": current_sale.get("order_id"),
+                        "product_name": current_sale.get("product_name"),
+                        "was_cancelled": previous_sale.get("is_cancel"),
+                        "is_cancelled": current_sale.get("is_cancel"),
+                        "amount": current_sale.get("amount"),
+                        "sale_date": current_sale.get("sale_date"),
+                        "detected_at": datetime.now(timezone.utc).isoformat()
+                    }
+                    events.append(event)
+        
+        return events

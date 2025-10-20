@@ -12,7 +12,10 @@ logger = logging.getLogger(__name__)
 redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 
 # Получаем интервал синхронизации из переменной окружения
-sync_interval = int(os.getenv("SYNC_INTERVAL", "600"))  # По умолчанию 10 минут
+sync_interval_env = os.getenv("SYNC_INTERVAL")
+if not sync_interval_env:
+    raise ValueError("SYNC_INTERVAL environment variable is required but not set")
+sync_interval = int(sync_interval_env)
 
 logger.info(f"Redis configuration:")
 logger.info(f"  Redis URL: {redis_url}")

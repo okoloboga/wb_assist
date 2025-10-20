@@ -12,12 +12,16 @@ from app.features.user.routes import user_router
 from app.features.stats.routes import stats_router
 from app.features.wb_api.routes import router as wb_router
 from app.features.bot_api.routes import router as bot_router
+from app.features.bot_api.routes_sales import router as bot_sales_router
 from app.features.notifications.api.settings import router as notification_settings_router
 from app.features.notifications.api.test import router as notification_test_router
+from app.features.notifications.api.polling import router as notification_polling_router
+from app.features.wb_api.api.cabinet_validation import router as cabinet_validation_router
 
 # Импортируем модели для создания таблиц
 from app.features.user.models import User
 from app.features.wb_api.models import WBCabinet, WBProduct, WBOrder, WBStock, WBReview, WBAnalyticsCache, WBWarehouse, WBSyncLog
+from app.features.wb_api.models_sales import WBSales
 from app.features.notifications.models import NotificationSettings, NotificationHistory, OrderStatusHistory
 
 # Создаем FastAPI приложение с настройками из config
@@ -38,8 +42,11 @@ app.include_router(user_router)
 app.include_router(stats_router)
 app.include_router(wb_router)
 app.include_router(bot_router, prefix="/api/v1/bot", tags=["Bot API"])
+app.include_router(bot_sales_router, prefix="/api/v1/bot", tags=["Bot Sales"])
 app.include_router(notification_settings_router, prefix="/api/v1/notifications", tags=["Notification Settings"])
 app.include_router(notification_test_router, prefix="/api/v1/notifications", tags=["Notification Test"])
+app.include_router(notification_polling_router, prefix="/api/v1/notifications", tags=["Notification Polling"])
+app.include_router(cabinet_validation_router, prefix="/api/v1/wb/cabinets/validation", tags=["Cabinet Validation"])
 
 if __name__ == "__main__":
     import uvicorn

@@ -36,6 +36,9 @@ class BotConfig:
     enable_notifications: bool = True
     notification_retry_attempts: int = 5
     
+    # Polling настройки
+    polling_interval: int = 60  # Интервал polling в секундах
+    
     def __post_init__(self):
         """Валидация конфигурации после инициализации"""
         if not self.bot_token:
@@ -60,7 +63,8 @@ def load_config() -> BotConfig:
         retry_delay=float(os.getenv("RETRY_DELAY", "1.0")),
         request_timeout=int(os.getenv("REQUEST_TIMEOUT", "30")),
         enable_notifications=os.getenv("ENABLE_NOTIFICATIONS", "true").lower() == "true",
-        notification_retry_attempts=int(os.getenv("NOTIFICATION_RETRY_ATTEMPTS", "5"))
+        notification_retry_attempts=int(os.getenv("NOTIFICATION_RETRY_ATTEMPTS", "5")),
+        polling_interval=int(os.getenv("POLLING_INTERVAL", "60"))
     )
 
 

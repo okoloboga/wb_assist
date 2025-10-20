@@ -1,4 +1,5 @@
 import sys
+import logging
 from pathlib import Path
 
 # Добавляем путь к модулям бота
@@ -8,6 +9,8 @@ from aiogram import Router, F
 from aiogram.types import CallbackQuery, Message, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
+
+logger = logging.getLogger(__name__)
 
 from core.states import NotificationStates
 from core.config import config
@@ -125,29 +128,7 @@ async def cmd_notifications(message: Message, state: FSMContext):
     )
 
 
-# Webhook обработчики для получения уведомлений от сервера
-@router.message()
-async def handle_webhook_notification(message: Message):
-    """Обработать уведомление от webhook"""
-    # Проверяем, является ли сообщение уведомлением от сервера
-    if hasattr(message, 'web_app_data') and message.web_app_data:
-        try:
-            import json
-            data = json.loads(message.web_app_data.data)
-            
-            if data.get("type") == "new_order":
-                await handle_new_order_notification(message, data)
-            elif data.get("type") == "critical_stocks":
-                await handle_critical_stocks_notification(message, data)
-            elif data.get("type") == "new_review":
-                await handle_new_review_notification(message, data)
-            elif data.get("type") == "sync_completed":
-                await handle_sync_completed_notification(message, data)
-                
-        except (json.JSONDecodeError, KeyError) as e:
-            logger.error(f"Ошибка обработки webhook уведомления: {e}")
-
-
+# Polling обработчики для получения уведомлений от сервера
 async def handle_new_order_notification(message: Message, data: dict):
     """Обработать уведомление о новом заказе"""
     order_data = data.get("data", {})
@@ -269,3 +250,75 @@ async def handle_sync_completed_notification(message: Message, data: dict):
     text += "\n💡 Данные обновлены и готовы к использованию"
     
     await message.answer(text)
+
+
+async def handle_cabinet_removal_notification(telegram_id: int, data: dict):
+    """Обработать уведомление об удалении кабинета"""
+    try:
+        # Импортируем бота из основного модуля
+        import sys
+        from pathlib import Path
+        sys.path.insert(0, str(Path(__file__).parent.parent))
+        
+        from core.config import config
+        from aiogram import Bot
+        
+        # Создаем экземпляр бота
+        bot = Bot(token=config.bot_token)
+        
+        from keyboards.keyboards import create_cabinet_removal_keyboard
+        from utils.formatters import format_datetime
+        
+        cabinet_id = data.get('cabinet_id', 'N/A')
+        cabinet_name = data.get('cabinet_name', 'Неизвестный кабинет')
+        removal_reason = data.get('removal_reason', 'Неизвестная причина')
+        removal_timestamp = data.get('removal_timestamp', '')
+        validation_error = data.get('validation_error', {})
+        
+        # Форматируем время удаления
+        if removal_timestamp:
+            try:
+                from datetime import datetime
+                dt = datetime.fromisoformat(removal_timestamp.replace('Z', '+00:00'))
+                formatted_time = dt.strftime('%d.%m.%Y %H:%M')
+            except:
+                formatted_time = removal_timestamp
+        else:
+            formatted_time = 'Неизвестно'
+        
+        # Формируем сообщение
+        text = "🚨 КАБИНЕТ УДАЛЕН\n\n"
+        text += f"Кабинет \"{cabinet_name}\" был автоматически удален из-за недействительного API ключа.\n\n"
+        text += f"**Причина:** {removal_reason}\n"
+        text += f"**Время удаления:** {formatted_time}\n\n"
+        
+        # Добавляем детали ошибки валидации, если есть
+        if validation_error and validation_error.get('message'):
+            text += f"**Детали ошибки:** {validation_error['message']}\n\n"
+        
+        text += "Для продолжения работы подключите новый кабинет с действующим API ключом."
+        
+        # Создаем клавиатуру
+        keyboard = create_cabinet_removal_keyboard()
+        
+        # Отправляем уведомление пользователю
+        await bot.send_message(
+            chat_id=telegram_id,
+            text=text,
+            reply_markup=keyboard,
+            parse_mode="Markdown"
+        )
+        
+        logger.info(f"✅ Cabinet removal notification sent to user {telegram_id}")
+        
+        # Закрываем сессию бота
+        await bot.session.close()
+        
+    except Exception as e:
+        logger.error(f"Error sending cabinet removal notification to user {telegram_id}: {e}")
+        # Закрываем сессию бота в случае ошибки
+        try:
+            await bot.session.close()
+        except:
+            pass
+        raise

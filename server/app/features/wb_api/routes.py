@@ -20,9 +20,11 @@ async def create_wb_cabinet(
     name: Optional[str] = None,
     db: Session = Depends(get_db)
 ):
-    """Создание нового WB кабинета"""
+    """Создание нового WB кабинета или подключение к существующему"""
     try:
-        # Проверяем существование пользователя через прямой SQL запрос
+        from .crud_cabinet_users import CabinetUserCRUD
+        
+        # Проверяем существование пользователя
         user_exists = db.execute(
             text("SELECT id FROM users WHERE id = :user_id"),
             {"user_id": user_id}
@@ -31,25 +33,50 @@ async def create_wb_cabinet(
         if not user_exists:
             raise HTTPException(status_code=404, detail="User not found")
         
-        # Создаем кабинет
-        cabinet = WBCabinet(
-            user_id=user_id,
-            api_key=api_key,
-            name=name or f"WB Cabinet {user_id}"
-        )
+        cabinet_crud = CabinetUserCRUD()
         
-        db.add(cabinet)
-        db.commit()
-        db.refresh(cabinet)
+        # Ищем существующий кабинет с таким API ключом
+        existing_cabinet = cabinet_crud.find_cabinet_by_api_key(db, api_key)
         
-        return {
-            "status": "success",
-            "cabinet_id": cabinet.id,
-            "user_id": cabinet.user_id,
-            "name": cabinet.name,
-            "is_active": cabinet.is_active,
-            "created_at": cabinet.created_at.isoformat()
-        }
+        if existing_cabinet:
+            # Кабинет существует - проверяем, не подключен ли уже пользователь
+            if cabinet_crud.is_user_in_cabinet(db, existing_cabinet.id, user_id):
+                return {
+                    "status": "already_connected",
+                    "cabinet_id": existing_cabinet.id,
+                    "name": existing_cabinet.name,
+                    "message": "Пользователь уже подключен к этому кабинету"
+                }
+            
+            # Подключаем пользователя к существующему кабинету
+            cabinet_crud.add_user_to_cabinet(db, existing_cabinet.id, user_id)
+            
+            return {
+                "status": "connected",
+                "cabinet_id": existing_cabinet.id,
+                "name": existing_cabinet.name,
+                "message": "Подключен к существующему кабинету"
+            }
+        else:
+            # Создаем новый кабинет
+            cabinet = WBCabinet(
+                api_key=api_key,
+                name=name or f"WB Cabinet {user_id}"
+            )
+            
+            db.add(cabinet)
+            db.commit()
+            db.refresh(cabinet)
+            
+            # Добавляем пользователя к кабинету
+            cabinet_crud.add_user_to_cabinet(db, cabinet.id, user_id)
+            
+            return {
+                "status": "created",
+                "cabinet_id": cabinet.id,
+                "name": cabinet.name,
+                "message": "Создан новый кабинет"
+            }
         
     except HTTPException:
         raise
@@ -65,17 +92,20 @@ async def get_wb_cabinets(
 ):
     """Получение списка WB кабинетов"""
     try:
-        query = db.query(WBCabinet)
+        from .crud_cabinet_users import CabinetUserCRUD
         
         if user_id:
-            query = query.filter(WBCabinet.user_id == user_id)
-        
-        cabinets = query.all()
+            # Получаем кабинеты конкретного пользователя через связующую таблицу
+            cabinet_crud = CabinetUserCRUD()
+            cabinet_ids = cabinet_crud.get_user_cabinets(db, user_id)
+            cabinets = db.query(WBCabinet).filter(WBCabinet.id.in_(cabinet_ids)).all()
+        else:
+            # Получаем все кабинеты
+            cabinets = db.query(WBCabinet).all()
         
         return [
             {
                 "id": cabinet.id,
-                "user_id": cabinet.user_id,
                 "name": cabinet.name,
                 "is_active": cabinet.is_active,
                 "last_sync_at": cabinet.last_sync_at.isoformat() if cabinet.last_sync_at else None,

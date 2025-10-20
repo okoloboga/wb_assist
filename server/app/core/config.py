@@ -38,7 +38,7 @@ class Settings:
     API_SECRET_KEY: str = os.getenv("API_SECRET_KEY")
     
     # === НАСТРОЙКИ УВЕДОМЛЕНИЙ ===
-    BOT_WEBHOOK_URL: str = os.getenv("BOT_WEBHOOK_URL", "http://bot:8001/webhook/notifications")
+    # BOT_WEBHOOK_URL удален - используется только polling
 
     # === НАСТРОЙКИ ЛОГИРОВАНИЯ ===
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")

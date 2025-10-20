@@ -1,7 +1,8 @@
 """
 Pydantic schemas for notification API endpoints
 """
-from typing import Optional
+from typing import Optional, List
+from datetime import datetime
 from pydantic import BaseModel, Field
 
 
@@ -50,6 +51,23 @@ class TestNotificationResponse(BaseModel):
     notification_sent: bool
     webhook_url: Optional[str] = None
     error: Optional[str] = None
+
+
+class NotificationEvent(BaseModel):
+    """Schema for notification event"""
+    type: str = Field(..., description="Event type")
+    user_id: int = Field(..., description="User ID")
+    data: dict = Field(..., description="Event data")
+    created_at: datetime = Field(..., description="Event creation time")
+    priority: str = Field(default="MEDIUM", description="Event priority")
+
+
+class PollingResponse(BaseModel):
+    """Response schema for polling notifications"""
+    success: bool
+    events: List[NotificationEvent]
+    last_check: datetime
+    events_count: int
 
 
 class APIResponse(BaseModel):

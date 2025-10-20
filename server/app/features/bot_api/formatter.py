@@ -352,7 +352,7 @@ class BotMessageFormatter:
         try:
             products = data.get("products", [])
             
-            message = "⚠️ КРИТИЧНЫЕ ОСТАТКИ!\n\n"
+            message = "⚠️ КРИТИЧНЫЕ ОСТАТКИ\n\n"
             
             for product in products[:3]:  # Ограничиваем количество
                 nm_id = product.get("nm_id", "N/A")
@@ -382,8 +382,6 @@ class BotMessageFormatter:
                     message += f"🔴 Нулевые: {', '.join(zero_sizes)} на всех складах\n"
                 
                 message += "\n"
-            
-            message += "💡 Нажмите /stocks для подробного отчета"
             
             return self._truncate_message(message)
             
@@ -731,3 +729,72 @@ class BotMessageFormatter:
         except Exception as e:
             logger.error(f"Ошибка форматирования статуса кабинета: {e}")
             return "❓ Неизвестен"
+
+    def format_orders_statistics(self, data: Dict[str, Any]) -> str:
+        """Форматирование полной статистики по заказам"""
+        try:
+            orders = data.get("orders", {})
+            sales = data.get("sales", {})
+            summary = data.get("summary", {})
+            
+            message = "📊 ПОЛНАЯ СТАТИСТИКА ЗАКАЗОВ\n\n"
+            
+            # Статистика заказов
+            message += "🛒 ЗАКАЗЫ:\n"
+            message += f"• Всего заказов: {orders.get('total_orders', 0)}\n"
+            message += f"• Активные: {orders.get('active_orders', 0)} ({orders.get('active_percentage', 0):.1f}%)\n"
+            message += f"• Отмененные: {orders.get('canceled_orders', 0)} ({orders.get('canceled_percentage', 0):.1f}%)\n"
+            message += f"• Без статуса: {orders.get('no_status_orders', 0)}\n\n"
+            
+            # Статистика продаж
+            message += "💰 ПРОДАЖИ:\n"
+            message += f"• Всего продаж: {sales.get('total_sales', 0)}\n"
+            message += f"• Выкупы: {sales.get('buyouts', 0)} ({sales.get('buyout_rate', 0):.1f}%)\n"
+            message += f"• Возвраты: {sales.get('returns', 0)}\n"
+            message += f"• Общая сумма: {sales.get('total_amount', 0):,.0f}₽\n"
+            message += f"• Сумма выкупов: {sales.get('buyouts_amount', 0):,.0f}₽\n"
+            message += f"• Сумма возвратов: {sales.get('returns_amount', 0):,.0f}₽\n\n"
+            
+            # Сводка
+            message += "📈 СВОДКА:\n"
+            message += f"• Всего заказов: {summary.get('total_orders', 0)}\n"
+            message += f"• Активных: {summary.get('active_orders', 0)}\n"
+            message += f"• Отмененных: {summary.get('canceled_orders', 0)}\n"
+            message += f"• Всего продаж: {summary.get('total_sales', 0)}\n"
+            message += f"• Выкупов: {summary.get('buyouts', 0)}\n"
+            message += f"• Возвратов: {summary.get('returns', 0)}\n"
+            message += f"• Процент выкупа: {summary.get('buyout_rate', 0):.1f}%\n"
+            
+            return self._truncate_message(message)
+            
+        except Exception as e:
+            logger.error(f"Ошибка форматирования статистики заказов: {e}")
+            return "❌ Ошибка форматирования статистики заказов"
+
+    def format_cabinet_removal_notification(self, data: Dict[str, Any]) -> str:
+        """Форматирование уведомления об удалении кабинета"""
+        try:
+            cabinet_name = data.get("cabinet_name", "Неизвестный кабинет")
+            validation_error = data.get("validation_error", {})
+            removal_reason = data.get("removal_reason", "API ключ недействителен")
+            
+            message = f"""🚨 КАБИНЕТ УДАЛЕН
+
+🏢 Кабинет: {cabinet_name}
+❌ Причина: {removal_reason}
+
+📋 Детали ошибки:
+• Статус: {validation_error.get('status_code', 'N/A')}
+• Сообщение: {validation_error.get('message', 'N/A')}
+• Код ошибки: {validation_error.get('error_code', 'N/A')}
+
+⚠️ Кабинет был автоматически удален из-за недействительного API ключа.
+Все данные кабинета (заказы, товары, остатки, отзывы, продажи) были удалены.
+
+💡 Для продолжения работы добавьте новый API ключ через команду /connect"""
+            
+            return self._truncate_message(message)
+            
+        except Exception as e:
+            logger.error(f"Ошибка форматирования уведомления об удалении кабинета: {e}")
+            return "❌ Ошибка форматирования уведомления об удалении кабинета"

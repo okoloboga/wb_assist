@@ -302,6 +302,34 @@ def create_sync_keyboard(sync_id: str = None) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
+def create_cabinet_removal_keyboard() -> InlineKeyboardMarkup:
+    """Создать клавиатуру для действий после удаления кабинета"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text="🔗 Подключить новый кабинет",
+                callback_data="settings_api_key"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="📊 Мои кабинеты",
+                callback_data="cabinet_status"
+            ),
+            InlineKeyboardButton(
+                text="❓ Помощь",
+                callback_data="help"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="🔙 Главное меню",
+                callback_data="main_menu"
+            )
+        ]
+    ])
+
+
 def create_notification_keyboard() -> InlineKeyboardMarkup:
     """Создать клавиатуру для настроек уведомлений"""
     return InlineKeyboardMarkup(inline_keyboard=[

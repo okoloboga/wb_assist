@@ -243,25 +243,156 @@ class NotificationGenerator:
         """Форматирование контента уведомления о негативном отзыве"""
         order_info = f"Заказ: #{order_id}" if order_id else "Заказ: неизвестен"
         
-        return f"""😞 Негативный отзыв #{review_id}
+        return f"""😞 НЕГАТИВНЫЙ ОТЗЫВ
 
-⭐ Оценка: {rating}/5
-📝 Текст: {text}
 📦 Товар: {product_name}
-🛒 {order_info}
+⭐ Рейтинг: {rating}/5
+💬 Текст: "{text[:100]}{'...' if len(text) > 100 else ''}"
+👤 Автор: {review_id}
+🆔 ID отзыва: {review_id}
 
-Время: {datetime.now(timezone.utc).strftime('%H:%M:%S')}"""
+⚠️ Рекомендуется ответить на отзыв или связаться с покупателем"""
     
     def _format_critical_stocks_content(self, nm_id: int, name: str, brand: str, critical_sizes: list, zero_sizes: list) -> str:
         """Форматирование контента уведомления о критичных остатках"""
         critical_info = f"Критичные размеры: {', '.join(critical_sizes)}" if critical_sizes else "Нет критичных размеров"
         zero_info = f"Нулевые размеры: {', '.join(zero_sizes)}" if zero_sizes else "Нет нулевых размеров"
         
-        return f"""⚠️ Критичные остатки #{nm_id}
+        return f"""⚠️ КРИТИЧНЫЕ ОСТАТКИ
 
-📦 Товар: {name}
+📦 {name} ({brand})
+🆔 {nm_id}
+📊 Остатки: {critical_info}
+⚠️ Критично: {zero_info}"""
+    
+    def generate_sales_notification(self, event: Dict[str, Any]) -> Dict[str, Any]:
+        """Генерация уведомления о продаже/возврате"""
+        notification_type = event["type"]
+        
+        if notification_type == "new_buyout":
+            return self._generate_new_buyout_notification(event)
+        elif notification_type == "new_return":
+            return self._generate_new_return_notification(event)
+        elif notification_type == "sale_status_change":
+            return self._generate_sale_status_change_notification(event)
+        elif notification_type == "sale_cancellation_change":
+            return self._generate_sale_cancellation_change_notification(event)
+        else:
+            return self._generate_unknown_sales_notification(event)
+    
+    def _generate_new_buyout_notification(self, event: Dict[str, Any]) -> Dict[str, Any]:
+        """Генерация уведомления о новом выкупе"""
+        return {
+            "type": "new_buyout",
+            "title": f"💰 Выкуп #{event.get('order_id', 'N/A')}",
+            "content": self._format_new_buyout_content(
+                event.get("order_id"),
+                event.get("amount"),
+                event.get("product_name"),
+                event.get("brand"),
+                event.get("size")
+            ),
+            "priority": "HIGH",
+            "data": event
+        }
+    
+    def _generate_new_return_notification(self, event: Dict[str, Any]) -> Dict[str, Any]:
+        """Генерация уведомления о новом возврате"""
+        return {
+            "type": "new_return",
+            "title": f"🔄 Возврат #{event.get('order_id', 'N/A')}",
+            "content": self._format_new_return_content(
+                event.get("order_id"),
+                event.get("amount"),
+                event.get("product_name"),
+                event.get("brand"),
+                event.get("size")
+            ),
+            "priority": "HIGH",
+            "data": event
+        }
+    
+    def _generate_sale_status_change_notification(self, event: Dict[str, Any]) -> Dict[str, Any]:
+        """Генерация уведомления об изменении статуса продажи"""
+        return {
+            "type": "sale_status_change",
+            "title": f"📊 Статус изменен #{event.get('order_id', 'N/A')}",
+            "content": self._format_sale_status_change_content(
+                event.get("order_id"),
+                event.get("product_name"),
+                event.get("previous_status"),
+                event.get("current_status"),
+                event.get("amount")
+            ),
+            "priority": "MEDIUM",
+            "data": event
+        }
+    
+    def _generate_sale_cancellation_change_notification(self, event: Dict[str, Any]) -> Dict[str, Any]:
+        """Генерация уведомления об изменении отмены продажи"""
+        return {
+            "type": "sale_cancellation_change",
+            "title": f"❌ Отмена изменена #{event.get('order_id', 'N/A')}",
+            "content": self._format_sale_cancellation_change_content(
+                event.get("order_id"),
+                event.get("product_name"),
+                event.get("was_cancelled"),
+                event.get("is_cancelled"),
+                event.get("amount")
+            ),
+            "priority": "MEDIUM",
+            "data": event
+        }
+    
+    def _generate_unknown_sales_notification(self, event: Dict[str, Any]) -> Dict[str, Any]:
+        """Генерация уведомления о неизвестном событии продажи"""
+        return {
+            "type": "unknown_sales_event",
+            "title": "❓ Неизвестное событие продажи",
+            "content": f"Обнаружено неизвестное событие: {event.get('type', 'unknown')}",
+            "priority": "LOW",
+            "data": event
+        }
+    
+    def _format_new_buyout_content(self, order_id: str, amount: float, product_name: str, brand: str, size: str) -> str:
+        """Форматирование контента уведомления о новом выкупе"""
+        return f"""💰 Новый выкуп #{order_id}
+
+💵 Сумма: {amount:,.2f} ₽
+📦 Товар: {product_name}
 🏷️ Бренд: {brand}
-🔴 {critical_info}
-⚫ {zero_info}
+📏 Размер: {size}
+
+Время: {datetime.now(timezone.utc).strftime('%H:%M:%S')}"""
+    
+    def _format_new_return_content(self, order_id: str, amount: float, product_name: str, brand: str, size: str) -> str:
+        """Форматирование контента уведомления о новом возврате"""
+        return f"""🔄 Новый возврат #{order_id}
+
+💵 Сумма: {amount:,.2f} ₽
+📦 Товар: {product_name}
+🏷️ Бренд: {brand}
+📏 Размер: {size}
+
+Время: {datetime.now(timezone.utc).strftime('%H:%M:%S')}"""
+    
+    def _format_sale_status_change_content(self, order_id: str, product_name: str, previous_status: str, current_status: str, amount: float) -> str:
+        """Форматирование контента уведомления об изменении статуса продажи"""
+        return f"""📊 Статус изменен #{order_id}
+
+📦 Товар: {product_name}
+💵 Сумма: {amount:,.2f} ₽
+🔄 {previous_status} → {current_status}
+
+Время: {datetime.now(timezone.utc).strftime('%H:%M:%S')}"""
+    
+    def _format_sale_cancellation_change_content(self, order_id: str, product_name: str, was_cancelled: bool, is_cancelled: bool, amount: float) -> str:
+        """Форматирование контента уведомления об изменении отмены продажи"""
+        status_change = "отменена" if is_cancelled else "восстановлена"
+        return f"""❌ Продажа {status_change} #{order_id}
+
+📦 Товар: {product_name}
+💵 Сумма: {amount:,.2f} ₽
+🔄 Статус: {'Отменена' if is_cancelled else 'Активна'}
 
 Время: {datetime.now(timezone.utc).strftime('%H:%M:%S')}"""

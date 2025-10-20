@@ -69,6 +69,7 @@ async def get_recent_orders(
     telegram_id: int = Query(..., description="Telegram ID пользователя"),
     limit: int = Query(10, ge=1, le=100, description="Количество заказов"),
     offset: int = Query(0, ge=0, description="Смещение для пагинации"),
+    status: Optional[str] = Query(None, description="Фильтр по статусу заказа (active/canceled)"),
     bot_service: BotAPIService = Depends(get_bot_service)
 ):
     """Получение последних заказов пользователя"""
@@ -77,7 +78,7 @@ async def get_recent_orders(
         if not user:
             raise HTTPException(status_code=500, detail="Ошибка создания пользователя")
         
-        result = await bot_service.get_recent_orders(user, limit, offset)
+        result = await bot_service.get_recent_orders(user, limit, offset, status)
         
         if not result["success"]:
             raise HTTPException(status_code=500, detail=result["error"])
@@ -263,6 +264,35 @@ async def get_sync_status(
         raise
     except Exception as e:
         logger.error(f"Ошибка получения статуса синхронизации для telegram_id {telegram_id}: {e}")
+        raise HTTPException(status_code=500, detail="Ошибка сервера")
+
+
+@router.get("/orders/statistics")
+async def get_orders_statistics(
+    telegram_id: int = Query(..., description="Telegram ID пользователя"),
+    bot_service: BotAPIService = Depends(get_bot_service)
+):
+    """Получение полной статистики по заказам"""
+    try:
+        user = await bot_service.get_user_by_telegram_id(telegram_id)
+        if not user:
+            raise HTTPException(status_code=500, detail="Ошибка создания пользователя")
+        
+        result = await bot_service.get_orders_statistics(user)
+        
+        if not result["success"]:
+            raise HTTPException(status_code=500, detail=result["error"])
+        
+        return {
+            "success": True,
+            "data": result["data"],
+            "telegram_text": result["telegram_text"]
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Ошибка получения статистики заказов для telegram_id {telegram_id}: {e}")
         raise HTTPException(status_code=500, detail="Ошибка сервера")
 
 
