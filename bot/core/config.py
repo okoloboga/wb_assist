@@ -45,6 +45,14 @@ class BotConfig:
     openai_timeout: int = 30
     openai_system_prompt: Optional[str] = None
     
+    # Google Sheets
+    gs_enabled: bool = False
+    gs_auth_method: str = "oauth"  # 'oauth' или 'service_account'
+    gs_spreadsheet_id: Optional[str] = None
+    gs_spreadsheet_title: str = "WB Assist LLM Export"
+    gs_credentials_path: str = "config/credentials.json"
+    gs_token_path: str = "config/token.json"
+    gs_oauth_port: int = 8080
     def __post_init__(self):
         """Валидация конфигурации после инициализации"""
         if not self.bot_token:
@@ -77,7 +85,15 @@ def load_config() -> BotConfig:
         openai_temperature=float(os.getenv("OPENAI_TEMPERATURE", "0.2")),
         openai_max_tokens=int(os.getenv("OPENAI_MAX_TOKENS", "800")),
         openai_timeout=int(os.getenv("OPENAI_TIMEOUT", "30")),
-        openai_system_prompt=os.getenv("OPENAI_SYSTEM_PROMPT")
+        openai_system_prompt=os.getenv("OPENAI_SYSTEM_PROMPT"),
+        # Google Sheets
+        gs_enabled=os.getenv("GS_ENABLED", "false").lower() == "true",
+        gs_auth_method=os.getenv("GS_AUTH_METHOD", "oauth"),
+        gs_spreadsheet_id=os.getenv("GS_SPREADSHEET_ID"),
+        gs_spreadsheet_title=os.getenv("GS_SPREADSHEET_TITLE", "WB Assist LLM Export"),
+        gs_credentials_path=os.getenv("GS_CREDENTIALS_PATH", "config/credentials.json"),
+        gs_token_path=os.getenv("GS_TOKEN_PATH", "config/token.json"),
+        gs_oauth_port=int(os.getenv("GS_OAUTH_PORT", "8080"))
     )
 
 
