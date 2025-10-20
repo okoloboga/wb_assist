@@ -300,30 +300,80 @@ class NotificationService:
     async def _get_new_orders(self, user_id: int, cabinet_ids: List[int], last_check: datetime) -> List[Dict[str, Any]]:
         """Получение новых заказов"""
         try:
-            from app.features.wb_api.models import WBOrder
-            
+            from sqlalchemy import desc
+            from app.features.wb_api.models import WBOrder, WBCabinet, WBSyncLog
+
+            # Защита от первой синхронизации
+            cabinets = self.db.query(WBCabinet).filter(WBCabinet.id.in_(cabinet_ids)).all()
+            if not cabinets:
+                return []
+            for cabinet in cabinets:
+                if not cabinet.last_sync_at:
+                    logger.info(f"Skipping order notifications for cabinet {cabinet.id} - first sync")
+                    return []
+
+            # Предыдущая завершенная синхронизация
+            prev_sync_at_by_cab: Dict[int, datetime] = {}
+            for cab in cabinets:
+                prev_sync = (
+                    self.db.query(WBSyncLog)
+                    .filter(WBSyncLog.cabinet_id == cab.id, WBSyncLog.status == "completed")
+                    .order_by(desc(WBSyncLog.started_at))
+                    .offset(1)
+                    .first()
+                )
+                if not prev_sync:
+                    logger.info(f"Skipping order notifications for cabinet {cab.id} - no previous completed sync")
+                    return []
+                prev_sync_at_by_cab[cab.id] = prev_sync.completed_at or prev_sync.started_at
+
+            # Кандидаты по последнему окну polling
             orders = self.db.query(WBOrder).filter(
                 WBOrder.cabinet_id.in_(cabinet_ids),
-                WBOrder.updated_at > last_check
+                WBOrder.created_at > last_check
             ).all()
+
+            # Фильтр по предыдущей синхронизации
+            orders = [
+                o for o in orders
+                if o.created_at and prev_sync_at_by_cab.get(o.cabinet_id) and o.created_at > prev_sync_at_by_cab[o.cabinet_id]
+            ]
             
             events = []
+            from app.features.wb_api.models import WBProduct
             for order in orders:
+                # Обогащаем данные заказа для форматтера
+                product = self.db.query(WBProduct).filter(WBProduct.nm_id == order.nm_id).first()
+                rating = (product.rating or 0.0) if product else 0.0
+                reviews_cnt = (product.reviews_count or 0) if product else 0
+                order_data = {
+                    "id": order.id,
+                    "order_id": order.order_id,
+                    "date": order.order_date.isoformat() if order.order_date else None,
+                    "amount": order.total_price or 0,
+                    "product_name": order.name or "Неизвестно",
+                    "brand": order.brand or "Неизвестно",
+                    "nm_id": order.nm_id,
+                    "supplier_article": order.article or "",
+                    "size": order.size or "",
+                    "barcode": order.barcode or "",
+                    "warehouse_from": order.warehouse_from or "",
+                    "warehouse_to": order.warehouse_to or "",
+                    "spp_percent": order.spp_percent or 0.0,
+                    "customer_price": order.customer_price or 0.0,
+                    "logistics_amount": order.logistics_amount or 0.0,
+                    "rating": rating,
+                    "reviews_count": reviews_cnt,
+                    "sales_periods": {},
+                    "status": order.status,
+                }
+                telegram_text = self.message_formatter.format_order_detail({"order": order_data})
+
                 events.append({
                     "type": "new_order",
                     "user_id": user_id,
-                    "data": {
-                        "order_id": order.order_id,
-                        "amount": order.total_price,
-                        "product_name": order.name,
-                        "brand": order.brand,
-                        "nm_id": order.nm_id,
-                        "size": order.size,
-                        "warehouse_from": order.warehouse_from,
-                        "warehouse_to": order.warehouse_to,
-                        "status": order.status,
-                        "created_at": order.created_at.isoformat() if order.created_at else None
-                    },
+                    "data": order_data,
+                    "telegram_text": telegram_text,
                     "created_at": order.created_at or datetime.now(timezone.utc),
                     "priority": "MEDIUM"
                 })
@@ -386,72 +436,104 @@ class NotificationService:
             return []
     
     async def _get_critical_stocks(self, user_id: int, cabinet_ids: List[int], last_check: datetime) -> List[Dict[str, Any]]:
-        """Получение критических остатков"""
+        """Получение критических остатков по факту перехода через порог (<=2 с >2 ранее)."""
         try:
-            from app.features.wb_api.models import WBStock, WBCabinet
+            from app.features.wb_api.models import WBStock, WBCabinet, WBProduct
+            from sqlalchemy import and_
             
-            # Проверяем, что это не первая синхронизация кабинета
-            # Если last_sync_at не установлен или очень старый, пропускаем уведомления
+            # Проверяем, что это не первая синхронизация кабинета и не слишком давняя
             cabinets = self.db.query(WBCabinet).filter(WBCabinet.id.in_(cabinet_ids)).all()
             for cabinet in cabinets:
                 if not cabinet.last_sync_at:
                     logger.info(f"Skipping critical stocks notifications for cabinet {cabinet.id} - first sync")
                     return []
-                
-                # Проверяем, была ли синхронизация в последние 24 часа
                 from datetime import timedelta
-                time_diff = datetime.now(timezone.utc) - cabinet.last_sync_at
-                if time_diff > timedelta(hours=24):
+                if (datetime.now(timezone.utc) - cabinet.last_sync_at) > timedelta(hours=24):
                     logger.info(f"Skipping critical stocks notifications for cabinet {cabinet.id} - long break since last sync")
                     return []
             
-            # Получаем товары с критическими остатками (менее 5 штук), 
-            # где данные обновились после last_check (используем updated_at из БД)
-            stocks = self.db.query(WBStock).filter(
-                WBStock.cabinet_id.in_(cabinet_ids),
-                WBStock.quantity < 5,
-                WBStock.quantity > 0,
-                WBStock.updated_at > last_check
-            ).all()
+            critical_threshold = 2
             
-            if not stocks:
+            # Текущие обновления после last_check (кандидаты)
+            current_rows = (
+                self.db.query(WBStock)
+                .filter(
+                    WBStock.cabinet_id.in_(cabinet_ids),
+                    WBStock.updated_at > last_check
+                )
+                .all()
+            )
+            if not current_rows:
                 return []
             
-            # Группируем по товарам
-            products = {}
-            for stock in stocks:
-                if stock.nm_id not in products:
-                    products[stock.nm_id] = {
-                        "nm_id": stock.nm_id,
-                        "name": stock.name,
-                        "brand": stock.brand,
-                        "stocks": {},
-                        "critical_sizes": [],
-                        "zero_sizes": []
-                    }
-                
-                products[stock.nm_id]["stocks"][stock.size] = stock.quantity
-                if stock.quantity < 3:
-                    products[stock.nm_id]["critical_sizes"].append(stock.size)
+            # Подготовка нормализации размера
+            def _norm_size(s: str) -> str:
+                return (s or "").strip().upper()
+
+            # Агрегируем суммарные количества по всем складам для текущего снимка
+            current_sum_map: Dict[tuple, int] = {}
+            key_pairs = set()
+            for r in current_rows:
+                key = (r.nm_id, _norm_size(r.size))
+                key_pairs.add(key)
+                current_sum_map[key] = current_sum_map.get(key, 0) + (r.quantity or 0)
+
+            # Снимок предыдущих значений для этих nm_id до/на момент last_check и агрегация
+            prev_rows = (
+                self.db.query(WBStock)
+                .filter(
+                    WBStock.cabinet_id.in_(cabinet_ids),
+                    WBStock.updated_at <= last_check,
+                    WBStock.nm_id.in_({k[0] for k in key_pairs})
+                )
+                .all()
+            )
+            prev_sum_map: Dict[tuple, int] = {}
+            for r in prev_rows:
+                key = (r.nm_id, _norm_size(r.size))
+                prev_sum_map[key] = prev_sum_map.get(key, 0) + (r.quantity or 0)
+
+            # Детект перехода через порог ТОЛЬКО при реальном снижении с >2 до <=2
+            per_nm: Dict[int, Dict[str, Any]] = {}
+            for (nm, sz), cur_total in current_sum_map.items():
+                if cur_total <= 0:
+                    continue  # нули сейчас не сигналим
+                prev_total = prev_sum_map.get((nm, sz))
+                # Требуем наличие прошлого значения и реальное снижение
+                if prev_total is None:
+                    continue
+                if prev_total > critical_threshold and cur_total <= critical_threshold and cur_total < prev_total:
+                    if nm not in per_nm:
+                        per_nm[nm] = {"nm_id": nm, "stocks": {}, "critical_sizes": [], "zero_sizes": []}
+                    per_nm[nm]["stocks"][sz] = cur_total
+                    per_nm[nm]["critical_sizes"].append(sz)
             
-            # Создаем событие для каждого товара с критическими остатками
+            if not per_nm:
+                return []
+            
+            # Подтягиваем названия из WBProduct
+            products = {p.nm_id: p for p in self.db.query(WBProduct).filter(WBProduct.nm_id.in_(list(per_nm.keys()))).all()}
             events = []
-            for nm_id, product in products.items():
-                if product["critical_sizes"]:
-                    events.append({
-                        "type": "critical_stocks",
-                        "user_id": user_id,
-                        "data": {
-                            "nm_id": nm_id,
-                            "name": product["name"],
-                            "brand": product["brand"],
-                            "stocks": product["stocks"],
-                            "critical_sizes": product["critical_sizes"],
-                            "zero_sizes": product["zero_sizes"]
-                        },
-                        "created_at": datetime.now(timezone.utc),
-                        "priority": "HIGH"
-                    })
+            for nm_id, info in per_nm.items():
+                prod = products.get(nm_id)
+                name = None
+                if prod and getattr(prod, "name", None):
+                    name = prod.name
+                if not name:
+                    name = f"Товар {nm_id}"
+                events.append({
+                    "type": "critical_stocks",
+                    "user_id": user_id,
+                    "data": {
+                        "nm_id": nm_id,
+                        "name": name,
+                        "stocks": info["stocks"],
+                        "critical_sizes": info["critical_sizes"],
+                        "zero_sizes": info["zero_sizes"],
+                    },
+                    "created_at": datetime.now(timezone.utc),
+                    "priority": "HIGH"
+                })
             
             return events
             

@@ -8,6 +8,11 @@ from sqlalchemy.orm import Session
 from app.features.wb_api.models import WBCabinet, WBOrder, WBProduct, WBStock, WBReview
 from sqlalchemy import func, and_, or_, text
 from datetime import datetime, timezone, timedelta
+try:
+    from zoneinfo import ZoneInfo
+    MSK_TZ = ZoneInfo("Europe/Moscow")
+except Exception:
+    MSK_TZ = None
 from app.features.wb_api.cache_manager import WBCacheManager
 from app.features.wb_api.sync_service import WBSyncService
 from .formatter import BotMessageFormatter
@@ -734,9 +739,18 @@ class BotAPIService:
     async def _fetch_dashboard_from_db(self, cabinet: WBCabinet) -> Dict[str, Any]:
         """Получение данных дашборда из БД"""
         try:
-            now = datetime.now(timezone.utc)
-            today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-            yesterday_start = today_start - timedelta(days=1)
+            now_utc = datetime.now(timezone.utc)
+            # Начало дня в МСК, затем в UTC для фильтров
+            if MSK_TZ:
+                now_msk = now_utc.astimezone(MSK_TZ)
+                today_start_msk = now_msk.replace(hour=0, minute=0, second=0, microsecond=0)
+                yesterday_start_msk = today_start_msk - timedelta(days=1)
+                today_start = today_start_msk.astimezone(timezone.utc)
+                yesterday_start = yesterday_start_msk.astimezone(timezone.utc)
+            else:
+                # Фолбэк: считаем от UTC как раньше
+                today_start = now_utc.replace(hour=0, minute=0, second=0, microsecond=0)
+                yesterday_start = today_start - timedelta(days=1)
             
             # Товары - считаем уникальные nm_id из остатков (реальные товары на складе)
             total_products = self.db.query(WBStock.nm_id).filter(
@@ -797,7 +811,7 @@ class BotAPIService:
             
             return {
                 "cabinet_name": cabinet.name or "Неизвестный кабинет",
-                "last_sync": cabinet.last_sync_at.strftime("%d.%m.%Y %H:%M") if cabinet.last_sync_at else "Никогда",
+                "last_sync": (cabinet.last_sync_at.astimezone(MSK_TZ).strftime("%d.%m.%Y %H:%M") if (cabinet.last_sync_at and MSK_TZ) else (cabinet.last_sync_at.strftime("%d.%m.%Y %H:%M") if cabinet.last_sync_at else "Никогда")),
                 "status": "Активен" if cabinet.is_active else "Неактивен",
                 "products": {
                     "total": total_products,
@@ -848,9 +862,16 @@ class BotAPIService:
     async def _fetch_orders_from_db(self, cabinet: WBCabinet, limit: int, offset: int, status: Optional[str] = None) -> Dict[str, Any]:
         """Получение заказов из БД"""
         try:
-            now = datetime.now(timezone.utc)
-            today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-            yesterday_start = today_start - timedelta(days=1)
+            now_utc = datetime.now(timezone.utc)
+            if MSK_TZ:
+                now_msk = now_utc.astimezone(MSK_TZ)
+                today_start_msk = now_msk.replace(hour=0, minute=0, second=0, microsecond=0)
+                yesterday_start_msk = today_start_msk - timedelta(days=1)
+                today_start = today_start_msk.astimezone(timezone.utc)
+                yesterday_start = yesterday_start_msk.astimezone(timezone.utc)
+            else:
+                today_start = now_utc.replace(hour=0, minute=0, second=0, microsecond=0)
+                yesterday_start = today_start - timedelta(days=1)
             
             # Получаем заказы с пагинацией (включая отмененные)
             orders_query = self.db.query(WBOrder).filter(
@@ -1164,12 +1185,27 @@ class BotAPIService:
     async def _fetch_analytics_from_db(self, cabinet: WBCabinet, period: str) -> Dict[str, Any]:
         """Получение аналитики из БД"""
         try:
-            now = datetime.now(timezone.utc)
-            today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-            yesterday_start = today_start - timedelta(days=1)
-            week_start = today_start - timedelta(days=7)
-            month_start = today_start - timedelta(days=30)
-            quarter_start = today_start - timedelta(days=90)
+            now_utc = datetime.now(timezone.utc)
+            if MSK_TZ:
+                now_msk = now_utc.astimezone(MSK_TZ)
+                today_start_msk = now_msk.replace(hour=0, minute=0, second=0, microsecond=0)
+                yesterday_start_msk = today_start_msk - timedelta(days=1)
+                week_start_msk = today_start_msk - timedelta(days=7)
+                month_start_msk = today_start_msk - timedelta(days=30)
+                quarter_start_msk = today_start_msk - timedelta(days=90)
+                today_start = today_start_msk.astimezone(timezone.utc)
+                yesterday_start = yesterday_start_msk.astimezone(timezone.utc)
+                week_start = week_start_msk.astimezone(timezone.utc)
+                month_start = month_start_msk.astimezone(timezone.utc)
+                quarter_start = quarter_start_msk.astimezone(timezone.utc)
+                now = now_utc
+            else:
+                now = now_utc
+                today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+                yesterday_start = today_start - timedelta(days=1)
+                week_start = today_start - timedelta(days=7)
+                month_start = today_start - timedelta(days=30)
+                quarter_start = today_start - timedelta(days=90)
             
             # Продажи по периодам
             sales_periods = {

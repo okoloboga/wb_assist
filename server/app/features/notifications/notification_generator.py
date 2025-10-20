@@ -178,13 +178,18 @@ class NotificationGenerator:
     def _generate_critical_stocks_notification(self, event_data: Dict[str, Any], user_settings: Dict[str, Any]) -> Dict[str, Any]:
         """Генерация уведомления о критичных остатках"""
         nm_id = event_data.get("nm_id", "N/A")
-        name = event_data.get("name", "Неизвестный товар")
-        brand = event_data.get("brand", "Неизвестный бренд")
+        # Надежный fallback для названия товара
+        name = (
+            event_data.get("name")
+            or event_data.get("product_name")
+            or event_data.get("title")
+            or f"Товар {nm_id}"
+        )
         critical_sizes = event_data.get("critical_sizes", [])
         zero_sizes = event_data.get("zero_sizes", [])
         
         title = f"⚠️ Критичные остатки #{nm_id}"
-        content = self._format_critical_stocks_content(nm_id, name, brand, critical_sizes, zero_sizes)
+        content = self._format_critical_stocks_content(nm_id, name, critical_sizes, zero_sizes)
         
         return {
             "type": "critical_stocks",
@@ -253,14 +258,14 @@ class NotificationGenerator:
 
 ⚠️ Рекомендуется ответить на отзыв или связаться с покупателем"""
     
-    def _format_critical_stocks_content(self, nm_id: int, name: str, brand: str, critical_sizes: list, zero_sizes: list) -> str:
+    def _format_critical_stocks_content(self, nm_id: int, name: str, critical_sizes: list, zero_sizes: list) -> str:
         """Форматирование контента уведомления о критичных остатках"""
         critical_info = f"Критичные размеры: {', '.join(critical_sizes)}" if critical_sizes else "Нет критичных размеров"
         zero_info = f"Нулевые размеры: {', '.join(zero_sizes)}" if zero_sizes else "Нет нулевых размеров"
         
         return f"""⚠️ КРИТИЧНЫЕ ОСТАТКИ
 
-📦 {name} ({brand})
+📦 {name}
 🆔 {nm_id}
 📊 Остатки: {critical_info}
 ⚠️ Критично: {zero_info}"""

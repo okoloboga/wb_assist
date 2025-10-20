@@ -3,7 +3,12 @@
 """
 
 from typing import Dict, List, Any, Optional
-from datetime import datetime
+from datetime import datetime, timezone
+try:
+    from zoneinfo import ZoneInfo
+    MSK_TZ = ZoneInfo("Europe/Moscow")
+except Exception:
+    MSK_TZ = None
 import logging
 
 logger = logging.getLogger(__name__)
@@ -26,7 +31,6 @@ class BotMessageFormatter:
             orders_today = data.get("orders_today", {})
             stocks = data.get("stocks", {})
             reviews = data.get("reviews", {})
-            recommendations = data.get("recommendations", [])
             
             message = f"""📊 ВАШ КАБИНЕТ WB
 
@@ -50,18 +54,12 @@ class BotMessageFormatter:
 • Критичных товаров: {stocks.get('critical_count', 0)}
 • С нулевыми остатками: {stocks.get('zero_count', 0)}
 • Требуют внимания: {stocks.get('attention_needed', 0)}
-• Топ товар: {stocks.get('top_product', 'Нет данных')}
 
 ⭐ ОТЗЫВЫ
 • Новых отзывов: {reviews.get('new_count', 0)}
 • Средний рейтинг: {reviews.get('average_rating', 0):.1f}/5
 • Неотвеченных: {reviews.get('unanswered', 0)}
 • Всего отзывов: {reviews.get('total', 0)}"""
-
-            if recommendations:
-                message += "\n\n💡 РЕКОМЕНДАЦИИ"
-                for rec in recommendations[:5]:  # Ограничиваем количество рекомендаций
-                    message += f"\n• {rec}"
             
             return self._truncate_message(message)
             
@@ -356,8 +354,8 @@ class BotMessageFormatter:
             
             for product in products[:3]:  # Ограничиваем количество
                 nm_id = product.get("nm_id", "N/A")
-                name = product.get("name", "N/A")
-                brand = product.get("brand", "N/A")
+                # Надежный fallback для названия товара
+                name = product.get("name") or product.get("product_name") or product.get("title") or f"Товар {nm_id}"
                 stocks = product.get("stocks", {})
                 critical_sizes = product.get("critical_sizes", [])
                 zero_sizes = product.get("zero_sizes", [])
@@ -365,7 +363,7 @@ class BotMessageFormatter:
                 
                 stocks_str = self._format_stocks(stocks)
                 
-                message += f"""📦 {name} ({brand})
+                message += f"""📦 {name}
 🆔 {nm_id}
 📊 Остатки: {stocks_str}
 
@@ -412,13 +410,18 @@ class BotMessageFormatter:
             return "❌ Ошибка сервера"
 
     def _format_datetime(self, datetime_str: str) -> str:
-        """Форматирование даты и времени"""
+        """Форматирование даты/времени с отображением по МСК."""
         try:
             if not datetime_str:
                 return "N/A"
-            
-            # Пытаемся распарсить ISO формат
             dt = datetime.fromisoformat(datetime_str.replace('Z', '+00:00'))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            if MSK_TZ is not None:
+                dt = dt.astimezone(MSK_TZ)
+            else:
+                # Фолбэк: UTC+3 визуально
+                dt = (dt.astimezone(timezone.utc))
             return dt.strftime("%H:%M")
         except:
             return datetime_str
@@ -482,16 +485,15 @@ class BotMessageFormatter:
             brand = order.get("brand", "Неизвестно")
             product_name = order.get("product_name", "Неизвестно")
             nm_id = order.get("nm_id", "N/A")
-            supplier_article = order.get("supplier_article", "")
+            supplier_article = order.get("supplier_article", order.get("article", ""))
             size = order.get("size", "")
             barcode = order.get("barcode", "")
             warehouse_from = order.get("warehouse_from", "")
             warehouse_to = order.get("warehouse_to", "")
+            status = order.get("status", "")
             
             # Финансовая информация
             order_amount = order.get("amount", 0)
-            commission_percent = order.get("commission_percent", 0)
-            commission_amount = order.get("commission_amount", 0)
             spp_percent = order.get("spp_percent", 0)
             customer_price = order.get("customer_price", 0)
             logistics_amount = order.get("logistics_amount", 0)
@@ -507,10 +509,7 @@ class BotMessageFormatter:
             reviews_count = order.get("reviews_count", 0)
             
             # Статистика
-            buyout_rates = order.get("buyout_rates", {})
-            order_speed = order.get("order_speed", {})
             sales_periods = order.get("sales_periods", {})
-            category_availability = order.get("category_availability", "")
             
             # Остатки
             stocks = order.get("stocks", {})
@@ -518,40 +517,48 @@ class BotMessageFormatter:
             
             # Формируем сообщение
             message = f"🧾 Заказ [#{order_id}] {order_date}\n\n"
-            message += f"👑 {brand} ({brand})\n"
-            message += f"✏ Название: {product_name}\n"
+            message += f"✏ {product_name}\n"
             message += f"🆔 {nm_id} / {supplier_article} / ({size})\n"
-            message += f"🎹 {barcode}\n"
+            if barcode:
+                message += f"🎹 {barcode}\n"
             message += f"🚛 {warehouse_from} ⟶ {warehouse_to}\n"
             message += f"💰 Цена заказа: {order_amount:,.0f}₽\n"
-            message += f"💶 Комиссия WB: {commission_percent}% ({commission_amount:,.0f}₽)\n"
-            message += f"🛍 СПП: {spp_percent}% (Цена для покупателя: {customer_price:,.0f}₽)\n"
-            message += f"💶 Логистика WB: {logistics_amount:,.1f}₽\n"
-            message += f"        Габариты: {dimensions}. ({volume_liters}л.)\n"
-            message += f"        Тариф склада: {warehouse_rate_per_liter:,.1f}₽ за 1л. | {warehouse_rate_extra:,.1f}₽ за л. свыше)\n"
-            message += f"🌟 Оценка: {rating}\n"
-            message += f"💬 Отзывы: {reviews_count}\n"
+            status_map = {
+                "active": "Активен",
+                "buyout": "Выкуплен",
+                "canceled": "Отменен",
+                "cancelled": "Отменен",
+                "return": "Возврат",
+                "returned": "Возврат"
+            }
+            ru_status = status_map.get(status, status)
+            if ru_status:
+                message += f"📅 Статус: {ru_status}\n"
+            if spp_percent or customer_price:
+                message += f"🛍 СПП: {spp_percent}% (Цена для покупателя: {customer_price:,.0f}₽)\n"
+            if logistics_amount:
+                message += f"💶 Логистика WB: {logistics_amount:,.1f}₽\n"
+            if dimensions or volume_liters:
+                message += f"        Габариты: {dimensions}. ({volume_liters}л.)\n"
+            if warehouse_rate_per_liter or warehouse_rate_extra:
+                message += f"        Тариф склада: {warehouse_rate_per_liter:,.1f}₽ за 1л. | {warehouse_rate_extra:,.1f}₽ за л. свыше)\n"
+            if rating or reviews_count:
+                message += f"🌟 Оценка: {rating}\n"
+                message += f"💬 Отзывы: {reviews_count}\n"
+
+            # Продажи (оставляем только эту метрику)
+            if sales_periods and any(sales_periods.values()):
+                message += f"📖 Продаж за 7 / 14 / 30 дней:\n"
+                message += f"        {sales_periods.get('7_days', 0)} | {sales_periods.get('14_days', 0)} | {sales_periods.get('30_days', 0)} шт.\n"
             
-            # Выкуп и скорость заказов
-            message += f"⚖️ Выкуп/с учетом возврата (7/14/30):\n"
-            message += f"        {buyout_rates.get('7_days', 0):.1f}% / {buyout_rates.get('14_days', 0):.1f}% / {buyout_rates.get('30_days', 0):.1f}%\n"
-            message += f"💠 Скорость заказов за 7/14/30 дней:\n"
-            message += f"        {order_speed.get('7_days', 0):.2f} | {order_speed.get('14_days', 0):.1f} | {order_speed.get('30_days', 0):.1f} шт. в день\n"
-            
-            # Продажи
-            message += f"📖 Продаж за 7 / 14 / 30 дней:\n"
-            message += f"        {sales_periods.get('7_days', 0)} | {sales_periods.get('14_days', 0)} | {sales_periods.get('30_days', 0)} шт.\n"
-            
-            # Оборачиваемость
-            message += f"💈 Оборачиваемость категории 90:\n"
-            message += f"        {category_availability}\n"
-            
-            # Остатки
-            message += f"📦 Остаток:\n"
-            for size in ["L", "M", "S", "XL"]:
-                stock_count = stocks.get(size, 0)
-                stock_days_count = stock_days.get(size, 0)
-                message += f"        {size} ({stock_count} шт.) ≈ на {stock_days_count} дн.\n"
+            # Остатки (если предоставлены)
+            if stocks and any(stocks.values()):
+                message += f"📦 Остаток:\n"
+                for size in ["L", "M", "S", "XL"]:
+                    stock_count = stocks.get(size, 0)
+                    stock_days_count = stock_days.get(size, 0)
+                    if stock_count > 0 or stock_days_count > 0:
+                        message += f"        {size} ({stock_count} шт.) ≈ на {stock_days_count} дн.\n"
             
             return self._truncate_message(message)
             

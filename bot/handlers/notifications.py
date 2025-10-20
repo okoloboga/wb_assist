@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 from core.states import NotificationStates
 from core.config import config
 from keyboards.keyboards import wb_menu_keyboard, main_keyboard, create_notification_keyboard
+from api.client import bot_api_client
 from utils.formatters import format_error_message, format_stocks_summary
 
 router = Router()
@@ -47,58 +48,72 @@ async def show_notifications_menu(callback: CallbackQuery):
 
 @router.callback_query(F.data == "settings_notifications")
 async def show_notification_settings(callback: CallbackQuery, state: FSMContext):
-    """Показать настройки уведомлений"""
+    """Показать настройки уведомлений (с сервера)"""
     await state.set_state(NotificationStates.settings_menu)
-    
+
+    user_id = callback.from_user.id
+    response = await bot_api_client.get_notification_settings(user_id)
+
+    if response.success and response.data:
+        settings = response.data.get("data", response.data)  # APIResponse wraps data
+        await callback.message.edit_text(
+            "🔔 НАСТРОЙКИ УВЕДОМЛЕНИЙ\n\n"
+            "Нажмите на тип уведомления для переключения:\n\n"
+            "✅ Вкл | ❌ Выкл",
+            reply_markup=create_notification_keyboard(settings)
+        )
+    else:
+        await callback.message.edit_text(
+            f"❌ Не удалось получить настройки уведомлений.\n\n{response.error or ''}",
+            reply_markup=wb_menu_keyboard()
+        )
+    await callback.answer()
+
+
+async def _toggle_and_refresh(callback: CallbackQuery, key: str):
+    """Вспомогательная: инвертировать флаг key и перерисовать меню"""
+    user_id = callback.from_user.id
+    # Получаем текущие настройки
+    current = await bot_api_client.get_notification_settings(user_id)
+    settings = current.data.get("data", current.data) if current.success and current.data else {}
+    current_value = bool(settings.get(key, False))
+    # Отправляем обновление
+    update = {key: not current_value}
+    upd_resp = await bot_api_client.update_notification_settings(user_id, update)
+    if not upd_resp.success:
+        await callback.answer(f"❌ Ошибка обновления: {upd_resp.error or upd_resp.status_code}", show_alert=True)
+        return
+    # Получаем обновлённые
+    refreshed = await bot_api_client.get_notification_settings(user_id)
+    new_settings = refreshed.data.get("data", refreshed.data) if refreshed.success and refreshed.data else settings
+    # Обновляем текст/клавиатуру
     await callback.message.edit_text(
         "🔔 НАСТРОЙКИ УВЕДОМЛЕНИЙ\n\n"
-        "Выберите типы уведомлений, которые хотите получать:\n\n"
-        "✅ Включено\n"
-        "❌ Выключено\n\n"
-        "Нажмите на тип уведомления для переключения:",
-        reply_markup=create_notification_keyboard()
+        "Нажмите на тип уведомления для переключения:\n\n"
+        "✅ Вкл | ❌ Выкл",
+        reply_markup=create_notification_keyboard(new_settings)
     )
     await callback.answer()
 
 
-@router.callback_query(F.data == "toggle_orders_notifications")
-async def toggle_orders_notifications(callback: CallbackQuery):
-    """Переключить уведомления о заказах"""
-    # TODO: Реализовать переключение через API
-    await callback.answer(
-        "⚠️ Функция переключения уведомлений будет доступна в следующей версии",
-        show_alert=True
-    )
+@router.callback_query(F.data == "toggle_notif_new_orders")
+async def toggle_notif_new_orders(callback: CallbackQuery):
+    await _toggle_and_refresh(callback, "new_orders_enabled")
 
 
-@router.callback_query(F.data == "toggle_stocks_notifications")
-async def toggle_stocks_notifications(callback: CallbackQuery):
-    """Переключить уведомления об остатках"""
-    # TODO: Реализовать переключение через API
-    await callback.answer(
-        "⚠️ Функция переключения уведомлений будет доступна в следующей версии",
-        show_alert=True
-    )
+@router.callback_query(F.data == "toggle_notif_critical_stocks")
+async def toggle_notif_critical_stocks(callback: CallbackQuery):
+    await _toggle_and_refresh(callback, "critical_stocks_enabled")
 
 
-@router.callback_query(F.data == "toggle_reviews_notifications")
-async def toggle_reviews_notifications(callback: CallbackQuery):
-    """Переключить уведомления об отзывах"""
-    # TODO: Реализовать переключение через API
-    await callback.answer(
-        "⚠️ Функция переключения уведомлений будет доступна в следующей версии",
-        show_alert=True
-    )
+@router.callback_query(F.data == "toggle_notif_negative_reviews")
+async def toggle_notif_negative_reviews(callback: CallbackQuery):
+    await _toggle_and_refresh(callback, "negative_reviews_enabled")
 
 
-@router.callback_query(F.data == "toggle_sync_notifications")
-async def toggle_sync_notifications(callback: CallbackQuery):
-    """Переключить уведомления о синхронизации"""
-    # TODO: Реализовать переключение через API
-    await callback.answer(
-        "⚠️ Функция переключения уведомлений будет доступна в следующей версии",
-        show_alert=True
-    )
+@router.callback_query(F.data == "toggle_notif_grouping")
+async def toggle_notif_grouping(callback: CallbackQuery):
+    await _toggle_and_refresh(callback, "grouping_enabled")
 
 
 @router.callback_query(F.data == "test_notification")

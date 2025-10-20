@@ -283,6 +283,20 @@ class BotAPIClient:
         return await self._make_request("POST", "/cabinets/connect", params=params, json_data=json_data)
 
 
+    # ===== УВЕДОМЛЕНИЯ (S3) =====
+
+    async def get_notification_settings(self, user_id: int) -> BotAPIResponse:
+        """Получить настройки уведомлений пользователя"""
+        logger.info(f"🔔 Получение настроек уведомлений для пользователя {user_id}")
+        params = {"telegram_id": user_id}
+        return await self._make_request("GET", "/notifications/settings", params=params)
+
+    async def update_notification_settings(self, user_id: int, updates: Dict[str, Any]) -> BotAPIResponse:
+        """Обновить настройки уведомлений пользователя (частично)"""
+        logger.info(f"🛠 Обновление настроек уведомлений для пользователя {user_id}: {updates}")
+        params = {"telegram_id": user_id}
+        return await self._make_request("POST", "/notifications/settings", params=params, json_data=updates)
+
     # ===== НОВЫЕ МЕТОДЫ ДЛЯ СТАТИСТИКИ ЗАКАЗОВ =====
 
     async def get_orders_statistics(self, user_id: int) -> BotAPIResponse:

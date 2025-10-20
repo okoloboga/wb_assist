@@ -1,6 +1,12 @@
 import asyncio
 import logging
 from datetime import datetime, timezone, timedelta
+from typing import Optional
+try:
+    from zoneinfo import ZoneInfo
+    MSK_TZ = ZoneInfo("Europe/Moscow")
+except Exception:
+    MSK_TZ = None
 from typing import Dict, List, Any, Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, or_, func
@@ -269,8 +275,16 @@ class WBSyncService:
             # Получаем комиссии для расчета
             try:
                 commissions_data = await client.get_commissions()
-                logger.info(f"Commissions data type: {type(commissions_data)}, length: {len(commissions_data) if isinstance(commissions_data, list) else 'N/A'}")
-                # logger.info(f"Commissions data content: {commissions_data}")
+                # logger.info(f"Commissions data type: {type(commissions_data)}, length: {len(commissions_data) if isinstance(commissions_data, list) else 'N/A'}")
+                # Печатаем образец данных для отладки (без шума в логах)
+                if isinstance(commissions_data, list) and commissions_data:
+                    sample = commissions_data[0]
+                    # try:
+                    #     # Ограничим ключевые поля для читаемости
+                    #     sample_filtered = {k: sample.get(k) for k in list(sample.keys())[:10]}
+                    #     logger.info(f"Commissions sample: {sample_filtered}")
+                    # except Exception:
+                    #     logger.info("Commissions sample: <unserializable>")
             except Exception as e:
                 logger.error(f"Failed to get commissions: {e}")
                 commissions_data = []
@@ -395,8 +409,10 @@ class WBSyncService:
                             # logger.info(f"Product not found for nmId={nm_id}, using order data: category='{existing.category}', subject='{existing.subject}'")
                         
                         total_price = order_data.get("totalPrice", 0)
+                        # Выбор поля комиссии с учетом режима заказа
+                        commission_field = self._select_commission_field(order_data)
                         commission_percent, commission_amount = self._calculate_commission(
-                            existing.category, existing.subject, total_price, commissions_data
+                            existing.category, existing.subject, total_price, commissions_data, commission_field
                         )
                         existing.commission_percent = commission_percent
                         existing.commission_amount = commission_amount
@@ -442,8 +458,9 @@ class WBSyncService:
                                 # logger.info(f"Product not found for nmId={nm_id}, using order data: category='{category}', subject='{subject}'")
                             
                             total_price = order_data.get("totalPrice", 0)
+                            commission_field = self._select_commission_field(order_data)
                             commission_percent, commission_amount = self._calculate_commission(
-                                category, subject, total_price, commissions_data
+                                category, subject, total_price, commissions_data, commission_field
                             )
                             
                             
@@ -796,15 +813,26 @@ class WBSyncService:
             return {"status": "error", "error_message": str(e)}
 
     def _parse_datetime(self, date_str: str) -> Optional[datetime]:
-        """Парсинг даты из строки"""
+        """Парсинг даты из строки WB. Если без TZ — считаем МСК и конвертируем в UTC."""
         if not date_str:
             return None
         
         try:
             # Пробуем разные форматы дат
-            for fmt in ["%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"]:
+            for fmt in ["%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%d %H:%M:%S%z", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"]:
                 try:
-                    return datetime.strptime(date_str, fmt).replace(tzinfo=timezone.utc)
+                    dt = datetime.strptime(date_str, fmt)
+                    if dt.tzinfo is None:
+                        # Без TZ: трактуем как МСК и переводим в UTC
+                        if MSK_TZ is not None:
+                            dt = dt.replace(tzinfo=MSK_TZ).astimezone(timezone.utc)
+                        else:
+                            # Фолбэк: сдвиг +3 часа
+                            dt = dt.replace(tzinfo=timezone.utc) - timedelta(hours=3)
+                    else:
+                        # С TZ: приводим к UTC
+                        dt = dt.astimezone(timezone.utc)
+                    return dt
                 except ValueError:
                     continue
             
@@ -844,8 +872,26 @@ class WBSyncService:
             logger.error(f"Get sync status failed: {str(e)}")
             return {"status": "error", "error_message": str(e)}
 
-    def _calculate_commission(self, category: str, subject: str, total_price: float, commissions_data) -> tuple[float, float]:
-        """Расчет комиссии для заказа на основе категории и предмета"""
+    def _select_commission_field(self, order_data: dict) -> str:
+        """Определяет, какое поле комиссии использовать, исходя из режима заказа.
+        Порядок приоритета: pickup -> booking -> supplierExpress -> supplier -> marketplace.
+        Ожидаемые ключи в order_data (по наличию/истине): isPickup, isBooking, isSupplierExpress, isSupplier.
+        """
+        try:
+            if order_data.get("isPickup"):
+                return "kgvpPickup"
+            if order_data.get("isBooking"):
+                return "kgvpBooking"
+            if order_data.get("isSupplierExpress"):
+                return "kgvpSupplierExpress"
+            if order_data.get("isSupplier"):
+                return "kgvpSupplier"
+        except Exception:
+            pass
+        return "kgvpMarketplace"
+
+    def _calculate_commission(self, category: str, subject: str, total_price: float, commissions_data, commission_field: str = "kgvpMarketplace") -> tuple[float, float]:
+        """Расчет комиссии для заказа на основе категории, предмета и режимного поля комиссии."""
         try:
             if not category or not subject or not total_price or not commissions_data:
                 # logger.warning(f"Missing data: category={category}, subject={subject}, total_price={total_price}, commissions_data={bool(commissions_data)}")
@@ -873,22 +919,22 @@ class WBSyncService:
                     
                 parent_name = commission.get("parentName")
                 subject_name = commission.get("subjectName")
-                kgvp_marketplace = commission.get("kgvpMarketplace")
+                percent_value = commission.get(commission_field)
                 
                 # logger.info(f"Commission {i}: parentName='{parent_name}', subjectName='{subject_name}', kgvpMarketplace={kgvp_marketplace}")
                 
                 # Точное совпадение
                 if (parent_name == category and subject_name == subject):
-                    commission_percent = float(kgvp_marketplace) if kgvp_marketplace is not None else 0.0
+                    commission_percent = float(percent_value) if percent_value is not None else 0.0
                     commission_amount = (total_price * commission_percent) / 100
-                    
+                    # logger.info(f"Commission match ({commission_field}) for {category}/{subject}: {commission_percent}% -> {commission_amount}₽")
                     # logger.info(f"Found exact match: {category}/{subject} -> {commission_percent}% = {commission_amount}₽")
                     return commission_percent, commission_amount
                 
                 # Нечеткое совпадение по предмету (если категории совпадают)
                 if (parent_name == category and subject_name and subject and 
                     (subject_name.lower() in subject.lower() or subject.lower() in subject_name.lower())):
-                    commission_percent = float(kgvp_marketplace) if kgvp_marketplace is not None else 0.0
+                    commission_percent = float(percent_value) if percent_value is not None else 0.0
                     commission_amount = (total_price * commission_percent) / 100
                     
                     # logger.info(f"Found fuzzy match: {category}/{subject} ~ {parent_name}/{subject_name} -> {commission_percent}% = {commission_amount}₽")
@@ -901,11 +947,11 @@ class WBSyncService:
                     continue
                 
                 parent_name = commission.get("parentName")
-                kgvp_marketplace = commission.get("kgvpMarketplace")
+                percent_value = commission.get(commission_field)
                 
                 # Точное совпадение по категории
                 if parent_name == category:
-                    commission_percent = float(kgvp_marketplace) if kgvp_marketplace is not None else 0.0
+                    commission_percent = float(percent_value) if percent_value is not None else 0.0
                     commission_amount = (total_price * commission_percent) / 100
                     
                     # logger.info(f"Found exact category match: {category} -> {commission_percent}% = {commission_amount}₽")
@@ -914,7 +960,7 @@ class WBSyncService:
                 # Нечеткое совпадение по категории
                 if (parent_name and category and 
                     (parent_name.lower() in category.lower() or category.lower() in parent_name.lower())):
-                    commission_percent = float(kgvp_marketplace) if kgvp_marketplace is not None else 0.0
+                    commission_percent = float(percent_value) if percent_value is not None else 0.0
                     commission_amount = (total_price * commission_percent) / 100
                     
                     # logger.info(f"Found fuzzy category match: {category} ~ {parent_name} -> {commission_percent}% = {commission_amount}₽")

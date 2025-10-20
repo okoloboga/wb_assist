@@ -1,4 +1,5 @@
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from typing import Dict, Any
 
 
 def main_keyboard() -> InlineKeyboardMarkup:
@@ -330,28 +331,32 @@ def create_cabinet_removal_keyboard() -> InlineKeyboardMarkup:
     ])
 
 
-def create_notification_keyboard() -> InlineKeyboardMarkup:
-    """Создать клавиатуру для настроек уведомлений"""
+def create_notification_keyboard(settings: Dict[str, Any]) -> InlineKeyboardMarkup:
+    """Создать клавиатуру для настроек уведомлений на основе серверных флагов"""
+    def flag_text(enabled: bool) -> str:
+        return "✅ Вкл" if enabled else "❌ Выкл"
+
+    new_orders = settings.get("new_orders_enabled", True)
+    critical_stocks = settings.get("critical_stocks_enabled", True)
+    negative_reviews = settings.get("negative_reviews_enabled", True)
+    grouping = settings.get("grouping_enabled", True)
+
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(
-            text="🔔 Новые заказы",
-            callback_data="toggle_orders_notifications"
+            text=f"🔔 Новые заказы: {flag_text(new_orders)}",
+            callback_data="toggle_notif_new_orders"
         )],
         [InlineKeyboardButton(
-            text="⚠️ Критичные остатки",
-            callback_data="toggle_stocks_notifications"
+            text=f"⚠️ Критичные остатки: {flag_text(critical_stocks)}",
+            callback_data="toggle_notif_critical_stocks"
         )],
         [InlineKeyboardButton(
-            text="⭐ Новые отзывы",
-            callback_data="toggle_reviews_notifications"
+            text=f"⭐ Негативные отзывы: {flag_text(negative_reviews)}",
+            callback_data="toggle_notif_negative_reviews"
         )],
         [InlineKeyboardButton(
-            text="🔄 Синхронизация",
-            callback_data="toggle_sync_notifications"
-        )],
-        [InlineKeyboardButton(
-            text="🧪 Тестовое уведомление",
-            callback_data="test_notification"
+            text=f"📦 Группировка: {flag_text(grouping)}",
+            callback_data="toggle_notif_grouping"
         )],
         [InlineKeyboardButton(
             text="🔙 Назад к настройкам",

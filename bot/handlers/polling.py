@@ -104,8 +104,15 @@ class NotificationPoller:
                         await self._process_events(telegram_id, data["events"])
                         logger.info(f"📥 Processed {len(data['events'])} events for user {telegram_id}")
                     
-                    # Обновляем время последней проверки
-                    self.last_check_times[telegram_id] = datetime.now(timezone.utc)
+                    # Обновляем время последней проверки по серверному маркеру
+                    server_last_check = data.get("last_check")
+                    if server_last_check:
+                        try:
+                            self.last_check_times[telegram_id] = datetime.fromisoformat(server_last_check.replace('Z', '+00:00'))
+                        except Exception:
+                            self.last_check_times[telegram_id] = datetime.now(timezone.utc)
+                    else:
+                        self.last_check_times[telegram_id] = datetime.now(timezone.utc)
                     
                 elif response.status == 404:
                     logger.warning(f"User {telegram_id} not found on server")
@@ -152,7 +159,12 @@ class NotificationPoller:
                 
                 # Обрабатываем событие в зависимости от типа
                 if event_type == "new_order":
-                    await self._handle_new_order_notification(telegram_id, event_data)
+                    # Если сервер прислал готовый текст, используем его
+                    telegram_text = event.get("telegram_text")
+                    if telegram_text:
+                        await self.bot.send_message(chat_id=telegram_id, text=telegram_text)
+                    else:
+                        await self._handle_new_order_notification(telegram_id, event_data)
                 elif event_type == "critical_stocks":
                     await self._handle_critical_stocks_notification(telegram_id, event_data)
                 elif event_type == "new_review":
@@ -185,7 +197,8 @@ class NotificationPoller:
         stock_data = event_data
         
         text = "⚠️ КРИТИЧНЫЕ ОСТАТКИ\n\n"
-        text += f"📦 {stock_data.get('name', 'N/A')} ({stock_data.get('brand', 'N/A')})\n"
+        product_name = stock_data.get('name') or stock_data.get('product_name') or stock_data.get('title') or f"Товар {stock_data.get('nm_id', 'N/A')}"
+        text += f"📦 {product_name}\n"
         text += f"🆔 {stock_data.get('nm_id', 'N/A')}\n"
         text += f"📊 Остатки: {stock_data.get('stocks', {})}\n"
         
