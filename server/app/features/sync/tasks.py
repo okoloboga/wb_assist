@@ -129,16 +129,30 @@ def should_sync_cabinet(cabinet: WBCabinet) -> bool:
     """
     Определяет, нужно ли синхронизировать кабинет
     """
+    from datetime import timezone
+    
     if not cabinet.last_sync_at:
         # Если никогда не синхронизировался, синхронизируем сразу
+        return True
+    
+    now = datetime.now(timezone.utc)
+    
+    # Если время в базе naive, делаем его aware
+    last_sync = cabinet.last_sync_at
+    if last_sync.tzinfo is None:
+        last_sync = last_sync.replace(tzinfo=timezone.utc)
+    
+    # Проверяем, не прошло ли слишком много времени (более 30 минут)
+    time_since_last_sync = now - last_sync
+    if time_since_last_sync > timedelta(minutes=30):
+        logger.warning(f"Кабинет {cabinet.id} не синхронизировался {time_since_last_sync}, принудительная синхронизация")
         return True
     
     # Вычисляем время следующей синхронизации
     next_sync_time = calculate_next_sync_time(cabinet)
     
     # Проверяем, пора ли синхронизироваться
-    from datetime import timezone
-    return datetime.now(timezone.utc) >= next_sync_time
+    return now >= next_sync_time
 
 
 def calculate_next_sync_time(cabinet: WBCabinet) -> datetime:
@@ -147,21 +161,18 @@ def calculate_next_sync_time(cabinet: WBCabinet) -> datetime:
     """
     from datetime import timezone
     
-    # Базовое время - время первой синхронизации
-    first_sync = cabinet.last_sync_at
+    # Базовое время - время последней синхронизации
+    last_sync = cabinet.last_sync_at
     
     # Если время в базе naive, делаем его aware
-    if first_sync.tzinfo is None:
-        first_sync = first_sync.replace(tzinfo=timezone.utc)
-    
-    # Добавляем случайный офсет 0-4 минуты для распределения нагрузки
-    random_offset = random.randint(0, 4 * 60)  # 0-4 минуты в секундах
+    if last_sync.tzinfo is None:
+        last_sync = last_sync.replace(tzinfo=timezone.utc)
     
     # Интервал синхронизации (10 минут)
     sync_interval = 10 * 60  # 10 минут в секундах
     
-    # Вычисляем время следующей синхронизации
-    next_sync = first_sync + timedelta(seconds=random_offset + sync_interval)
+    # Вычисляем время следующей синхронизации (без случайного офсета)
+    next_sync = last_sync + timedelta(seconds=sync_interval)
     
     return next_sync
 

@@ -316,17 +316,25 @@ class NotificationService:
             # Предыдущая завершенная синхронизация
             prev_sync_at_by_cab: Dict[int, datetime] = {}
             for cab in cabinets:
+                # Ищем любую предыдущую синхронизацию (не обязательно completed)
                 prev_sync = (
                     self.db.query(WBSyncLog)
-                    .filter(WBSyncLog.cabinet_id == cab.id, WBSyncLog.status == "completed")
+                    .filter(WBSyncLog.cabinet_id == cab.id)
                     .order_by(desc(WBSyncLog.started_at))
                     .offset(1)
                     .first()
                 )
                 if not prev_sync:
-                    logger.info(f"Skipping order notifications for cabinet {cab.id} - no previous completed sync")
-                    return []
-                prev_sync_at_by_cab[cab.id] = prev_sync.completed_at or prev_sync.started_at
+                    # Если нет логов синхронизации, используем last_sync_at кабинета
+                    if cab.last_sync_at:
+                        prev_sync_at_by_cab[cab.id] = cab.last_sync_at
+                        logger.info(f"Using cabinet last_sync_at for cabinet {cab.id}: {cab.last_sync_at}")
+                    else:
+                        logger.info(f"Skipping order notifications for cabinet {cab.id} - no sync history")
+                        return []
+                else:
+                    prev_sync_at_by_cab[cab.id] = prev_sync.completed_at or prev_sync.started_at
+                    logger.info(f"Using previous sync for cabinet {cab.id}: {prev_sync_at_by_cab[cab.id]}")
 
             # Кандидаты по последнему окну polling
             orders = self.db.query(WBOrder).filter(
@@ -458,16 +466,13 @@ class NotificationService:
             from app.features.wb_api.models import WBStock, WBCabinet, WBProduct
             from sqlalchemy import and_
             
-            # Проверяем, что это не первая синхронизация кабинета и не слишком давняя
+            # Проверяем, что это не первая синхронизация кабинета
             cabinets = self.db.query(WBCabinet).filter(WBCabinet.id.in_(cabinet_ids)).all()
             for cabinet in cabinets:
                 if not cabinet.last_sync_at:
                     logger.info(f"Skipping critical stocks notifications for cabinet {cabinet.id} - first sync")
                     return []
-                from datetime import timedelta
-                if (datetime.now(timezone.utc) - cabinet.last_sync_at) > timedelta(hours=24):
-                    logger.info(f"Skipping critical stocks notifications for cabinet {cabinet.id} - long break since last sync")
-                    return []
+                # Убираем проверку на долгий перерыв - это может блокировать важные уведомления
             
             critical_threshold = 2
             
