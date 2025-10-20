@@ -301,7 +301,8 @@ class NotificationService:
         """Получение новых заказов"""
         try:
             from sqlalchemy import desc
-            from app.features.wb_api.models import WBOrder, WBCabinet, WBSyncLog
+            from sqlalchemy import func
+            from app.features.wb_api.models import WBOrder, WBCabinet, WBSyncLog, WBReview
 
             # Защита от первой синхронизации
             cabinets = self.db.query(WBCabinet).filter(WBCabinet.id.in_(cabinet_ids)).all()
@@ -346,6 +347,21 @@ class NotificationService:
                 product = self.db.query(WBProduct).filter(WBProduct.nm_id == order.nm_id).first()
                 rating = (product.rating or 0.0) if product else 0.0
                 reviews_cnt = (product.reviews_count or 0) if product else 0
+                image_url = product.image_url if product and getattr(product, "image_url", None) else None
+                # Быстрый точный расчёт из WBReview (перебивает продуктовый рейтинг, если есть отзывы)
+                try:
+                    avg_cnt = self.db.query(func.avg(WBReview.rating), func.count(WBReview.id)).filter(
+                        WBReview.cabinet_id == order.cabinet_id,
+                        WBReview.nm_id == order.nm_id,
+                        WBReview.rating.isnot(None)
+                    ).one()
+                    avg_rating = avg_cnt[0] or 0.0
+                    cnt_reviews = avg_cnt[1] or 0
+                    if cnt_reviews > 0:
+                        rating = round(float(avg_rating), 1)
+                        reviews_cnt = int(cnt_reviews)
+                except Exception:
+                    pass
                 order_data = {
                     "id": order.id,
                     "order_id": order.order_id,
@@ -366,6 +382,7 @@ class NotificationService:
                     "reviews_count": reviews_cnt,
                     "sales_periods": {},
                     "status": order.status,
+                    "image_url": image_url,
                 }
                 telegram_text = self.message_formatter.format_order_detail({"order": order_data})
 

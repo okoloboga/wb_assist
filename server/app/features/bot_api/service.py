@@ -297,6 +297,7 @@ class BotAPIService:
                 "commission_amount": order.commission_amount or 0.0,
                 "rating": product.rating if product else 0.0,  # Реальный рейтинг из WBProduct
                 "reviews_count": reviews_count,  # Реальное количество отзывов
+                "image_url": product.image_url if product and hasattr(product, 'image_url') else None,  # URL изображения товара
                 # Новые поля из WB API
                 "spp_percent": order.spp_percent or 0.0,
                 "customer_price": order.customer_price or 0.0,

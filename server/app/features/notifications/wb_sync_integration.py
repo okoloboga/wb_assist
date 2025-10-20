@@ -34,7 +34,10 @@ class WBSyncNotificationIntegration:
             # Webhook удален - используется только polling
             # Получаем пользователя
             from app.features.user.models import User
-            user = self.db.query(User).filter(User.id == cabinet.user_id).first()
+            from app.features.wb_api.crud_cabinet_users import CabinetUserCRUD
+            cabinet_user_crud = CabinetUserCRUD()
+            user_ids = cabinet_user_crud.get_cabinet_users(self.db, cabinet.id)
+            user = self.db.query(User).filter(User.id.in_(user_ids)).first() if user_ids else None
             if not user:
                 logger.warning(f"User not found for cabinet {cabinet.id}")
                 return {"status": "error", "error": "User not found"}
@@ -68,7 +71,10 @@ class WBSyncNotificationIntegration:
         try:
             # Получаем webhook URL пользователя
             from app.features.user.models import User
-            user = self.db.query(User).filter(User.id == cabinet.user_id).first()
+            from app.features.wb_api.crud_cabinet_users import CabinetUserCRUD
+            cabinet_user_crud = CabinetUserCRUD()
+            user_ids = cabinet_user_crud.get_cabinet_users(self.db, cabinet.id)
+            user = self.db.query(User).filter(User.id.in_(user_ids)).first() if user_ids else None
             if not user:
                 logger.warning(f"User not found for cabinet {cabinet.id}")
                 return {"status": "error", "error": "User not found"}
@@ -103,7 +109,10 @@ class WBSyncNotificationIntegration:
         try:
             # Получаем webhook URL пользователя
             from app.features.user.models import User
-            user = self.db.query(User).filter(User.id == cabinet.user_id).first()
+            from app.features.wb_api.crud_cabinet_users import CabinetUserCRUD
+            cabinet_user_crud = CabinetUserCRUD()
+            user_ids = cabinet_user_crud.get_cabinet_users(self.db, cabinet.id)
+            user = self.db.query(User).filter(User.id.in_(user_ids)).first() if user_ids else None
             if not user:
                 logger.warning(f"User not found for cabinet {cabinet.id}")
                 return {"status": "error", "error": "User not found"}
@@ -175,7 +184,8 @@ class WBSyncNotificationIntegration:
             
             # Обрабатываем события продаж
             notifications_sent = await self.notification_service.process_sales_events(
-                user_id=cabinet.user_id,
+                # user_id берём из владельцев/пользователей кабинета
+                user_id=user_ids[0] if user_ids else None,
                 cabinet_id=cabinet.id,
                 current_sales=current_sales,
                 previous_sales=previous_sales,
@@ -213,7 +223,7 @@ class WBSyncNotificationIntegration:
             # Создаем событие выкупа
             event = {
                 "type": "new_buyout",
-                "user_id": cabinet.user_id,
+                "user_id": (user_ids[0] if user_ids else None),
                 "sale_id": buyout_data.get("sale_id"),
                 "order_id": buyout_data.get("order_id"),
                 "product_name": buyout_data.get("product_name"),
@@ -232,7 +242,7 @@ class WBSyncNotificationIntegration:
             
             # Отправляем webhook
             result = await self.notification_service._send_webhook_notification(
-                cabinet.user_id, notification, telegram_text, bot_webhook_url
+                (user_ids[0] if user_ids else None), notification, telegram_text, bot_webhook_url
             )
             
             if result.get("success"):
@@ -261,7 +271,7 @@ class WBSyncNotificationIntegration:
             # Создаем событие возврата
             event = {
                 "type": "new_return",
-                "user_id": cabinet.user_id,
+                "user_id": (user_ids[0] if user_ids else None),
                 "sale_id": return_data.get("sale_id"),
                 "order_id": return_data.get("order_id"),
                 "product_name": return_data.get("product_name"),
@@ -280,7 +290,7 @@ class WBSyncNotificationIntegration:
             
             # Отправляем webhook
             result = await self.notification_service._send_webhook_notification(
-                cabinet.user_id, notification, telegram_text, bot_webhook_url
+                (user_ids[0] if user_ids else None), notification, telegram_text, bot_webhook_url
             )
             
             if result.get("success"):

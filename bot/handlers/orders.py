@@ -165,6 +165,7 @@ async def show_order_details(callback: CallbackQuery):
     
     if response.success and response.data:
         order = response.data.get("order", {})
+        image_url = order.get("image_url")
         
         # Создаем клавиатуру для детального просмотра
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
@@ -178,10 +179,26 @@ async def show_order_details(callback: CallbackQuery):
             # )]
         ])
         
-        await callback.message.edit_text(
-            response.telegram_text or "🧾 Детали заказа",
-            reply_markup=keyboard
-        )
+        # Если есть изображение, отправляем фото с подписью, иначе обычное сообщение
+        if image_url:
+            try:
+                await callback.message.delete()
+                await callback.message.answer_photo(
+                    photo=image_url,
+                    caption=response.telegram_text or "🧾 Детали заказа",
+                    reply_markup=keyboard
+                )
+            except Exception as e:
+                logger.error(f"Ошибка отправки фото: {e}")
+                await callback.message.edit_text(
+                    response.telegram_text or "🧾 Детали заказа",
+                    reply_markup=keyboard
+                )
+        else:
+            await callback.message.edit_text(
+                response.telegram_text or "🧾 Детали заказа",
+                reply_markup=keyboard
+            )
     else:
         error_message = format_error_message(response.error, response.status_code)
         await callback.message.edit_text(

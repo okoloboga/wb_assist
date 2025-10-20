@@ -544,21 +544,21 @@ class BotMessageFormatter:
                 message += f"        Тариф склада: {warehouse_rate_per_liter:,.1f}₽ за 1л. | {warehouse_rate_extra:,.1f}₽ за л. свыше)\n"
             if rating or reviews_count:
                 message += f"🌟 Оценка: {rating}\n"
-                message += f"💬 Отзывы: {reviews_count}\n"
-
+            message += f"💬 Отзывы: {reviews_count}\n"
+            
             # Продажи (оставляем только эту метрику)
             if sales_periods and any(sales_periods.values()):
                 message += f"📖 Продаж за 7 / 14 / 30 дней:\n"
-                message += f"        {sales_periods.get('7_days', 0)} | {sales_periods.get('14_days', 0)} | {sales_periods.get('30_days', 0)} шт.\n"
+            message += f"        {sales_periods.get('7_days', 0)} | {sales_periods.get('14_days', 0)} | {sales_periods.get('30_days', 0)} шт.\n"
             
             # Остатки (если предоставлены)
             if stocks and any(stocks.values()):
                 message += f"📦 Остаток:\n"
-                for size in ["L", "M", "S", "XL"]:
-                    stock_count = stocks.get(size, 0)
-                    stock_days_count = stock_days.get(size, 0)
-                    if stock_count > 0 or stock_days_count > 0:
-                        message += f"        {size} ({stock_count} шт.) ≈ на {stock_days_count} дн.\n"
+            for size in ["L", "M", "S", "XL"]:
+                stock_count = stocks.get(size, 0)
+                stock_days_count = stock_days.get(size, 0)
+                if stock_count > 0 or stock_days_count > 0:
+                    message += f"        {size} ({stock_count} шт.) ≈ на {stock_days_count} дн.\n"
             
             return self._truncate_message(message)
             

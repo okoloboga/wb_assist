@@ -159,9 +159,16 @@ class NotificationPoller:
                 
                 # Обрабатываем событие в зависимости от типа
                 if event_type == "new_order":
-                    # Если сервер прислал готовый текст, используем его
+                    # Если сервер прислал готовый текст, используем его. При наличии image_url отправляем как фото
                     telegram_text = event.get("telegram_text")
-                    if telegram_text:
+                    data_payload = event.get("data", {}) or {}
+                    image_url = data_payload.get("image_url")
+                    if telegram_text and image_url:
+                        try:
+                            await self.bot.send_photo(chat_id=telegram_id, photo=image_url, caption=telegram_text)
+                        except Exception:
+                            await self.bot.send_message(chat_id=telegram_id, text=telegram_text)
+                    elif telegram_text:
                         await self.bot.send_message(chat_id=telegram_id, text=telegram_text)
                     else:
                         await self._handle_new_order_notification(telegram_id, event_data)

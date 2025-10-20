@@ -112,6 +112,7 @@ class WBSyncService:
             # Обновляем время последней синхронизации
             cabinet.last_sync_at = datetime.now(timezone.utc)
             self.db.commit()
+            logger.info(f"✅ Синхронизация кабинета {cabinet.id} завершена: {results}")
             
             # Планируем автоматическую синхронизацию для нового кабинета
             if not cabinet.last_sync_at:
@@ -128,6 +129,13 @@ class WBSyncService:
             
         except Exception as e:
             logger.error(f"Sync all data failed: {str(e)}")
+            # Даже при ошибке обновляем время синхронизации, чтобы избежать бесконечных "первых синхронизаций"
+            try:
+                cabinet.last_sync_at = datetime.now(timezone.utc)
+                self.db.commit()
+                logger.info(f"Обновлено время синхронизации кабинета {cabinet.id} несмотря на ошибку")
+            except Exception as commit_error:
+                logger.error(f"Не удалось обновить last_sync_at: {commit_error}")
             return {"status": "error", "error_message": str(e)}
 
     async def sync_products(
@@ -161,6 +169,20 @@ class WBSyncService:
             created = 0
             updated = 0
             
+            # Вспомогательная функция извлечения первой фото-ссылки
+            def extract_first_photo_url(card: dict) -> str:
+                photos = card.get("photos") or []
+                if isinstance(photos, list) and photos:
+                    first = photos[0]
+                    return (
+                        first.get("c516x688")
+                        or first.get("c246x328")
+                        or first.get("big")
+                        or first.get("square")
+                        or first.get("tm")
+                    )
+                return None
+
             for product_data in products_data:
                 nm_id = product_data.get("nmID")  # Исправлено: nmID вместо nmId
                 if not nm_id:
@@ -174,12 +196,16 @@ class WBSyncService:
                     )
                 ).first()
                 
+                photo_url = extract_first_photo_url(product_data)
+
                 if existing:
                     # Обновляем существующий товар
                     existing.name = product_data.get("title")  # Исправлено: title вместо name
                     existing.vendor_code = product_data.get("vendorCode")
                     existing.brand = product_data.get("brand")
                     existing.category = product_data.get("subjectName")  # Исправлено: subjectName вместо category
+                    if photo_url:
+                        existing.image_url = photo_url
                     # Цены и рейтинги получаем из других API (остатки, отзывы)
                     # existing.price = product_data.get("price")  # НЕТ в API товаров
                     # existing.discount_price = product_data.get("discountPrice")  # НЕТ в API товаров
@@ -198,6 +224,7 @@ class WBSyncService:
                         vendor_code=product_data.get("vendorCode"),
                         brand=product_data.get("brand"),
                         category=product_data.get("subjectName"),  # Исправлено: subjectName вместо category
+                        image_url=photo_url,
                         # Цены и рейтинги получаем из других API (остатки, отзывы)
                         # price=product_data.get("price"),  # НЕТ в API товаров
                         # discount_price=product_data.get("discountPrice"),  # НЕТ в API товаров
@@ -502,9 +529,8 @@ class WBSyncService:
                             try:
                                 self.db.flush()  # Принудительно выполняем вставку для проверки уникальности
                                 
-                                # Отправляем уведомление о новом заказе только если разрешено
-                                if should_notify:
-                                    await self._send_new_order_notification(cabinet, order_data, order)
+                                # Уведомления о новых заказах обрабатываются через систему уведомлений
+                                # (удален вызов несуществующего метода _send_new_order_notification)
                                 
                                 # logger.info(f"Created order {order_id}: commission_percent={commission_percent}, commission_amount={commission_amount}")
                                 created += 1
@@ -1245,7 +1271,8 @@ class WBSyncService:
             logger.info(f"Starting sales sync for cabinet {cabinet.id}")
             
             # Получаем данные продаж из WB API
-            sales_data = await client.get_sales(date_from, flag=0)
+            # Для уменьшения нагрузки: после первичной загрузки используем узкое окно и инкрементальный флаг
+            sales_data = await client.get_sales(date_from, flag=1)
             
             if not sales_data:
                 logger.warning(f"No sales data received for cabinet {cabinet.id}")
@@ -1429,7 +1456,11 @@ class WBSyncService:
             notification_service = NotificationService(self.db, self.cache_manager)
             
             # Получаем пользователя
-            user = self.db.query(User).filter(User.id == cabinet.user_id).first()
+            # user_id у кабинета более не используется напрямую
+            from app.features.wb_api.crud_cabinet_users import CabinetUserCRUD
+            cabinet_user_crud = CabinetUserCRUD()
+            user_ids = cabinet_user_crud.get_cabinet_users(self.db, cabinet.id)
+            user = self.db.query(User).filter(User.id.in_(user_ids)).first() if user_ids else None
             if not user:
                 logger.warning(f"User not found for cabinet {cabinet.id}")
                 return

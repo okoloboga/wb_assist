@@ -132,7 +132,8 @@ async def get_wb_cabinet(
         
         return {
             "id": cabinet.id,
-            "user_id": cabinet.user_id,
+            # user_id более не хранится в кабинете, используйте связи cabinet_users
+            # "user_id": cabinet.user_id,
             "name": cabinet.name,
             "is_active": cabinet.is_active,
             "last_sync_at": cabinet.last_sync_at.isoformat() if cabinet.last_sync_at else None,

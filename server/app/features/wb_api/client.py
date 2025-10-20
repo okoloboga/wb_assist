@@ -26,11 +26,13 @@ class WBAPIClient:
         
         # Rate limits для разных эндпоинтов
         self.rate_limits = {
-            "orders": {"requests_per_minute": 300, "interval_ms": 200, "burst": 20},
-            "stocks": {"requests_per_minute": 100, "interval_ms": 600, "burst": 20},
+            # Более консервативные лимиты для statistics API
+            "sales": {"requests_per_minute": 30, "interval_ms": 2000, "burst": 3},  # Очень консервативно для sales
+            "orders": {"requests_per_minute": 120, "interval_ms": 500, "burst": 10},
+            "stocks": {"requests_per_minute": 120, "interval_ms": 500, "burst": 10},
             "products": {"requests_per_minute": 10, "interval_ms": 6000, "burst": 5},
             "feedbacks": {"requests_per_minute": 60, "interval_ms": 1000, "burst": 10},
-            "common": {"requests_per_minute": 300, "interval_ms": 200, "burst": 20}
+            "common": {"requests_per_minute": 120, "interval_ms": 500, "burst": 10}
         }
         
         # Текущие счетчики запросов
@@ -121,7 +123,7 @@ class WBAPIClient:
         params: Dict[str, Any] = None,
         json_data: Dict[str, Any] = None,
         api_type: str = "statistics",
-        max_retries: int = 3
+        max_retries: int = 5
     ) -> Optional[Dict[str, Any]]:
         """Базовый метод для выполнения HTTP запросов с retry логикой"""
         
@@ -158,9 +160,20 @@ class WBAPIClient:
                     elif response.status_code == 429:
                         logger.warning(f"Rate limit exceeded for {api_type}, attempt {attempt + 1}")
                         if attempt < max_retries - 1:
-                            await asyncio.sleep(2 ** attempt)  # Exponential backoff
+                            # Более агрессивный backoff для sales API
+                            if api_type == "sales":
+                                base = min(10 * (2 ** attempt), 120)  # До 2 минут для sales
+                                jitter = 2.0
+                            else:
+                                base = min(5 * (2 ** attempt), 60)
+                                jitter = 0.5
+                            
+                            sleep_time = base + jitter
+                            logger.info(f"Sleeping {sleep_time:.1f}s before retry for {api_type}")
+                            await asyncio.sleep(sleep_time)
                             continue
                         else:
+                            logger.error(f"Max retries exceeded for {api_type} due to rate limiting")
                             raise Exception("Rate limit exceeded")
                     
                     elif response.status_code >= 500:
@@ -497,22 +510,23 @@ class WBAPIClient:
             
             logger.info(f"Fetching sales data from {date_from} for cabinet {self.cabinet.id}")
             
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.get(url, params=params, headers=headers)
-                response.raise_for_status()
+            # Используем _make_request с увеличенными retry для sales API
+            data = await self._make_request(
+                "GET", 
+                url, 
+                headers=headers, 
+                params=params, 
+                api_type="sales",
+                max_retries=8  # Увеличенное количество попыток для sales
+            )
+            
+            if not data:
+                logger.warning(f"No sales data received for cabinet {self.cabinet.id}")
+                return []
+            
+            logger.info(f"Received {len(data)} sales records for cabinet {self.cabinet.id}")
+            return data
                 
-                data = response.json()
-                
-                if not data:
-                    logger.warning(f"No sales data received for cabinet {self.cabinet.id}")
-                    return []
-                
-                logger.info(f"Received {len(data)} sales records for cabinet {self.cabinet.id}")
-                return data
-                
-        except httpx.HTTPStatusError as e:
-            logger.error(f"HTTP error fetching sales for cabinet {self.cabinet.id}: {e.response.status_code} - {e.response.text}")
-            return []
         except Exception as e:
             logger.error(f"Error fetching sales for cabinet {self.cabinet.id}: {e}")
             return []

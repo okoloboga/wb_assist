@@ -46,6 +46,7 @@ class WBProduct(Base):
     vendor_code = Column(String(100), nullable=True)
     brand = Column(String(255), nullable=True)
     category = Column(String(255), nullable=True)
+    image_url = Column(String(1024), nullable=True)
     price = Column(Float, nullable=True)
     discount_price = Column(Float, nullable=True)
     rating = Column(Float, nullable=True)
