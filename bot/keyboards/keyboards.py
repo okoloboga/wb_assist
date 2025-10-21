@@ -12,19 +12,15 @@ def main_keyboard() -> InlineKeyboardMarkup:
 def wb_menu_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text="📊 Дашборд", callback_data="dashboard"),
-            InlineKeyboardButton(text="🛒 Заказы", callback_data="orders")
+            InlineKeyboardButton(text="🛒 Заказы", callback_data="orders"),
+            InlineKeyboardButton(text="📦 Склад", callback_data="stock")
         ],
         [
-            InlineKeyboardButton(text="📦 Склад", callback_data="stock"),
-            InlineKeyboardButton(text="⭐ Отзывы", callback_data="reviews")
+            InlineKeyboardButton(text="⭐ Отзывы", callback_data="reviews"),
+            InlineKeyboardButton(text="📈 Аналитика", callback_data="analytics")
         ],
         [
-            InlineKeyboardButton(text="📈 Аналитика", callback_data="analytics"),
-            InlineKeyboardButton(text="💰 Цены", callback_data="prices")
-        ],
-        [
-            InlineKeyboardButton(text="🔄 Синхронизация", callback_data="sync"),
+            InlineKeyboardButton(text="💰 Цены", callback_data="prices"),
             InlineKeyboardButton(text="🔔 Уведомления", callback_data="notifications")
         ],
         [
@@ -45,7 +41,7 @@ def analytics_keyboard() -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="💸 Конверсия", callback_data="avg_check"),
             InlineKeyboardButton(text="📤 Выгрузка в Google", callback_data="export_sales")
         ],
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="back_analytics")]
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="main_menu")]
     ])
 
 
@@ -59,7 +55,7 @@ def stock_keyboard() -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="🔔 Уведомления", callback_data="stock_notify"),
             InlineKeyboardButton(text="📤 Выгрузка в Google", callback_data="export_stock")
         ],
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="back_stock")]
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="main_menu")]
     ])
 
 
@@ -73,7 +69,7 @@ def reviews_keyboard() -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="🤖 Автоответы 4–5⭐", callback_data="auto_answers"),
             InlineKeyboardButton(text="📤 Выгрузка в Google Sheets", callback_data="export_reviews")
         ],
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="back_reviews")]
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="main_menu")]
     ])
 
 
@@ -87,7 +83,7 @@ def prices_keyboard() -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="📊 История", callback_data="price_history"),
             InlineKeyboardButton(text="📤 Выгрузка в Google Sheets", callback_data="export_prices")
         ],
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="back_prices")]
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="main_menu")]
     ])
 
 
@@ -98,16 +94,15 @@ def content_keyboard() -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="🖼 Изображения", callback_data="generate_images")
         ],
         [InlineKeyboardButton(text="📂 Архив", callback_data="content_archive")],
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="back_content")]
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="main_menu")]
     ])
 
 
 def ai_assistant_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🧠 GPT-чат", callback_data="ai_chat")],
         [InlineKeyboardButton(text="❓ Примеры запросов", callback_data="ai_examples")],
         [InlineKeyboardButton(text="📤 Выгрузка анализа в Google Sheets", callback_data="ai_export_gs")],
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="back_ai_assistant")]
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="main_menu")]
     ])
 
 
@@ -117,7 +112,7 @@ def settings_keyboard() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="👥 Доступы (добавить/удалить пользователя по TelegramID)", callback_data="settings_access")],
         [InlineKeyboardButton(text="🔔 Уведомления (вкл/выкл, частота)", callback_data="settings_notifications")],
         [InlineKeyboardButton(text="🌐 Интеграции (Google Sheets, Docs)", callback_data="settings_integrations")],
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="back_settings")]
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="main_menu")]
     ])
 
 
@@ -156,7 +151,7 @@ def create_orders_keyboard(orders: list, offset: int = 0, has_more: bool = False
     # Кнопка возврата
     buttons.append([InlineKeyboardButton(
         text="🔙 Назад к меню",
-        callback_data="back_analytics"
+        callback_data="main_menu"
     )])
     
     return InlineKeyboardMarkup(inline_keyboard=buttons)
@@ -196,7 +191,7 @@ def create_stocks_keyboard(has_more: bool = False, offset: int = 0) -> InlineKey
         )],
         [InlineKeyboardButton(
             text="🔙 Назад к меню",
-            callback_data="back_stock"
+            callback_data="main_menu"
         )]
     ])
     
@@ -237,7 +232,7 @@ def create_reviews_keyboard(has_more: bool = False, offset: int = 0) -> InlineKe
         )],
         [InlineKeyboardButton(
             text="🔙 Назад к меню",
-            callback_data="back_reviews"
+            callback_data="main_menu"
         )]
     ])
     
@@ -262,10 +257,6 @@ def create_analytics_keyboard(period: str = "7d") -> InlineKeyboardMarkup:
             )
         ],
         [InlineKeyboardButton(
-            text="🤖 LLM‑анализ",
-            callback_data="llm_analysis"
-        )],
-        [InlineKeyboardButton(
             text="🔄 Обновить",
             callback_data="refresh_analytics"
         )],
@@ -279,7 +270,7 @@ def create_analytics_keyboard(period: str = "7d") -> InlineKeyboardMarkup:
         )],
         [InlineKeyboardButton(
             text="🔙 Назад к меню",
-            callback_data="back_analytics"
+            callback_data="main_menu"
         )]
     ])
 
@@ -305,7 +296,7 @@ def create_sync_keyboard(sync_id: str = None) -> InlineKeyboardMarkup:
         )],
         [InlineKeyboardButton(
             text="🔙 Назад к меню",
-            callback_data="back_analytics"
+            callback_data="main_menu"
         )]
     ])
     
@@ -369,6 +360,6 @@ def create_notification_keyboard(settings: Dict[str, Any]) -> InlineKeyboardMark
         )],
         [InlineKeyboardButton(
             text="🔙 Назад к настройкам",
-            callback_data="back_settings"
+            callback_data="main_menu"
         )]
     ])
