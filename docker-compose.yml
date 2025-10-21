@@ -96,8 +96,8 @@ services:
 
   bot:
     build:
-      context: ./bot
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: bot/Dockerfile
     depends_on:
       - server
     environment:
@@ -105,6 +105,22 @@ services:
       - SERVER_HOST=http://server:8000
       - API_SECRET_KEY=${API_SECRET_KEY}
       - REQUEST_TIMEOUT=600
+    networks:
+      - app-network
+
+  gpt:
+    build:
+      context: .
+      dockerfile: gpt_integration/Dockerfile
+    ports:
+      - "9000:9000"
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL}
+      - OPENAI_MODEL=${OPENAI_MODEL}
+      - OPENAI_TEMPERATURE=${OPENAI_TEMPERATURE}
+      - OPENAI_MAX_TOKENS=${OPENAI_MAX_TOKENS}
+      - GPT_PORT=${GPT_PORT}
     networks:
       - app-network
 
