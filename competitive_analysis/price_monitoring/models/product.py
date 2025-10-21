@@ -9,6 +9,16 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import List, Optional, Dict, Any, TYPE_CHECKING
 import json
+from ..utils.sheets_mapping import (
+    product_to_sheets_row,
+    product_sheets_headers,
+)
+from ..utils.serialization import (
+    product_to_dict,
+    product_from_dict_data,
+    product_to_json,
+    product_from_json_data,
+)
 
 # Избегаем циклических импортов
 if TYPE_CHECKING:
@@ -562,75 +572,24 @@ class Product:
             self.last_updated = datetime.now()
 
     def to_dict(self) -> Dict[str, Any]:
-        """
-        Преобразование в словарь для сериализации.
-        
-        Returns:
-            Словарь с данными товара
-        """
-        return {
-            'id': self.id,
-            'name': self.name,
-            'brand': self.brand,
-            'article': self.article,
-            'sku': self.sku,
-            'category': self.category,
-            'current_price': self.current_price,
-            'target_price': self.target_price,
-            'min_price': self.min_price,
-            'max_price': self.max_price,
-            'competitor_prices': self.competitor_prices,
-            'last_updated': self.last_updated.isoformat(),
-            'tracking_enabled': self.tracking_enabled,
-            'price_threshold': self.price_threshold,
-            'marketplace_url': self.marketplace_url,
-            'competitor_urls': self.competitor_urls,
-            'tags': self.tags
-        }
+        """Преобразование в словарь для сериализации (делегировано утилите)."""
+        return product_to_dict(self)
     
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'Product':
-        """
-        Создание объекта из словаря.
-        
-        Args:
-            data: Словарь с данными товара
-            
-        Returns:
-            Объект Product
-        """
-        # Обработка даты
-        if 'last_updated' in data and isinstance(data['last_updated'], str):
-            data['last_updated'] = datetime.fromisoformat(data['last_updated'])
-        
-        # Добавляем sku если его нет
-        if 'sku' not in data:
-            data['sku'] = data.get('article', '')
-        
-        return cls(**data)
+        """Создание объекта из словаря (нормализация через утилиту)."""
+        normalized = product_from_dict_data(data)
+        return cls(**normalized)
     
     def to_json(self) -> str:
-        """
-        Преобразование в JSON строку.
-        
-        Returns:
-            JSON строка
-        """
-        return json.dumps(self.to_dict(), ensure_ascii=False, indent=2)
+        """Преобразование в JSON строку (делегировано утилите)."""
+        return product_to_json(self)
     
     @classmethod
     def from_json(cls, json_str: str) -> 'Product':
-        """
-        Создание объекта из JSON строки.
-        
-        Args:
-            json_str: JSON строка
-            
-        Returns:
-            Объект Product
-        """
-        data = json.loads(json_str)
-        return cls.from_dict(data)
+        """Создание объекта из JSON строки (нормализация через утилиту)."""
+        normalized = product_from_json_data(json_str)
+        return cls(**normalized)
     
     def to_sheets_row(self) -> List[Any]:
         """
@@ -639,30 +598,7 @@ class Product:
         Returns:
             Список значений для записи в таблицу
         """
-        import json
-        return [
-            self.id,
-            self.name,
-            self.brand,
-            self.article,
-            self.sku,
-            self.category,
-            self.current_price,
-            self.target_price or '',
-            self.min_price or '',
-            self.max_price or '',
-            self.get_min_competitor_price() or '',
-            self.get_max_competitor_price() or '',
-            round(self.get_average_competitor_price(), 2) if self.get_average_competitor_price() else '',
-            self.price_position,
-            'Да' if self.is_price_in_range() else 'Нет',
-            len(self.competitor_prices),
-            self.last_updated.strftime('%Y-%m-%d %H:%M:%S'),
-            'Да' if self.tracking_enabled else 'Нет',
-            self.price_threshold,
-            ', '.join(self.tags) if self.tags else '',
-            json.dumps(self.competitor_prices) if self.competitor_prices else '[]'
-        ]
+        return product_to_sheets_row(self)
     
     @staticmethod
     def get_sheets_headers() -> List[str]:
@@ -672,29 +608,7 @@ class Product:
         Returns:
             Список заголовков столбцов
         """
-        return [
-            'ID',
-            'Название',
-            'Бренд',
-            'Артикул',
-            'SKU',
-            'Категория',
-            'Текущая цена',
-            'Целевая цена',
-            'Мин. цена',
-            'Макс. цена',
-            'Мин. цена конкурентов',
-            'Макс. цена конкурентов',
-            'Средняя цена конкурентов',
-            'Позиция по цене',
-            'Цена в диапазоне',
-            'Количество конкурентов',
-            'Последнее обновление',
-            'Отслеживание включено',
-            'Порог цены',
-            'Теги',
-            'Цены конкурентов'
-        ]
+        return product_sheets_headers()
     
     def __str__(self) -> str:
         """Строковое представление товара."""

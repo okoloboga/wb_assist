@@ -31,3 +31,8 @@ class NotificationStates(StatesGroup):
     configuring_frequency = State()
     configuring_types = State()
     testing_notifications = State()
+
+
+class GPTStates(StatesGroup):
+    """Состояния для GPT чата"""
+    gpt_chat = State()
