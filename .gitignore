@@ -1,6 +1,7 @@
 ### Base Rules
 bot/photos/*
 photos/*
+config/*.json
 
 config.yaml
 *.exe

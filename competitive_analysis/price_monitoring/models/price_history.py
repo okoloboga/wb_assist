@@ -11,6 +11,16 @@ from typing import List, Optional, Dict, Any, Tuple
 from enum import Enum
 import json
 import statistics
+from ..utils.sheets_mapping import (
+    price_history_to_sheets_rows,
+    price_history_sheets_headers,
+)
+from ..utils.serialization import (
+    price_history_to_dict,
+    price_history_from_dict_data,
+    price_history_to_json,
+    price_history_from_json_data,
+)
 
 
 class PriceChangeType(Enum):
@@ -326,38 +336,27 @@ class PriceHistory:
         return changes_by_source
     
     def to_dict(self) -> Dict[str, Any]:
-        """Преобразование в словарь."""
-        return {
-            'product_id': self.product_id,
-            'entries': [entry.to_dict() for entry in self.entries],
-            'created_at': self.created_at.isoformat(),
-            'updated_at': self.updated_at.isoformat()
-        }
+        """Преобразование в словарь (делегировано утилите)."""
+        return price_history_to_dict(self)
     
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'PriceHistory':
-        """Создание объекта из словаря."""
-        if isinstance(data['created_at'], str):
-            data['created_at'] = datetime.fromisoformat(data['created_at'])
-        
-        if isinstance(data['updated_at'], str):
-            data['updated_at'] = datetime.fromisoformat(data['updated_at'])
-        
-        entries = [PriceHistoryEntry.from_dict(entry_data) 
-                  for entry_data in data.get('entries', [])]
-        data['entries'] = entries
-        
-        return cls(**data)
+        """Создание объекта из словаря (нормализация через утилиту)."""
+        normalized = price_history_from_dict_data(data)
+        entries = [PriceHistoryEntry.from_dict(entry_data)
+                   for entry_data in normalized.get('entries', [])]
+        normalized['entries'] = entries
+        return cls(**normalized)
     
     def to_json(self) -> str:
-        """Преобразование в JSON строку."""
-        return json.dumps(self.to_dict(), ensure_ascii=False, indent=2)
+        """Преобразование в JSON строку (делегировано утилите)."""
+        return price_history_to_json(self)
     
     @classmethod
     def from_json(cls, json_str: str) -> 'PriceHistory':
-        """Создание объекта из JSON строки."""
-        data = json.loads(json_str)
-        return cls.from_dict(data)
+        """Создание объекта из JSON строки (нормализация через утилиту)."""
+        normalized = price_history_from_json_data(json_str)
+        return cls.from_dict(normalized)
     
     def to_sheets_rows(self) -> List[List[Any]]:
         """
@@ -366,19 +365,7 @@ class PriceHistory:
         Returns:
             Список строк для записи в таблицу
         """
-        rows = []
-        for entry in sorted(self.entries, key=lambda x: x.timestamp):
-            rows.append([
-                entry.product_id,
-                entry.price,
-                entry.timestamp.strftime('%Y-%m-%d %H:%M:%S'),
-                entry.source.value,
-                entry.change_type.value if entry.change_type else '',
-                round(entry.change_percent, 2) if entry.change_percent else '',
-                entry.previous_price or '',
-                entry.notes or ''
-            ])
-        return rows
+        return price_history_to_sheets_rows(self)
     
     @staticmethod
     def get_sheets_headers() -> List[str]:
@@ -388,16 +375,7 @@ class PriceHistory:
         Returns:
             Список заголовков столбцов
         """
-        return [
-            'ID товара',
-            'Цена',
-            'Дата и время',
-            'Источник',
-            'Тип изменения',
-            'Изменение (%)',
-            'Предыдущая цена',
-            'Заметки'
-        ]
+        return price_history_sheets_headers()
     
     def __str__(self) -> str:
         """Строковое представление истории цен."""

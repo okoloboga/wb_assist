@@ -15,8 +15,8 @@ import smtplib
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from email.mime.text import MimeText
-from email.mime.multipart import MimeMultipart
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 from enum import Enum
 from typing import Dict, List, Optional, Any, Union, Callable
 from urllib.parse import urljoin
@@ -25,7 +25,7 @@ import requests
 from jinja2 import Template
 
 from ..config.settings import NotificationConfig, get_settings
-from .exceptions import NotificationError
+# Исключения из core.exceptions при необходимости импортируются по месту использования
 
 
 logger = logging.getLogger(__name__)
@@ -264,19 +264,19 @@ class EmailChannel(NotificationChannel_ABC):
         
         try:
             # Создаем сообщение
-            msg = MimeMultipart('alternative')
+            msg = MIMEMultipart('alternative')
             msg['Subject'] = f"[{message.priority.value.upper()}] {message.title}"
             msg['From'] = self.config.email_from
             msg['To'] = ', '.join(self.config.email_to)
             
             # HTML версия
             html_content = self._format_html_message(message)
-            html_part = MimeText(html_content, 'html', 'utf-8')
+            html_part = MIMEText(html_content, 'html', 'utf-8')
             msg.attach(html_part)
             
             # Текстовая версия
             text_content = self._format_text_message(message)
-            text_part = MimeText(text_content, 'plain', 'utf-8')
+            text_part = MIMEText(text_content, 'plain', 'utf-8')
             msg.attach(text_part)
             
             # Отправляем

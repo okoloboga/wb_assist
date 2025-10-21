@@ -103,7 +103,6 @@ https://developers.google.com/sheets/api/samples
    4. Добавить scopes: 
       - https://www.googleapis.com/auth/spreadsheets
       - https://www.googleapis.com/auth/drive.file
-      не смогла сделать
    ```
 
 **Структура credentials.json:**

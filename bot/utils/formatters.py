@@ -1,6 +1,7 @@
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from datetime import datetime
 import logging
+import re
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import CallbackQuery, Message
 
@@ -142,16 +143,18 @@ async def safe_edit_message(
         bool: True если сообщение было отредактировано, False если не изменилось
     """
     try:
-        # Проверяем, изменилось ли содержимое
-        if (callback.message.text == text and 
-            callback.message.reply_markup == reply_markup):
+        # Проверяем, изменилось ли содержимое (безопасно обрабатываем отсутствие атрибутов у mock)
+        current_text = getattr(callback.message, "text", None)
+        current_markup = getattr(callback.message, "reply_markup", None)
+        if (current_text == text and 
+            current_markup == reply_markup):
             logger.info(f"🔍 DEBUG: Содержимое не изменилось для пользователя {user_id or callback.from_user.id}")
             await callback.answer()
             return False
         
         # Редактируем сообщение
         await callback.message.edit_text(
-            text=text,
+            text,
             reply_markup=reply_markup
         )
         return True
@@ -256,3 +259,36 @@ def handle_telegram_errors(func):
                     break
     
     return wrapper
+
+
+def escape_markdown_v2(text: str) -> str:
+    """Экранирует спецсимволы MarkdownV2 Телеграма."""
+    if not text:
+        return ""
+    specials = r"_[]()~`>#+-=|{}.!*"
+    return re.sub(f"([{re.escape(specials)}])", r"\\\\\1", text)
+
+
+def split_telegram_message(text: str, limit: int = 4000) -> List[str]:
+    """Разбивает длинный текст на части, не превышающие limit символов."""
+    if not text:
+        return [""]
+    if len(text) <= limit:
+        return [text]
+
+    parts: List[str] = []
+    buf: List[str] = []
+    buf_len = 0
+
+    for line in text.splitlines(keepends=True):
+        if buf_len + len(line) > limit:
+            parts.append("".join(buf))
+            buf = [line]
+            buf_len = len(line)
+        else:
+            buf.append(line)
+            buf_len += len(line)
+
+    if buf:
+        parts.append("".join(buf))
+    return parts
