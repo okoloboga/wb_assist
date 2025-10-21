@@ -9,5 +9,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy bot and gpt_integration into image
 COPY ./bot /app
+COPY ./gpt_integration /app/gpt_integration
 
 CMD ["python", "__main__.py"]
