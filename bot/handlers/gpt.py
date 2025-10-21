@@ -99,4 +99,9 @@ async def gpt_chat_message(message: Message, state: FSMContext):
         chunks = ["(пустой ответ)"]
 
     for chunk in chunks:
-        await safe_send_message(message, chunk, user_id=message.from_user.id)
+        await safe_send_message(
+            message,
+            chunk,
+            user_id=message.from_user.id,
+            parse_mode="MarkdownV2",
+        )
