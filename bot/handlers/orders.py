@@ -34,6 +34,9 @@ async def show_orders_menu(callback: CallbackQuery):
     if response.error:
         logger.info(f"🔍 DEBUG: Ошибка API: {response.error}")
     
+    logger.info(f"🔍 DEBUG: Response data: {response.data}")
+    logger.info(f"🔍 DEBUG: Telegram text: {response.telegram_text}")
+    
     if response.success and response.data:
         orders = response.data.get("orders", [])
         pagination = response.data.get("pagination", {})

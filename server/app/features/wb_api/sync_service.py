@@ -1,21 +1,17 @@
 import asyncio
 import logging
 from datetime import datetime, timezone, timedelta
-from typing import Optional
-try:
-    from zoneinfo import ZoneInfo
-    MSK_TZ = ZoneInfo("Europe/Moscow")
-except Exception:
-    MSK_TZ = None
 from typing import Dict, List, Any, Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, or_, func
 
 from .models import WBCabinet, WBProduct, WBOrder, WBStock, WBReview, WBSyncLog
+from .models_cabinet_users import CabinetUser
 from .client import WBAPIClient
 from .cache_manager import WBCacheManager
 from .cabinet_manager import CabinetManager
 from app.features.user.models import User
+from app.utils.timezone import TimezoneUtils
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +27,22 @@ class WBSyncService:
         self.cabinet_manager = CabinetManager(db)
     
     async def sync_all_data(self, cabinet: WBCabinet) -> Dict[str, Any]:
-        """Синхронизация всех данных кабинета"""
+        """Синхронизация всех данных кабинета с блокировкой"""
+        try:
+            # Получаем блокировку синхронизации через NotificationService
+            from app.features.notifications.notification_service import NotificationService
+            notification_service = NotificationService(self.db)
+            
+            async with notification_service._get_sync_lock(cabinet.id):
+                logger.info(f"🔒 Получена блокировка синхронизации для кабинета {cabinet.id}")
+                return await self._perform_sync_with_lock(cabinet)
+                
+        except Exception as e:
+            logger.error(f"Ошибка синхронизации кабинета {cabinet.id}: {e}")
+            return {"status": "error", "error": str(e)}
+    
+    async def _perform_sync_with_lock(self, cabinet: WBCabinet) -> Dict[str, Any]:
+        """Выполнение синхронизации с блокировкой"""
         try:
             # Валидируем API ключ перед синхронизацией
             logger.info(f"Validating API key for cabinet {cabinet.id} before sync")
@@ -56,6 +67,16 @@ class WBSyncService:
             
             logger.info(f"API key validation successful for cabinet {cabinet.id}")
             
+            # Создаем лог начала синхронизации
+            sync_log = WBSyncLog(
+                cabinet_id=cabinet.id,
+                sync_type="full",
+                status="started",
+                started_at=TimezoneUtils.now_msk()
+            )
+            self.db.add(sync_log)
+            self.db.flush()  # Получаем ID лога
+            
             # Проверяем, нужно ли отправлять уведомления (один раз в начале)
             should_notify = await self._should_send_notification(cabinet)
             if should_notify:
@@ -65,14 +86,17 @@ class WBSyncService:
             
             client = WBAPIClient(cabinet)
             
-            # Определяем период синхронизации (последние 30 дней)
-            date_to = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-            date_from = (datetime.now(timezone.utc) - timedelta(days=30)).strftime("%Y-%m-%d")
+            # Определяем период синхронизации
+            import os
+            sync_days = int(os.getenv("SYNC_DAYS"))
+            now_msk = TimezoneUtils.now_msk()
+            date_to = now_msk.strftime("%Y-%m-%d")
+            date_from = (now_msk - timedelta(days=sync_days)).strftime("%Y-%m-%d")
             
             results = {}
             
             # Синхронизируем данные последовательно для избежания конфликтов
-            logger.info(f"Starting sync_all_data for cabinet {cabinet.id}")
+            logger.info(f"Starting sync_all_data for cabinet {cabinet.id}, period: {sync_days} days ({date_from} to {date_to})")
             sync_tasks = [
                 ("products", self.sync_products(cabinet, client)),
                 ("orders", self.sync_orders(cabinet, client, date_from, date_to, should_notify)),
@@ -110,9 +134,20 @@ class WBSyncService:
                 results["product_ratings"] = {"status": "error", "error": str(e)}
             
             # Обновляем время последней синхронизации
-            cabinet.last_sync_at = datetime.now(timezone.utc)
+            cabinet.last_sync_at = TimezoneUtils.now_msk()
+            
+            # Обновляем лог синхронизации
+            sync_log.status = "completed"
+            sync_log.completed_at = TimezoneUtils.now_msk()
+            
             self.db.commit()
             logger.info(f"✅ Синхронизация кабинета {cabinet.id} завершена: {results}")
+            
+            # Инвалидируем кэш после успешной синхронизации
+            await self._invalidate_user_cache(cabinet.id)
+            
+            # Отправляем уведомление о завершении синхронизации
+            await self._send_sync_completion_notification(cabinet.id)
             
             # Планируем автоматическую синхронизацию для нового кабинета
             if not cabinet.last_sync_at:
@@ -129,14 +164,105 @@ class WBSyncService:
             
         except Exception as e:
             logger.error(f"Sync all data failed: {str(e)}")
-            # Даже при ошибке обновляем время синхронизации, чтобы избежать бесконечных "первых синхронизаций"
+            # Обновляем лог синхронизации при ошибке
             try:
-                cabinet.last_sync_at = datetime.now(timezone.utc)
+                if 'sync_log' in locals():
+                    sync_log.status = "error"
+                    sync_log.completed_at = TimezoneUtils.now_msk()
+                    sync_log.error_message = str(e)
+                
+                # Даже при ошибке обновляем время синхронизации, чтобы избежать бесконечных "первых синхронизаций"
+                cabinet.last_sync_at = TimezoneUtils.now_msk()
                 self.db.commit()
                 logger.info(f"Обновлено время синхронизации кабинета {cabinet.id} несмотря на ошибку")
             except Exception as commit_error:
                 logger.error(f"Не удалось обновить last_sync_at: {commit_error}")
             return {"status": "error", "error_message": str(e)}
+    
+    async def _invalidate_user_cache(self, cabinet_id: int):
+        """Инвалидация кэша пользователей кабинета"""
+        try:
+            # Получаем всех пользователей кабинета
+            from app.features.wb_api.crud_cabinet_users import CabinetUserCRUD
+            cabinet_user_crud = CabinetUserCRUD()
+            user_ids = cabinet_user_crud.get_cabinet_users(self.db, cabinet_id)
+            
+            # Инвалидируем кэш для каждого пользователя
+            for user_id in user_ids:
+                cache_patterns = [
+                    f"orders:*:{user_id}:*",
+                    f"dashboard:{user_id}",
+                    f"analytics:{user_id}:*",
+                    f"stocks:{user_id}:*"
+                ]
+                
+                for pattern in cache_patterns:
+                    try:
+                        if hasattr(self.cache_manager, 'delete_pattern'):
+                            await self.cache_manager.delete_pattern(pattern)
+                            logger.info(f"🗑️ Invalidated cache pattern: {pattern}")
+                        else:
+                            logger.warning(f"Cache manager doesn't support delete_pattern, skipping: {pattern}")
+                    except Exception as cache_error:
+                        logger.warning(f"Cache invalidation error for pattern {pattern}: {cache_error}")
+                    
+        except Exception as e:
+            logger.error(f"Error invalidating cache for cabinet {cabinet_id}: {e}")
+    
+    async def _send_sync_completion_notification(self, cabinet_id: int):
+        """Отправка уведомления о завершении синхронизации"""
+        try:
+            # Получаем всех пользователей кабинета
+            from app.features.wb_api.crud_cabinet_users import CabinetUserCRUD
+            cabinet_user_crud = CabinetUserCRUD()
+            user_ids = cabinet_user_crud.get_cabinet_users(self.db, cabinet_id)
+            
+            # Создаем уведомление о завершении синхронизации для каждого пользователя
+            for user_id in user_ids:
+                # Проверяем, это ли первая синхронизация для конкретного пользователя
+                cabinet_user = self.db.query(CabinetUser).filter(
+                    CabinetUser.cabinet_id == cabinet_id,
+                    CabinetUser.user_id == user_id
+                ).first()
+                
+                is_first_sync = not cabinet_user.first_sync_completed if cabinet_user else True
+                
+                notification_data = {
+                    "type": "sync_completed",
+                    "cabinet_id": cabinet_id,
+                    "message": "Синхронизация завершена! Данные готовы к использованию.",
+                    "timestamp": TimezoneUtils.now_msk().isoformat(),
+                    "is_first_sync": is_first_sync
+                }
+                
+                # Сохраняем уведомление в историю
+                from app.features.notifications.models import NotificationHistory
+                import json
+                import uuid
+                
+                notification = NotificationHistory(
+                    id=f"sync_completed_{uuid.uuid4().hex[:8]}",
+                    user_id=user_id,
+                    notification_type="sync_completed",
+                    priority="HIGH",
+                    title="Синхронизация завершена",
+                    content=json.dumps(notification_data),
+                    sent_at=TimezoneUtils.to_utc(TimezoneUtils.now_msk()),
+                    status="delivered"
+                )
+                
+                self.db.add(notification)
+                logger.info(f"📢 Sync completion notification created for user {user_id}")
+                
+                # Если это первая синхронизация для пользователя, устанавливаем флаг
+                if is_first_sync and cabinet_user:
+                    cabinet_user.first_sync_completed = True
+                    logger.info(f"🏁 First sync completed for user {user_id} in cabinet {cabinet_id}")
+            
+            self.db.commit()
+            
+        except Exception as e:
+            logger.error(f"Error sending sync completion notification for cabinet {cabinet_id}: {e}")
 
     async def sync_products(
         self, 
@@ -213,7 +339,7 @@ class WBSyncService:
                     # existing.reviews_count = product_data.get("reviewsCount")  # НЕТ в API товаров
                     existing.in_stock = product_data.get("inStock", True)
                     existing.is_active = product_data.get("isActive", True)
-                    existing.updated_at = datetime.now(timezone.utc)
+                    existing.updated_at = TimezoneUtils.now_msk()
                     updated += 1
                 else:
                     # Создаем новый товар
@@ -461,7 +587,7 @@ class WBSyncService:
                         
                         # logger.info(f"Updated order {order_id}: commission_percent={commission_percent}, commission_amount={commission_amount}")
                         
-                        existing.updated_at = datetime.now(timezone.utc)
+                        existing.updated_at = TimezoneUtils.now_msk()
                         updated += 1
                     else:
                         # Создаем новый заказ
@@ -668,7 +794,7 @@ class WBSyncService:
                         existing.sc_code = stock_data.get("SCCode")
                         
                         # Обновляем updated_at ТОЛЬКО при реальных изменениях
-                        existing.updated_at = datetime.now(timezone.utc)
+                        existing.updated_at = TimezoneUtils.now_msk()
                         updated += 1
                     else:
                         # Данные не изменились, пропускаем обновление
@@ -797,7 +923,7 @@ class WBSyncService:
                     existing.supplier_feedback_valuation = review_data.get("supplierFeedbackValuation")
                     existing.supplier_product_valuation = review_data.get("supplierProductValuation")
                     
-                    existing.updated_at = datetime.now(timezone.utc)
+                    existing.updated_at = TimezoneUtils.now_msk()
                     updated += 1
                 else:
                     # Создаем новый отзыв
@@ -825,7 +951,17 @@ class WBSyncService:
                     self.db.add(review)
                     created += 1
             
-            self.db.commit()
+            try:
+                self.db.commit()
+            except Exception as commit_error:
+                logger.error(f"Error committing reviews: {commit_error}")
+                self.db.rollback()
+                # Попробуем обработать дубликаты
+                if "duplicate key value violates unique constraint" in str(commit_error):
+                    logger.warning("Detected duplicate reviews, attempting to handle gracefully")
+                    # Повторяем операцию с обработкой дубликатов
+                    return await self._handle_duplicate_reviews(cabinet, reviews_data)
+                raise commit_error
             
             return {
                 "status": "success",
@@ -837,36 +973,89 @@ class WBSyncService:
         except Exception as e:
             logger.error(f"Reviews sync failed: {str(e)}")
             return {"status": "error", "error_message": str(e)}
+    
+    async def _handle_duplicate_reviews(self, cabinet: WBCabinet, reviews_data: List[Dict]) -> Dict[str, Any]:
+        """Обработка дублирующихся отзывов с использованием UPSERT"""
+        try:
+            created = 0
+            updated = 0
+            
+            for review_data in reviews_data:
+                nm_id = review_data.get("nmId")
+                review_id = review_data.get("id")
+                
+                if not review_id:
+                    continue
+                
+                # Используем merge для обработки дубликатов
+                from sqlalchemy.dialects.postgresql import insert
+                
+                review_dict = {
+                    "cabinet_id": cabinet.id,
+                    "nm_id": nm_id,
+                    "review_id": str(review_id),
+                    "text": review_data.get("text"),
+                    "rating": review_data.get("productValuation"),
+                    "is_answered": review_data.get("answer") is not None,
+                    "created_date": self._parse_datetime(review_data.get("createdDate")),
+                    "updated_date": self._parse_datetime(review_data.get("createdDate")),
+                    "pros": review_data.get("pros"),
+                    "cons": review_data.get("cons"),
+                    "user_name": review_data.get("userName"),
+                    "color": review_data.get("color"),
+                    "bables": str(review_data.get("bables", [])) if review_data.get("bables") else None,
+                    "matching_size": review_data.get("matchingSize"),
+                    "was_viewed": review_data.get("wasViewed"),
+                    "supplier_feedback_valuation": review_data.get("supplierFeedbackValuation"),
+                    "supplier_product_valuation": review_data.get("supplierProductValuation"),
+                    "updated_at": TimezoneUtils.now_msk()
+                }
+                
+                # Используем PostgreSQL UPSERT
+                stmt = insert(WBReview).values(**review_dict)
+                stmt = stmt.on_conflict_do_update(
+                    index_elements=['cabinet_id', 'review_id'],
+                    set_={
+                        'nm_id': stmt.excluded.nm_id,
+                        'text': stmt.excluded.text,
+                        'rating': stmt.excluded.rating,
+                        'is_answered': stmt.excluded.is_answered,
+                        'created_date': stmt.excluded.created_date,
+                        'updated_date': stmt.excluded.updated_date,
+                        'pros': stmt.excluded.pros,
+                        'cons': stmt.excluded.cons,
+                        'user_name': stmt.excluded.user_name,
+                        'color': stmt.excluded.color,
+                        'bables': stmt.excluded.bables,
+                        'matching_size': stmt.excluded.matching_size,
+                        'was_viewed': stmt.excluded.was_viewed,
+                        'supplier_feedback_valuation': stmt.excluded.supplier_feedback_valuation,
+                        'supplier_product_valuation': stmt.excluded.supplier_product_valuation,
+                        'updated_at': stmt.excluded.updated_at
+                    }
+                )
+                
+                self.db.execute(stmt)
+                updated += 1
+            
+            self.db.commit()
+            
+            return {
+                "status": "success",
+                "records_processed": len(reviews_data),
+                "records_created": 0,
+                "records_updated": updated,
+                "duplicate_handled": True
+            }
+            
+        except Exception as e:
+            logger.error(f"Error handling duplicate reviews: {e}")
+            self.db.rollback()
+            return {"status": "error", "error_message": str(e)}
 
     def _parse_datetime(self, date_str: str) -> Optional[datetime]:
-        """Парсинг даты из строки WB. Если без TZ — считаем МСК и конвертируем в UTC."""
-        if not date_str:
-            return None
-        
-        try:
-            # Пробуем разные форматы дат
-            for fmt in ["%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%d %H:%M:%S%z", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"]:
-                try:
-                    dt = datetime.strptime(date_str, fmt)
-                    if dt.tzinfo is None:
-                        # Без TZ: трактуем как МСК и переводим в UTC
-                        if MSK_TZ is not None:
-                            dt = dt.replace(tzinfo=MSK_TZ).astimezone(timezone.utc)
-                        else:
-                            # Фолбэк: сдвиг +3 часа
-                            dt = dt.replace(tzinfo=timezone.utc) - timedelta(hours=3)
-                    else:
-                        # С TZ: приводим к UTC
-                        dt = dt.astimezone(timezone.utc)
-                    return dt
-                except ValueError:
-                    continue
-            
-            # Если ничего не подошло, возвращаем None
-            return None
-            
-        except Exception:
-            return None
+        """Парсинг даты из строки WB - всё по МСК"""
+        return TimezoneUtils.parse_wb_datetime(date_str)
 
     async def get_sync_status(self) -> Dict[str, Any]:
         """Получение статуса синхронизации"""
@@ -1125,7 +1314,7 @@ class WBSyncService:
     async def _get_today_stats(self, cabinet: WBCabinet) -> Dict[str, Any]:
         """Получение статистики за сегодня"""
         try:
-            today = datetime.now(timezone.utc).date()
+            today = TimezoneUtils.now_msk().date()
             
             # Подсчитываем заказы за сегодня
             orders_today = self.db.query(WBOrder).filter(
@@ -1150,14 +1339,14 @@ class WBSyncService:
         """Получение статистики товара (выкуп, скорость заказов, продажи)"""
         try:
             # Получаем заказы за последние 30 дней для расчета статистики
-            thirty_days_ago = datetime.now(timezone.utc) - timedelta(days=30)
+            thirty_days_ago = TimezoneUtils.now_msk() - timedelta(days=30)
             
             # Заказы за 7 дней
             orders_7d = self.db.query(WBOrder).filter(
                 and_(
                     WBOrder.cabinet_id == cabinet_id,
                     WBOrder.nm_id == nm_id,
-                    WBOrder.order_date >= datetime.now(timezone.utc) - timedelta(days=7)
+                    WBOrder.order_date >= TimezoneUtils.now_msk() - timedelta(days=7)
                 )
             ).all()
             
@@ -1166,7 +1355,7 @@ class WBSyncService:
                 and_(
                     WBOrder.cabinet_id == cabinet_id,
                     WBOrder.nm_id == nm_id,
-                    WBOrder.order_date >= datetime.now(timezone.utc) - timedelta(days=14)
+                    WBOrder.order_date >= TimezoneUtils.now_msk() - timedelta(days=14)
                 )
             ).all()
             
@@ -1243,8 +1432,7 @@ class WBSyncService:
             
             # Проверяем, была ли синхронизация в последние 24 часа
             # Если нет, значит это первая синхронизация после долгого перерыва
-            from datetime import datetime, timezone, timedelta
-            now = datetime.now(timezone.utc)
+            now = TimezoneUtils.now_msk()
             time_diff = now - cabinet.last_sync_at
             
             if time_diff > timedelta(hours=24):

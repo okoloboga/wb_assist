@@ -50,6 +50,8 @@ services:
       - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
       - API_SECRET_KEY=${API_SECRET_KEY}
       - REDIS_URL=redis://redis:6379/0
+      - SYNC_INTERVAL=${SYNC_INTERVAL}
+      - SYNC_DAYS=${SYNC_DAYS}
       # BOT_WEBHOOK_URL удален - используется только polling
     networks:
       - app-network
@@ -68,6 +70,7 @@ services:
       - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
       - REDIS_URL=redis://redis:6379/0
       - SYNC_INTERVAL=${SYNC_INTERVAL}
+      - SYNC_DAYS=${SYNC_DAYS}
     networks:
       - app-network
 
@@ -85,6 +88,7 @@ services:
       - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
       - REDIS_URL=redis://redis:6379/0
       - SYNC_INTERVAL=${SYNC_INTERVAL}
+      - SYNC_DAYS=${SYNC_DAYS}
     volumes:
       - celery_beat_data:/app/beat_data
     networks:

@@ -3,18 +3,15 @@ Bot API сервис для интеграции с Telegram ботом
 """
 
 import logging
+import json
 from typing import Dict, Any, Optional, List
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload, selectinload
 from app.features.wb_api.models import WBCabinet, WBOrder, WBProduct, WBStock, WBReview
 from sqlalchemy import func, and_, or_, text
 from datetime import datetime, timezone, timedelta
-try:
-    from zoneinfo import ZoneInfo
-    MSK_TZ = ZoneInfo("Europe/Moscow")
-except Exception:
-    MSK_TZ = None
 from app.features.wb_api.cache_manager import WBCacheManager
 from app.features.wb_api.sync_service import WBSyncService
+from app.utils.timezone import TimezoneUtils
 from .formatter import BotMessageFormatter
 
 logger = logging.getLogger(__name__)
@@ -28,6 +25,7 @@ class BotAPIService:
         self.cache_manager = cache_manager or WBCacheManager(db)
         self.sync_service = sync_service or WBSyncService(db, self.cache_manager)
         self.formatter = BotMessageFormatter()
+        self.cache_ttl = 300  # 5 минут кэш
 
     async def get_user_by_telegram_id(self, telegram_id: int) -> Optional[Dict[str, Any]]:
         """Получение пользователя по telegram_id с автоматическим созданием"""
@@ -146,7 +144,7 @@ class BotAPIService:
             }
 
     async def get_recent_orders(self, user: Dict[str, Any], limit: int = 10, offset: int = 0, status: Optional[str] = None) -> Dict[str, Any]:
-        """Получение последних заказов пользователя"""
+        """Получение последних заказов пользователя с кэшированием"""
         try:
             cabinet = await self.get_user_cabinet(user["telegram_id"])
             if not cabinet:
@@ -155,17 +153,44 @@ class BotAPIService:
                     "error": "Кабинет WB не найден"
                 }
             
+            # Создаем ключ кэша
+            cache_key = f"orders:{cabinet.id}:{limit}:{offset}:{status or 'all'}"
+            
+            # Проверяем кэш
+            try:
+                cached_data = await self.cache_manager.get(cache_key)
+                if cached_data:
+                    logger.info(f"📦 Cache hit for orders {cache_key}")
+                    return json.loads(cached_data)
+            except AttributeError:
+                # Если кэш не поддерживает get, пропускаем
+                logger.warning("Cache manager doesn't support get method, skipping cache")
+            except Exception as cache_error:
+                logger.warning(f"Cache error: {cache_error}, skipping cache")
+            
             # Получаем данные из БД
             orders_data = await self._fetch_orders_from_db(cabinet, limit, offset, status)
             
             # Форматируем Telegram сообщение
             telegram_text = self.formatter.format_orders(orders_data)
             
-            return {
+            result = {
                 "success": True,
                 "data": orders_data,
                 "telegram_text": telegram_text
             }
+            
+            # Кэшируем результат
+            try:
+                await self.cache_manager.set(cache_key, json.dumps(result), ttl=self.cache_ttl)
+                logger.info(f"💾 Cached orders data for {cache_key}")
+            except AttributeError:
+                # Если кэш не поддерживает set, пропускаем
+                logger.warning("Cache manager doesn't support set method, skipping cache")
+            except Exception as cache_error:
+                logger.warning(f"Cache error: {cache_error}, skipping cache")
+            
+            return result
             
         except Exception as e:
             logger.error(f"Ошибка получения заказов: {e}")
@@ -649,6 +674,14 @@ class BotAPIService:
             # Подключаем пользователя к новому кабинету
             cabinet_user_crud.add_user_to_cabinet(self.db, cabinet.id, user["id"])
             
+            # Запускаем первичную синхронизацию для нового кабинета
+            try:
+                from app.features.sync.tasks import sync_cabinet_data
+                sync_cabinet_data.delay(cabinet.id)
+                logger.info(f"🚀 Запущена первичная синхронизация для кабинета {cabinet.id}")
+            except Exception as sync_error:
+                logger.error(f"Ошибка запуска синхронизации: {sync_error}")
+            
             # Форматируем ответ
             cabinet_data = {
                 "cabinet_id": str(cabinet.id),
@@ -659,7 +692,8 @@ class BotAPIService:
                 "api_key_status": "valid"
             }
             
-            telegram_text = self.formatter.format_cabinet_connect_message(cabinet_data)
+            # Специальное сообщение для первичной синхронизации
+            telegram_text = f"🔑 API ключ: 🔑 Валидный\n\n🔄 Запускаю первичную синхронизацию данных...\n⏳ Это может занять 3-5 минут. Пожалуйста, подождите.\n📊 Загружаю товары, заказы, остатки и отзывы..."
             
             return {
                 "success": True,
@@ -740,18 +774,14 @@ class BotAPIService:
     async def _fetch_dashboard_from_db(self, cabinet: WBCabinet) -> Dict[str, Any]:
         """Получение данных дашборда из БД"""
         try:
-            now_utc = datetime.now(timezone.utc)
-            # Начало дня в МСК, затем в UTC для фильтров
-            if MSK_TZ:
-                now_msk = now_utc.astimezone(MSK_TZ)
-                today_start_msk = now_msk.replace(hour=0, minute=0, second=0, microsecond=0)
-                yesterday_start_msk = today_start_msk - timedelta(days=1)
-                today_start = today_start_msk.astimezone(timezone.utc)
-                yesterday_start = yesterday_start_msk.astimezone(timezone.utc)
-            else:
-                # Фолбэк: считаем от UTC как раньше
-                today_start = now_utc.replace(hour=0, minute=0, second=0, microsecond=0)
-                yesterday_start = today_start - timedelta(days=1)
+            # Начало дня в МСК
+            now_msk = TimezoneUtils.now_msk()
+            today_start_msk = TimezoneUtils.get_today_start_msk()
+            yesterday_start_msk = TimezoneUtils.get_yesterday_start_msk()
+            
+            # Конвертируем в UTC для фильтров БД
+            today_start = TimezoneUtils.to_utc(today_start_msk)
+            yesterday_start = TimezoneUtils.to_utc(yesterday_start_msk)
             
             # Товары - считаем уникальные nm_id из остатков (реальные товары на складе)
             total_products = self.db.query(WBStock.nm_id).filter(
@@ -812,7 +842,7 @@ class BotAPIService:
             
             return {
                 "cabinet_name": cabinet.name or "Неизвестный кабинет",
-                "last_sync": (cabinet.last_sync_at.astimezone(MSK_TZ).strftime("%d.%m.%Y %H:%M") if (cabinet.last_sync_at and MSK_TZ) else (cabinet.last_sync_at.strftime("%d.%m.%Y %H:%M") if cabinet.last_sync_at else "Никогда")),
+                "last_sync": TimezoneUtils.format_for_user(cabinet.last_sync_at) if cabinet.last_sync_at else "Никогда",
                 "status": "Активен" if cabinet.is_active else "Неактивен",
                 "products": {
                     "total": total_products,
@@ -863,19 +893,19 @@ class BotAPIService:
     async def _fetch_orders_from_db(self, cabinet: WBCabinet, limit: int, offset: int, status: Optional[str] = None) -> Dict[str, Any]:
         """Получение заказов из БД"""
         try:
-            now_utc = datetime.now(timezone.utc)
-            if MSK_TZ:
-                now_msk = now_utc.astimezone(MSK_TZ)
-                today_start_msk = now_msk.replace(hour=0, minute=0, second=0, microsecond=0)
-                yesterday_start_msk = today_start_msk - timedelta(days=1)
-                today_start = today_start_msk.astimezone(timezone.utc)
-                yesterday_start = yesterday_start_msk.astimezone(timezone.utc)
-            else:
-                today_start = now_utc.replace(hour=0, minute=0, second=0, microsecond=0)
-                yesterday_start = today_start - timedelta(days=1)
+            # Начало дня в МСК
+            now_msk = TimezoneUtils.now_msk()
+            today_start_msk = TimezoneUtils.get_today_start_msk()
+            yesterday_start_msk = TimezoneUtils.get_yesterday_start_msk()
             
-            # Получаем заказы с пагинацией (включая отмененные)
-            orders_query = self.db.query(WBOrder).filter(
+            # Конвертируем в UTC для фильтров БД
+            today_start = TimezoneUtils.to_utc(today_start_msk)
+            yesterday_start = TimezoneUtils.to_utc(yesterday_start_msk)
+            
+            # Оптимизированный запрос с eager loading
+            orders_query = self.db.query(WBOrder).options(
+                joinedload(WBOrder.cabinet)  # Загружаем кабинет
+            ).filter(
                 WBOrder.cabinet_id == cabinet.id
             )
             
@@ -888,16 +918,21 @@ class BotAPIService:
             total_orders = orders_query.count()
             orders = orders_query.offset(offset).limit(limit).all()
             
+            # Получаем все nm_id для batch загрузки продуктов
+            nm_ids = [order.nm_id for order in orders]
+            products = self.db.query(WBProduct).filter(
+                WBProduct.cabinet_id == cabinet.id,
+                WBProduct.nm_id.in_(nm_ids)
+            ).all()
+            
+            # Создаем словарь для быстрого поиска продуктов
+            products_dict = {p.nm_id: p for p in products}
+            
             # Формируем список заказов
             orders_list = []
             for order in orders:
-                # Получаем рейтинг товара
-                product = self.db.query(WBProduct).filter(
-                    and_(
-                        WBProduct.cabinet_id == order.cabinet_id,
-                        WBProduct.nm_id == order.nm_id
-                    )
-                ).first()
+                # Получаем продукт из предзагруженного словаря
+                product = products_dict.get(order.nm_id)
                 
                 orders_list.append({
                     "id": order.id,
@@ -1186,41 +1221,34 @@ class BotAPIService:
     async def _fetch_analytics_from_db(self, cabinet: WBCabinet, period: str) -> Dict[str, Any]:
         """Получение аналитики из БД"""
         try:
-            now_utc = datetime.now(timezone.utc)
-            if MSK_TZ:
-                now_msk = now_utc.astimezone(MSK_TZ)
-                today_start_msk = now_msk.replace(hour=0, minute=0, second=0, microsecond=0)
-                yesterday_start_msk = today_start_msk - timedelta(days=1)
-                week_start_msk = today_start_msk - timedelta(days=7)
-                month_start_msk = today_start_msk - timedelta(days=30)
-                quarter_start_msk = today_start_msk - timedelta(days=90)
-                today_start = today_start_msk.astimezone(timezone.utc)
-                yesterday_start = yesterday_start_msk.astimezone(timezone.utc)
-                week_start = week_start_msk.astimezone(timezone.utc)
-                month_start = month_start_msk.astimezone(timezone.utc)
-                quarter_start = quarter_start_msk.astimezone(timezone.utc)
-                now = now_utc
-            else:
-                now = now_utc
-                today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-                yesterday_start = today_start - timedelta(days=1)
-                week_start = today_start - timedelta(days=7)
-                month_start = today_start - timedelta(days=30)
-                quarter_start = today_start - timedelta(days=90)
+            # Начало периодов в МСК
+            now_msk = TimezoneUtils.now_msk()
+            today_start_msk = TimezoneUtils.get_today_start_msk()
+            yesterday_start_msk = TimezoneUtils.get_yesterday_start_msk()
+            week_start_msk = TimezoneUtils.get_week_start_msk()
+            month_start_msk = TimezoneUtils.get_month_start_msk()
+            quarter_start_msk = now_msk - timedelta(days=90)
+            
+            # Конвертируем в UTC для фильтров БД
+            today_start = TimezoneUtils.to_utc(today_start_msk)
+            yesterday_start = TimezoneUtils.to_utc(yesterday_start_msk)
+            week_start = TimezoneUtils.to_utc(week_start_msk)
+            month_start = TimezoneUtils.to_utc(month_start_msk)
+            quarter_start = TimezoneUtils.to_utc(quarter_start_msk)
             
             # Продажи по периодам
             sales_periods = {
-                "today": self._get_orders_period(cabinet.id, today_start, now),
+                "today": self._get_orders_period(cabinet.id, today_start, TimezoneUtils.to_utc(now_msk)),
                 "yesterday": self._get_orders_period(cabinet.id, yesterday_start, today_start),
-                "7_days": self._get_orders_period(cabinet.id, week_start, now),
-                "30_days": self._get_orders_period(cabinet.id, month_start, now)
+                "7_days": self._get_orders_period(cabinet.id, week_start, TimezoneUtils.to_utc(now_msk)),
+                "30_days": self._get_orders_period(cabinet.id, month_start, TimezoneUtils.to_utc(now_msk))
             }
             
             # Динамика
             dynamics = self._calculate_dynamics(sales_periods)
             
             # Топ товары
-            top_products = self._get_top_products(cabinet.id, week_start, now)
+            top_products = self._get_top_products(cabinet.id, week_start, TimezoneUtils.to_utc(now_msk))
             
             # Сводка остатков
             stocks_summary = self._get_stocks_summary(cabinet.id)

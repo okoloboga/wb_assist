@@ -4,12 +4,8 @@
 
 from typing import Dict, List, Any, Optional
 from datetime import datetime, timezone
-try:
-    from zoneinfo import ZoneInfo
-    MSK_TZ = ZoneInfo("Europe/Moscow")
-except Exception:
-    MSK_TZ = None
 import logging
+from app.utils.timezone import TimezoneUtils
 
 logger = logging.getLogger(__name__)
 
@@ -415,14 +411,7 @@ class BotMessageFormatter:
             if not datetime_str:
                 return "N/A"
             dt = datetime.fromisoformat(datetime_str.replace('Z', '+00:00'))
-            if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=timezone.utc)
-            if MSK_TZ is not None:
-                dt = dt.astimezone(MSK_TZ)
-            else:
-                # Фолбэк: UTC+3 визуально
-                dt = (dt.astimezone(timezone.utc))
-            return dt.strftime("%H:%M")
+            return TimezoneUtils.format_time_only(dt)
         except:
             return datetime_str
 

@@ -5,6 +5,7 @@ Notification Generator для системы уведомлений S3
 
 from datetime import datetime, timezone
 from typing import Dict, Any, Optional
+from app.utils.timezone import TimezoneUtils
 
 
 class NotificationGenerator:
@@ -75,7 +76,7 @@ class NotificationGenerator:
             "grouping_enabled": user_settings.get("grouping_enabled", True),
             "max_group_size": user_settings.get("max_group_size", 5),
             "group_timeout": user_settings.get("group_timeout", 300),
-            "generated_at": datetime.now(timezone.utc)
+            "generated_at": TimezoneUtils.now_msk()
         }
     
     def _generate_order_buyout_notification(self, event_data: Dict[str, Any], user_settings: Dict[str, Any]) -> Dict[str, Any]:
@@ -99,7 +100,7 @@ class NotificationGenerator:
             "grouping_enabled": user_settings.get("grouping_enabled", True),
             "max_group_size": user_settings.get("max_group_size", 5),
             "group_timeout": user_settings.get("group_timeout", 300),
-            "generated_at": datetime.now(timezone.utc)
+            "generated_at": TimezoneUtils.now_msk()
         }
     
     def _generate_order_cancellation_notification(self, event_data: Dict[str, Any], user_settings: Dict[str, Any]) -> Dict[str, Any]:
@@ -123,7 +124,7 @@ class NotificationGenerator:
             "grouping_enabled": user_settings.get("grouping_enabled", True),
             "max_group_size": user_settings.get("max_group_size", 5),
             "group_timeout": user_settings.get("group_timeout", 300),
-            "generated_at": datetime.now(timezone.utc)
+            "generated_at": TimezoneUtils.now_msk()
         }
     
     def _generate_order_return_notification(self, event_data: Dict[str, Any], user_settings: Dict[str, Any]) -> Dict[str, Any]:
@@ -147,7 +148,7 @@ class NotificationGenerator:
             "grouping_enabled": user_settings.get("grouping_enabled", True),
             "max_group_size": user_settings.get("max_group_size", 5),
             "group_timeout": user_settings.get("group_timeout", 300),
-            "generated_at": datetime.now(timezone.utc)
+            "generated_at": TimezoneUtils.now_msk()
         }
     
     def _generate_negative_review_notification(self, event_data: Dict[str, Any], user_settings: Dict[str, Any]) -> Dict[str, Any]:
@@ -172,7 +173,7 @@ class NotificationGenerator:
             "grouping_enabled": user_settings.get("grouping_enabled", True),
             "max_group_size": user_settings.get("max_group_size", 5),
             "group_timeout": user_settings.get("group_timeout", 300),
-            "generated_at": datetime.now(timezone.utc)
+            "generated_at": TimezoneUtils.now_msk()
         }
     
     def _generate_critical_stocks_notification(self, event_data: Dict[str, Any], user_settings: Dict[str, Any]) -> Dict[str, Any]:
@@ -201,7 +202,7 @@ class NotificationGenerator:
             "grouping_enabled": user_settings.get("grouping_enabled", True),
             "max_group_size": user_settings.get("max_group_size", 5),
             "group_timeout": user_settings.get("group_timeout", 300),
-            "generated_at": datetime.now(timezone.utc)
+            "generated_at": TimezoneUtils.now_msk()
         }
     
     def _format_new_order_content(self, order_id: int, amount: int, product_name: str, brand: str) -> str:
@@ -212,7 +213,7 @@ class NotificationGenerator:
 📦 Товар: {product_name}
 🏷️ Бренд: {brand}
 
-Время: {datetime.now(timezone.utc).strftime('%H:%M:%S')}"""
+Время: {TimezoneUtils.format_time_only(TimezoneUtils.now_msk())}"""
     
     def _format_order_buyout_content(self, order_id: int, amount: int, product_name: str, brand: str) -> str:
         """Форматирование контента уведомления о выкупе заказа"""
@@ -222,7 +223,7 @@ class NotificationGenerator:
 📦 Товар: {product_name}
 🏷️ Бренд: {brand}
 
-Время: {datetime.now(timezone.utc).strftime('%H:%M:%S')}"""
+Время: {TimezoneUtils.format_time_only(TimezoneUtils.now_msk())}"""
     
     def _format_order_cancellation_content(self, order_id: int, amount: int, product_name: str, brand: str) -> str:
         """Форматирование контента уведомления об отмене заказа"""
@@ -232,7 +233,7 @@ class NotificationGenerator:
 📦 Товар: {product_name}
 🏷️ Бренд: {brand}
 
-Время: {datetime.now(timezone.utc).strftime('%H:%M:%S')}"""
+Время: {TimezoneUtils.format_time_only(TimezoneUtils.now_msk())}"""
     
     def _format_order_return_content(self, order_id: int, amount: int, product_name: str, brand: str) -> str:
         """Форматирование контента уведомления о возврате заказа"""
@@ -242,7 +243,7 @@ class NotificationGenerator:
 📦 Товар: {product_name}
 🏷️ Бренд: {brand}
 
-Время: {datetime.now(timezone.utc).strftime('%H:%M:%S')}"""
+Время: {TimezoneUtils.format_time_only(TimezoneUtils.now_msk())}"""
     
     def _format_negative_review_content(self, review_id: int, rating: int, text: str, product_name: str, order_id: Optional[int]) -> str:
         """Форматирование контента уведомления о негативном отзыве"""
@@ -368,7 +369,7 @@ class NotificationGenerator:
 🏷️ Бренд: {brand}
 📏 Размер: {size}
 
-Время: {datetime.now(timezone.utc).strftime('%H:%M:%S')}"""
+Время: {TimezoneUtils.format_time_only(TimezoneUtils.now_msk())}"""
     
     def _format_new_return_content(self, order_id: str, amount: float, product_name: str, brand: str, size: str) -> str:
         """Форматирование контента уведомления о новом возврате"""
@@ -379,7 +380,7 @@ class NotificationGenerator:
 🏷️ Бренд: {brand}
 📏 Размер: {size}
 
-Время: {datetime.now(timezone.utc).strftime('%H:%M:%S')}"""
+Время: {TimezoneUtils.format_time_only(TimezoneUtils.now_msk())}"""
     
     def _format_sale_status_change_content(self, order_id: str, product_name: str, previous_status: str, current_status: str, amount: float) -> str:
         """Форматирование контента уведомления об изменении статуса продажи"""
@@ -389,7 +390,7 @@ class NotificationGenerator:
 💵 Сумма: {amount:,.2f} ₽
 🔄 {previous_status} → {current_status}
 
-Время: {datetime.now(timezone.utc).strftime('%H:%M:%S')}"""
+Время: {TimezoneUtils.format_time_only(TimezoneUtils.now_msk())}"""
     
     def _format_sale_cancellation_change_content(self, order_id: str, product_name: str, was_cancelled: bool, is_cancelled: bool, amount: float) -> str:
         """Форматирование контента уведомления об изменении отмены продажи"""
@@ -400,4 +401,4 @@ class NotificationGenerator:
 💵 Сумма: {amount:,.2f} ₽
 🔄 Статус: {'Отменена' if is_cancelled else 'Активна'}
 
-Время: {datetime.now(timezone.utc).strftime('%H:%M:%S')}"""
+Время: {TimezoneUtils.format_time_only(TimezoneUtils.now_msk())}"""

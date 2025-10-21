@@ -24,15 +24,14 @@ class WBAPIClient:
             "common": "https://common-api.wildberries.ru"
         }
         
-        # Rate limits для разных эндпоинтов
+        # Rate limits для разных эндпоинтов (консервативные)
         self.rate_limits = {
-            # Более консервативные лимиты для statistics API
-            "sales": {"requests_per_minute": 30, "interval_ms": 2000, "burst": 3},  # Очень консервативно для sales
-            "orders": {"requests_per_minute": 120, "interval_ms": 500, "burst": 10},
-            "stocks": {"requests_per_minute": 120, "interval_ms": 500, "burst": 10},
-            "products": {"requests_per_minute": 10, "interval_ms": 6000, "burst": 5},
-            "feedbacks": {"requests_per_minute": 60, "interval_ms": 1000, "burst": 10},
-            "common": {"requests_per_minute": 120, "interval_ms": 500, "burst": 10}
+            "sales": {"requests_per_minute": 20, "interval_ms": 3000, "burst": 2},  # Очень консервативно для sales
+            "orders": {"requests_per_minute": 100, "interval_ms": 600, "burst": 8},
+            "stocks": {"requests_per_minute": 100, "interval_ms": 600, "burst": 8},
+            "products": {"requests_per_minute": 8, "interval_ms": 7500, "burst": 3},  # Очень консервативно для products
+            "feedbacks": {"requests_per_minute": 50, "interval_ms": 1200, "burst": 8},
+            "common": {"requests_per_minute": 30, "interval_ms": 2000, "burst": 3}  # Очень консервативно для common
         }
         
         # Текущие счетчики запросов
@@ -158,23 +157,26 @@ class WBAPIClient:
                         raise Exception("Invalid API key")
                     
                     elif response.status_code == 429:
-                        logger.warning(f"Rate limit exceeded for {api_type}, attempt {attempt + 1}")
+                        # Получаем Retry-After из заголовков
+                        retry_after = int(response.headers.get('Retry-After', 10))
+                        logger.warning(f"Rate limit exceeded for {api_type}, retry after {retry_after}s, attempt {attempt + 1}")
+                        
                         if attempt < max_retries - 1:
-                            # Более агрессивный backoff для sales API
+                            # Используем Retry-After из заголовков или экспоненциальный backoff
                             if api_type == "sales":
-                                base = min(10 * (2 ** attempt), 120)  # До 2 минут для sales
-                                jitter = 2.0
+                                # Для sales API используем более консервативный подход
+                                wait_time = max(retry_after, min(30 * (2 ** attempt), 300))  # До 5 минут
+                            elif api_type == "common":
+                                # Для common API используем очень консервативный подход
+                                wait_time = max(retry_after, min(60 * (2 ** attempt), 600))  # До 10 минут
                             else:
-                                base = min(5 * (2 ** attempt), 60)
-                                jitter = 0.5
+                                wait_time = max(retry_after, min(10 * (2 ** attempt), 120))  # До 2 минут
                             
-                            sleep_time = base + jitter
-                            logger.info(f"Sleeping {sleep_time:.1f}s before retry for {api_type}")
-                            await asyncio.sleep(sleep_time)
+                            logger.info(f"Waiting {wait_time}s before retry for {api_type}")
+                            await asyncio.sleep(wait_time)
                             continue
                         else:
-                            logger.error(f"Max retries exceeded for {api_type} due to rate limiting")
-                            raise Exception("Rate limit exceeded")
+                            raise Exception(f"Rate limit exceeded after {max_retries} attempts")
                     
                     elif response.status_code >= 500:
                         logger.warning(f"Server error {response.status_code}, attempt {attempt + 1}")
@@ -229,7 +231,13 @@ class WBAPIClient:
                 self.last_reset[api_type] = datetime.now(timezone.utc)
         
         # Небольшая задержка между запросами
-        await asyncio.sleep(rate_limit["interval_ms"] / 1000)
+        base_delay = rate_limit["interval_ms"] / 1000
+        
+        # Дополнительная задержка для common API
+        if api_type == "common":
+            base_delay = max(base_delay, 3.0)  # Минимум 3 секунды для common API
+        
+        await asyncio.sleep(base_delay)
 
     async def validate_api_key(self) -> Dict[str, Any]:
         """Валидация API ключа через запрос к складам"""

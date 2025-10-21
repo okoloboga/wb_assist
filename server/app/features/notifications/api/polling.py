@@ -33,12 +33,15 @@ async def get_new_notifications(
                 detail="User not found"
             )
         
+        # Импортируем TimezoneUtils
+        from app.utils.timezone import TimezoneUtils
+        
         # Если last_check не указан, берем текущее время (только новые события)
         if not last_check:
-            last_check = datetime.now(timezone.utc)
+            last_check = TimezoneUtils.now_msk()
         
         # Инициализируем notification service
-        notification_service = NotificationService(db, None)
+        notification_service = NotificationService(db)
         
         # Получаем новые события
         events = await notification_service.get_new_events(
@@ -46,16 +49,27 @@ async def get_new_notifications(
             last_check=last_check
         )
         
+        # Логируем результат для отладки
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"📡 Polling response for user {telegram_id}: {len(events)} events")
+        if events:
+            for event in events:
+                logger.info(f"  📋 Event: {event.get('type', 'unknown')} - {event.get('data', {}).get('message', 'no message')}")
+        
         return PollingResponse(
             success=True,
             events=events,
-            last_check=datetime.now(timezone.utc),
+            last_check=TimezoneUtils.now_msk(),
             events_count=len(events)
         )
         
     except HTTPException:
         raise
     except Exception as e:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"Error in polling endpoint for user {telegram_id}: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Internal server error: {str(e)}"
@@ -102,7 +116,7 @@ async def get_new_notifications_batch(
             }
         
         # Инициализируем notification service
-        notification_service = NotificationService(db, None)
+        notification_service = NotificationService(db)
         
         # Получаем события для всех пользователей
         all_events = {}

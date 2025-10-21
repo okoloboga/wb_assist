@@ -5,6 +5,7 @@ Event Detector для системы уведомлений S3
 
 from typing import List, Dict, Any
 from datetime import datetime, timezone
+from app.utils.timezone import TimezoneUtils
 
 
 class EventDetector:
@@ -33,7 +34,7 @@ class EventDetector:
                     "status": order.get("status", "unknown"),
                     "product_name": order.get("product_name", ""),
                     "brand": order.get("brand", ""),
-                    "detected_at": datetime.now(timezone.utc)
+                    "detected_at": TimezoneUtils.now_msk()
                 }
                 events.append(event)
         
@@ -73,13 +74,12 @@ class EventDetector:
                         "amount": order.get("amount", 0),
                         "product_name": order.get("product_name", ""),
                         "brand": order.get("brand", ""),
-                        "detected_at": datetime.now(timezone.utc)
+                        "detected_at": TimezoneUtils.now_msk()
                     }
                     events.append(event)
         
         return events
     
-    # detect_negative_reviews удален - используется только polling система
     
     def detect_critical_stocks(
         self, 
@@ -113,7 +113,7 @@ class EventDetector:
                     "stocks": current_stocks_data,
                     "critical_sizes": self._get_critical_sizes(current_stocks_data),
                     "zero_sizes": self._get_zero_sizes(current_stocks_data),
-                    "detected_at": datetime.now(timezone.utc)
+                    "detected_at": TimezoneUtils.now_msk()
                 }
                 events.append(event)
         
@@ -180,7 +180,7 @@ class EventDetector:
                     "nm_id": sale.get("nm_id"),
                     "brand": sale.get("brand"),
                     "size": sale.get("size"),
-                    "detected_at": datetime.now(timezone.utc).isoformat()
+                    "detected_at": TimezoneUtils.now_msk().isoformat()
                 }
                 events.append(event)
         
@@ -205,7 +205,7 @@ class EventDetector:
                         "current_status": current_sale.get("status"),
                         "amount": current_sale.get("amount"),
                         "sale_date": current_sale.get("sale_date"),
-                        "detected_at": datetime.now(timezone.utc).isoformat()
+                        "detected_at": TimezoneUtils.now_msk().isoformat()
                     }
                     events.append(event)
                 
@@ -221,7 +221,7 @@ class EventDetector:
                         "is_cancelled": current_sale.get("is_cancel"),
                         "amount": current_sale.get("amount"),
                         "sale_date": current_sale.get("sale_date"),
-                        "detected_at": datetime.now(timezone.utc).isoformat()
+                        "detected_at": TimezoneUtils.now_msk().isoformat()
                     }
                     events.append(event)
         

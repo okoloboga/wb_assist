@@ -251,6 +251,19 @@ async def handle_new_review_notification(message: Message, data: dict):
     await message.answer(text)
 
 
+async def handle_error_notification(message: Message, data: dict):
+    """Обработать уведомление об ошибке"""
+    error_data = data.get("data", {})
+    error_type = error_data.get("type", "unknown")
+    error_message = error_data.get("message", "Произошла ошибка")
+    
+    text = f"⚠️ **Ошибка системы**\n\n"
+    text += f"Тип: {error_type}\n"
+    text += f"Описание: {error_message}\n\n"
+    text += "🔄 Попробуйте обновить данные или обратитесь в поддержку"
+    
+    await message.answer(text)
+
 async def handle_sync_completed_notification(message: Message, data: dict):
     """Обработать уведомление о завершении синхронизации"""
     sync_data = data.get("data", {})

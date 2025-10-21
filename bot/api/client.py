@@ -33,6 +33,9 @@ class BotAPIClient:
             "X-API-SECRET-KEY": API_SECRET_KEY,
             "Content-Type": "application/json"
         }
+        self.max_retries = 3
+        self.retry_delay = 1  # секунды
+        self.timeout = 30  # секунды
         
         # Отладочные логи инициализации
         logger.info(f"🔧 Инициализация BotAPIClient:")
@@ -40,10 +43,115 @@ class BotAPIClient:
         logger.info(f"   🔗 Base URL: {self.base_url}")
         logger.info(f"   🔑 API_SECRET_KEY: {'***' + API_SECRET_KEY[-4:] if API_SECRET_KEY else 'НЕ НАЙДЕН'}")
         logger.info(f"   📋 Headers: {self.headers}")
+        logger.info(f"   🔄 Max retries: {self.max_retries}")
+        logger.info(f"   ⏰ Timeout: {self.timeout}s")
         
         if not API_SECRET_KEY:
             logger.error("❌ API_SECRET_KEY не найден в переменных окружения.")
             raise ValueError("API_SECRET_KEY не найден в переменных окружения.")
+
+    async def _make_request_with_retry(
+        self, 
+        method: str, 
+        endpoint: str, 
+        params: Optional[Dict] = None,
+        data: Optional[Dict] = None,
+        timeout: Optional[int] = None
+    ) -> BotAPIResponse:
+        """HTTP запрос с retry логикой"""
+        timeout = timeout or self.timeout
+        
+        for attempt in range(self.max_retries):
+            try:
+                async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=timeout)) as session:
+                    url = f"{self.base_url}{endpoint}"
+                    
+                    if method.upper() == "GET":
+                        async with session.get(url, params=params, headers=self.headers) as response:
+                            return await self._handle_response(response)
+                    elif method.upper() == "POST":
+                        async with session.post(url, json=data, headers=self.headers) as response:
+                            return await self._handle_response(response)
+                            
+            except asyncio.TimeoutError:
+                logger.warning(f"⏰ Timeout на попытке {attempt + 1}/{self.max_retries} для {endpoint}")
+                if attempt < self.max_retries - 1:
+                    await asyncio.sleep(self.retry_delay * (2 ** attempt))  # Exponential backoff
+                    continue
+                else:
+                    return BotAPIResponse(
+                        success=False,
+                        error=f"Timeout после {self.max_retries} попыток",
+                        status_code=408
+                    )
+                    
+            except aiohttp.ClientError as e:
+                logger.warning(f"🌐 Network error на попытке {attempt + 1}/{self.max_retries} для {endpoint}: {e}")
+                if attempt < self.max_retries - 1:
+                    await asyncio.sleep(self.retry_delay * (2 ** attempt))
+                    continue
+                else:
+                    return BotAPIResponse(
+                        success=False,
+                        error=f"Network error: {str(e)}",
+                        status_code=500
+                    )
+        
+        return BotAPIResponse(
+            success=False,
+            error=f"Failed after {self.max_retries} attempts",
+            status_code=500
+        )
+
+    async def _handle_response(self, response: aiohttp.ClientResponse) -> BotAPIResponse:
+        """Обработка HTTP ответа с детальным логированием"""
+        try:
+            data = await response.json()
+            
+            if response.status == 200:
+                return BotAPIResponse(
+                    success=True,
+                    data=data.get("data"),
+                    telegram_text=data.get("telegram_text"),
+                    status_code=response.status
+                )
+            elif response.status == 404:
+                logger.warning(f"🔍 Resource not found: {response.url}")
+                return BotAPIResponse(
+                    success=False,
+                    error="Ресурс не найден",
+                    status_code=response.status
+                )
+            elif response.status == 429:
+                logger.warning(f"⏰ Rate limit exceeded: {response.url}")
+                return BotAPIResponse(
+                    success=False,
+                    error="Превышен лимит запросов, попробуйте позже",
+                    status_code=response.status
+                )
+            elif response.status >= 500:
+                logger.error(f"🔥 Server error {response.status}: {response.url}")
+                return BotAPIResponse(
+                    success=False,
+                    error="Ошибка сервера, попробуйте позже",
+                    status_code=response.status
+                )
+            else:
+                error_msg = data.get("detail", f"HTTP {response.status}")
+                logger.error(f"❌ API error {response.status}: {error_msg}")
+                return BotAPIResponse(
+                    success=False,
+                    error=error_msg,
+                    status_code=response.status
+                )
+                
+        except Exception as e:
+            logger.error(f"💥 Error parsing response: {e}")
+            return BotAPIResponse(
+                success=False,
+                error="Ошибка обработки ответа сервера",
+                status_code=response.status
+            )
 
     async def _make_request_with_timeout(
         self, 
@@ -202,7 +310,7 @@ class BotAPIClient:
     async def get_dashboard(self, user_id: int) -> BotAPIResponse:
         """Получить общую сводку по кабинету WB"""
         params = {"telegram_id": user_id}
-        return await self._make_request("GET", "/dashboard", params=params)
+        return await self._make_request_with_retry("GET", "/dashboard", params=params)
 
     # Заказы
     async def get_recent_orders(
@@ -217,12 +325,12 @@ class BotAPIClient:
         params = {"telegram_id": user_id, "limit": limit, "offset": offset}
         if status:
             params["status"] = status
-        return await self._make_request("GET", "/orders/recent", params=params)
+        return await self._make_request_with_retry("GET", "/orders/recent", params=params)
 
     async def get_order_details(self, order_id: int, user_id: int) -> BotAPIResponse:
         """Получить детальную информацию о заказе"""
         params = {"telegram_id": user_id}
-        return await self._make_request("GET", f"/orders/{order_id}", params=params)
+        return await self._make_request_with_retry("GET", f"/orders/{order_id}", params=params)
 
     # Остатки и товары
     async def get_critical_stocks(
@@ -233,7 +341,7 @@ class BotAPIClient:
     ) -> BotAPIResponse:
         """Получить критичные остатки"""
         params = {"telegram_id": user_id, "limit": limit, "offset": offset}
-        return await self._make_request("GET", "/stocks/critical", params=params)
+        return await self._make_request_with_retry("GET", "/stocks/critical", params=params)
 
     # Отзывы и аналитика
     async def get_reviews_summary(
@@ -264,7 +372,7 @@ class BotAPIClient:
     async def start_initial_sync(self, user_id: int) -> BotAPIResponse:
         """Запустить первичную синхронизацию с увеличенным таймаутом"""
         params = {"telegram_id": user_id}
-        return await self._make_request_with_timeout("POST", "/sync/start", params=params, timeout=600)  # 10 минут
+        return await self._make_request_with_retry("POST", "/sync/start", params=params, timeout=600)  # 10 минут
 
     async def get_sync_status(self, user_id: int) -> BotAPIResponse:
         """Получить статус синхронизации"""
