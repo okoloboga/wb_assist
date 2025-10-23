@@ -470,81 +470,111 @@ class BotMessageFormatter:
             
             # Основная информация
             order_id = order.get("id", "N/A")
+            wb_order_id = order.get("order_id", "N/A")
             order_date = self._format_datetime(order.get("date", ""))
-            brand = order.get("brand", "Неизвестно")
-            product_name = order.get("product_name", "Неизвестно")
+            status = order.get("status", "unknown")
+            
+            # Товар
             nm_id = order.get("nm_id", "N/A")
-            supplier_article = order.get("supplier_article", order.get("article", ""))
+            product_name = order.get("product_name", "Неизвестно")
+            article = order.get("article", "")
             size = order.get("size", "")
             barcode = order.get("barcode", "")
-            warehouse_from = order.get("warehouse_from", "")
-            warehouse_to = order.get("warehouse_to", "")
-            status = order.get("status", "")
             
-            # Финансовая информация
-            order_amount = order.get("amount", 0)
+            # Финансы
+            total_price = order.get("total_price", 0)
             spp_percent = order.get("spp_percent", 0)
             customer_price = order.get("customer_price", 0)
-            # Логистика исключена из системы
-            dimensions = order.get("dimensions", "")
-            volume_liters = order.get("volume_liters", 0)
-            warehouse_rate_per_liter = order.get("warehouse_rate_per_liter", 0)
-            warehouse_rate_extra = order.get("warehouse_rate_extra", 0)
+            discount_percent = order.get("discount_percent", 0)
             
-            # Рейтинги и отзывы
-            rating = order.get("rating", 0)
-            reviews_count = order.get("reviews_count", 0)
+            # Склады
+            warehouse_from = order.get("warehouse_from", "")
+            warehouse_to = order.get("warehouse_to", "")
             
-            # Статистика
+            # Продажи
             sales_periods = order.get("sales_periods", {})
+            
+            # Статистика заказов
+            orders_stats = order.get("orders_stats", {})
+            
+            # Рейтинги
+            avg_rating = order.get("avg_rating", 0)
+            reviews_count = order.get("reviews_count", 0)
+            rating_distribution = order.get("rating_distribution", {})
             
             # Остатки
             stocks = order.get("stocks", {})
-            stock_days = order.get("stock_days", {})
             
-            # Формируем сообщение
-            message = f"🧾 Заказ [#{order_id}] {order_date}\n\n"
-            message += f"✏ {product_name}\n"
-            message += f"🆔 {nm_id} / {supplier_article} / ({size})\n"
+            # Формируем сообщение в новом формате
+            message = f"""Order ID: {order_id} от {order_date}
+Статус: {status}
+
+WB ID: {wb_order_id}
+NM ID (товар): {nm_id}
+Название: {product_name}"""
+            
+            if article:
+                message += f"\nАртикул: {article}"
+            if size:
+                message += f"\nРазмер: {size}"
             if barcode:
-                message += f"🎹 {barcode}\n"
-            message += f"🚛 {warehouse_from} ⟶ {warehouse_to}\n"
-            message += f"💰 Цена заказа: {order_amount:,.0f}₽\n"
-            status_map = {
-                "active": "Активен",
-                "buyout": "Выкуплен",
-                "canceled": "Отменен",
-                "cancelled": "Отменен",
-                "return": "Возврат",
-                "returned": "Возврат"
-            }
-            ru_status = status_map.get(status, status)
-            if ru_status:
-                message += f"📅 Статус: {ru_status}\n"
-            if spp_percent or customer_price:
-                message += f"🛍 СПП: {spp_percent}% (Цена для покупателя: {customer_price:,.0f}₽)\n"
-            # Логистика исключена из системы
-            if dimensions or volume_liters:
-                message += f"        Габариты: {dimensions}. ({volume_liters}л.)\n"
-            if warehouse_rate_per_liter or warehouse_rate_extra:
-                message += f"        Тариф склада: {warehouse_rate_per_liter:,.1f}₽ за 1л. | {warehouse_rate_extra:,.1f}₽ за л. свыше)\n"
-            if rating or reviews_count:
-                message += f"🌟 Оценка: {rating}\n"
-            message += f"💬 Отзывы: {reviews_count}\n"
+                message += f"\nШтрихкод: {barcode}"
             
-            # Продажи (оставляем только эту метрику)
-            if sales_periods and any(sales_periods.values()):
-                message += f"📖 Продаж за 7 / 14 / 30 дней:\n"
-            message += f"        {sales_periods.get('7_days', 0)} | {sales_periods.get('14_days', 0)} | {sales_periods.get('30_days', 0)} шт.\n"
+            message += f"""
+
+💰 Финансовые данные:
+Цена заказа: {total_price:,.1f}₽
+СПП %: {spp_percent}%
+Цена для покупателя: {customer_price:,.1f}₽
+Скидка: {discount_percent}%"""
             
-            # Остатки (если предоставлены)
-            if stocks and any(stocks.values()):
-                message += f"📦 Остаток:\n"
-            for size in ["L", "M", "S", "XL"]:
-                stock_count = stocks.get(size, 0)
-                stock_days_count = stock_days.get(size, 0)
-                if stock_count > 0 or stock_days_count > 0:
-                    message += f"        {size} ({stock_count} шт.) ≈ на {stock_days_count} дн.\n"
+            if warehouse_from or warehouse_to:
+                message += f"\n\n{warehouse_from} -> {warehouse_to}"
+            
+            # Продажи
+            if sales_periods:
+                message += f"""
+
+📈 Продажи за периоды:
+За 7 дней: {sales_periods.get('7_days', 0)} продажи
+За 14 дней: {sales_periods.get('14_days', 0)} продажи
+За 30 дней: {sales_periods.get('30_days', 0)} продажи"""
+            
+            # Статистика заказов
+            if orders_stats:
+                message += f"""
+
+🔍 Статистика по заказам:
+Всего заказов: {orders_stats.get('total_orders', 0)}
+Активные: {orders_stats.get('active_orders', 0)} заказ
+Отмененные: {orders_stats.get('canceled_orders', 0)} заказов"""
+            
+            # Рейтинги и отзывы
+            message += f"""
+
+⭐ Рейтинг и отзывы:
+Средний рейтинг: {avg_rating:.2f}
+Всего отзывов: {reviews_count}"""
+            
+            # Распределение рейтингов
+            if rating_distribution:
+                message += "\nРаспределение рейтингов:"
+                for rating in sorted(rating_distribution.keys(), reverse=True):
+                    count = rating_distribution[rating]
+                    # Правильное склонение слова "звезда"
+                    stars_word = "звезда" if rating == 1 else ("звезды" if rating in [2, 3, 4] else "звезд")
+                    # Правильное склонение слова "отзыв"
+                    reviews_word = "отзыв" if count % 10 == 1 and count % 100 != 11 else (
+                        "отзыва" if count % 10 in [2, 3, 4] and count % 100 not in [12, 13, 14] else "отзывов"
+                    )
+                    message += f"\n{rating} {stars_word}: {count} {reviews_word}"
+            
+            # Остатки
+            if stocks:
+                message += "\n\n📦 Остатки по размерам:"
+                for size_key in sorted(stocks.keys()):
+                    quantity = stocks[size_key]
+                    message += f"\n{size_key}: {quantity} шт."
             
             return self._truncate_message(message)
             
@@ -564,11 +594,11 @@ class BotMessageFormatter:
             message = "🔑 СТАТУС WB КАБИНЕТОВ\n\n"
             
             for i, cabinet in enumerate(cabinets, 1):
-                name = cabinet.name or 'Неизвестный кабинет'
-                status = 'active' if cabinet.is_active else 'inactive'
-                api_status = 'valid' if cabinet.is_active else 'invalid'
-                connected_at = cabinet.created_at.isoformat() if cabinet.created_at else None
-                last_sync = cabinet.last_sync_at.isoformat() if cabinet.last_sync_at else None
+                name = cabinet.get('name', 'Неизвестный кабинет')
+                status = cabinet.get('status', 'inactive')
+                api_status = cabinet.get('api_key_status', 'invalid')
+                connected_at = cabinet.get('connected_at')
+                last_sync = cabinet.get('last_sync')
                 
                 # Статус кабинета
                 status_emoji = "✅" if status == "active" else "❌"

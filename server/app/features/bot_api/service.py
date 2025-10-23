@@ -287,12 +287,16 @@ class BotAPIService:
                 )
             ).all()
             
-            # Формируем остатки по размерам
+            # Формируем остатки по размерам (суммируем по всем складам)
             stocks_dict = {}
             for stock in stocks:
                 size = stock.size or "ONE SIZE"
                 quantity = stock.quantity or 0
-                stocks_dict[size] = quantity
+                # Суммируем остатки по всем складам для одного размера
+                if size in stocks_dict:
+                    stocks_dict[size] += quantity
+                else:
+                    stocks_dict[size] = quantity
             
             # Получаем статистику отзывов для товара
             reviews_count = self.db.query(WBReview).filter(
@@ -308,6 +312,43 @@ class BotAPIService:
             except Exception as e:
                 logger.error(f"Ошибка получения статистики товара: {e}")
                 product_stats = {"buyout_rates": {}, "order_speed": {}, "sales_periods": {}}
+            
+            # Получаем статистику по всем заказам этого товара
+            from sqlalchemy import case
+            orders_stats = self.db.query(
+                func.count(WBOrder.id).label('total_orders'),
+                func.count(case((WBOrder.status == 'active', 1))).label('active_orders'),
+                func.count(case((WBOrder.status == 'canceled', 1))).label('canceled_orders')
+            ).filter(
+                and_(
+                    WBOrder.cabinet_id == order.cabinet_id,
+                    WBOrder.nm_id == order.nm_id
+                )
+            ).first()
+            
+            # Получаем распределение рейтингов
+            rating_distribution = self.db.query(
+                WBReview.rating,
+                func.count(WBReview.id).label('count')
+            ).filter(
+                and_(
+                    WBReview.cabinet_id == order.cabinet_id,
+                    WBReview.nm_id == order.nm_id,
+                    WBReview.rating.isnot(None)
+                )
+            ).group_by(WBReview.rating).all()
+            
+            # Форматируем распределение рейтингов
+            rating_dist_dict = {int(row.rating): row.count for row in rating_distribution}
+            
+            # Получаем средний рейтинг из отзывов (более точный)
+            avg_rating = self.db.query(func.avg(WBReview.rating)).filter(
+                and_(
+                    WBReview.cabinet_id == order.cabinet_id,
+                    WBReview.nm_id == order.nm_id,
+                    WBReview.rating.isnot(None)
+                )
+            ).scalar()
             
             # Форматируем данные заказа
             image_url = product.image_url if product and hasattr(product, 'image_url') else None
@@ -349,7 +390,17 @@ class BotAPIService:
                 # Реальная статистика
                 "buyout_rates": product_stats["buyout_rates"],
                 "order_speed": product_stats["order_speed"],
-                "sales_periods": product_stats["sales_periods"]
+                "sales_periods": product_stats["sales_periods"],
+                # Статистика заказов по товару
+                "orders_stats": {
+                    "total_orders": orders_stats.total_orders or 0 if orders_stats else 0,
+                    "active_orders": orders_stats.active_orders or 0 if orders_stats else 0,
+                    "canceled_orders": orders_stats.canceled_orders or 0 if orders_stats else 0
+                },
+                # Распределение рейтингов
+                "rating_distribution": rating_dist_dict,
+                # Средний рейтинг из отзывов (более точный)
+                "avg_rating": round(float(avg_rating), 2) if avg_rating else 0.0
             }
             
             # Отладочный лог
@@ -1390,7 +1441,12 @@ class BotAPIService:
             stocks_dict = {}
             for stock in stocks:
                 size = stock.size or "Unknown"
-                stocks_dict[size] = stock.quantity or 0
+                quantity = stock.quantity or 0
+                # Суммируем остатки по всем складам для одного размера
+                if size in stocks_dict:
+                    stocks_dict[size] += quantity
+                else:
+                    stocks_dict[size] = quantity
             products_dict[nm_id]["stocks"] = stocks_dict
         
         # Сортируем по количеству продаж
