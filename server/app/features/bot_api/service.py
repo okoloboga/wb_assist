@@ -310,6 +310,10 @@ class BotAPIService:
                 product_stats = {"buyout_rates": {}, "order_speed": {}, "sales_periods": {}}
             
             # Форматируем данные заказа
+            image_url = product.image_url if product and hasattr(product, 'image_url') else None
+            logger.info(f"📢 Order detail - Product found: {product is not None}")
+            logger.info(f"📢 Order detail - Product image_url: {image_url}")
+            
             order_data = {
                 "id": order.id,
                 "date": order.order_date.isoformat() if order.order_date else None,
@@ -322,12 +326,12 @@ class BotAPIService:
                 "commission_amount": order.commission_amount or 0.0,
                 "rating": product.rating if product else 0.0,  # Реальный рейтинг из WBProduct
                 "reviews_count": reviews_count,  # Реальное количество отзывов
-                "image_url": product.image_url if product and hasattr(product, 'image_url') else None,  # URL изображения товара
+                "image_url": image_url,  # URL изображения товара
                 # Новые поля из WB API
                 "spp_percent": order.spp_percent or 0.0,
                 "customer_price": order.customer_price or 0.0,
                 "discount_percent": order.discount_percent or 0.0,
-                "logistics_amount": order.logistics_amount or 0.0,
+                # Логистика исключена из системы
                 # Дополнительные поля для детального отчета
                 "order_id": order.order_id,
                 "nm_id": order.nm_id,
@@ -351,6 +355,7 @@ class BotAPIService:
             # Отладочный лог
             logger.info(f"Order data for order {order_id}: spp_percent={order.spp_percent}, customer_price={order.customer_price}, discount_percent={order.discount_percent}")
             logger.info(f"Order data keys: {list(order_data.keys())}")
+            logger.info(f"📢 Final order_data image_url: {order_data.get('image_url')}")
             
             # Форматируем Telegram сообщение
             telegram_text = self.formatter.format_order_detail({"order": order_data})
@@ -949,7 +954,7 @@ class BotAPIService:
                     "spp_percent": order.spp_percent,
                     "customer_price": order.customer_price,
                     "discount_percent": order.discount_percent,
-                    "logistics_amount": order.logistics_amount
+                    # Логистика исключена из системы
                 })
             
             # Статистика за сегодня

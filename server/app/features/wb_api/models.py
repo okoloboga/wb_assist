@@ -103,8 +103,7 @@ class WBOrder(Base):
     customer_price = Column(Float, nullable=True)            # finishedPrice
     discount_percent = Column(Float, nullable=True)         # discountPercent
     
-    # Поля логистики (рассчитывается)
-    logistics_amount = Column(Float, nullable=True)
+    # Логистика исключена из системы
     
     order_date = Column(DateTime(timezone=True), nullable=True)
     status = Column(String(50), nullable=True)

@@ -62,8 +62,8 @@ class NotificationEvent(BaseModel):
     priority: str = Field(default="MEDIUM", description="Event priority")
 
 
-class PollingResponse(BaseModel):
-    """Response schema for polling notifications"""
+class WebhookResponse(BaseModel):
+    """Response schema for webhook notifications"""
     success: bool
     events: List[NotificationEvent]
     last_check: datetime

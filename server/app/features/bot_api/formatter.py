@@ -485,9 +485,7 @@ class BotMessageFormatter:
             order_amount = order.get("amount", 0)
             spp_percent = order.get("spp_percent", 0)
             customer_price = order.get("customer_price", 0)
-            logistics_amount = order.get("logistics_amount", 0)
-            
-            # Логистика
+            # Логистика исключена из системы
             dimensions = order.get("dimensions", "")
             volume_liters = order.get("volume_liters", 0)
             warehouse_rate_per_liter = order.get("warehouse_rate_per_liter", 0)
@@ -525,8 +523,7 @@ class BotMessageFormatter:
                 message += f"📅 Статус: {ru_status}\n"
             if spp_percent or customer_price:
                 message += f"🛍 СПП: {spp_percent}% (Цена для покупателя: {customer_price:,.0f}₽)\n"
-            if logistics_amount:
-                message += f"💶 Логистика WB: {logistics_amount:,.1f}₽\n"
+            # Логистика исключена из системы
             if dimensions or volume_liters:
                 message += f"        Габариты: {dimensions}. ({volume_liters}л.)\n"
             if warehouse_rate_per_liter or warehouse_rate_extra:

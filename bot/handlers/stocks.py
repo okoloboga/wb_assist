@@ -24,8 +24,9 @@ async def show_stock_menu(callback: CallbackQuery):
         offset=0
     )
     
-    if response.success and response.data:
-        stocks_data = response.data.get("stocks", {})
+    if response.success:
+        # Используем новое поле stocks из response
+        stocks_data = response.stocks or {}
         critical_products = stocks_data.get("critical_products", [])
         zero_products = stocks_data.get("zero_products", [])
         summary = stocks_data.get("summary", {})
@@ -71,8 +72,9 @@ async def show_critical_stocks(callback: CallbackQuery):
         offset=0
     )
     
-    if response.success and response.data:
-        stocks_data = response.data.get("stocks", {})
+    if response.success:
+        # Используем новое поле stocks из response
+        stocks_data = response.stocks or {}
         critical_products = stocks_data.get("critical_products", [])
         zero_products = stocks_data.get("zero_products", [])
         summary = stocks_data.get("summary", {})

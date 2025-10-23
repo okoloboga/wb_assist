@@ -22,11 +22,17 @@ class UserCRUD:
     def create_user(self, user_data: UserCreate) -> User:
         """Создать нового пользователя"""
         try:
+            # Автоматически генерируем webhook URL на основе telegram_id
+            bot_webhook_url = f"http://bot:8001/webhook/notifications/{user_data.telegram_id}"
+            webhook_secret = f"secret_{user_data.telegram_id}_{hash(user_data.telegram_id) % 10000}"
+            
             user = User(
                 telegram_id=user_data.telegram_id,
                 username=user_data.username,
                 first_name=user_data.first_name,
-                last_name=user_data.last_name
+                last_name=user_data.last_name,
+                bot_webhook_url=bot_webhook_url,
+                webhook_secret=webhook_secret
             )
             self.db.add(user)
             self.db.commit()
@@ -36,7 +42,7 @@ class UserCRUD:
             from app.features.notifications.crud import NotificationSettingsCRUD
             settings_crud = NotificationSettingsCRUD()
             settings_crud.create_default_settings(self.db, user.id)
-            logger.info(f"Создан пользователь: {user_data.telegram_id} с настройками уведомлений")
+            logger.info(f"Создан пользователь: {user_data.telegram_id} с автоматическим webhook URL: {bot_webhook_url}")
             
             return user
         except Exception as e:
@@ -76,6 +82,12 @@ class UserCRUD:
             existing_user.first_name = user_data.first_name
             existing_user.last_name = user_data.last_name
             existing_user.updated_at = datetime.now(timezone.utc)
+            
+            # Автоматически генерируем webhook URL если его нет
+            if not existing_user.bot_webhook_url:
+                existing_user.bot_webhook_url = f"http://bot:8001/webhook/notifications/{user_data.telegram_id}"
+                existing_user.webhook_secret = f"secret_{user_data.telegram_id}_{hash(user_data.telegram_id) % 10000}"
+                logger.info(f"Автоматически настроен webhook URL для пользователя {user_data.telegram_id}")
 
             self.db.commit()
             self.db.refresh(existing_user)

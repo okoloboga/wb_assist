@@ -108,7 +108,7 @@ class StatusChangeMonitor:
         return [
             change for change in changes
             if (change.get("previous_status") == "active" and 
-                change.get("current_status") == "cancelled")
+                change.get("current_status") == "canceled")
         ]
     
     def detect_return_changes(self, changes: List[Dict[str, Any]]) -> List[Dict[str, Any]]:

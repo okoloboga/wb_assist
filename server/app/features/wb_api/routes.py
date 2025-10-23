@@ -235,6 +235,7 @@ async def get_wb_products(
                 "vendor_code": product.vendor_code,
                 "brand": product.brand,
                 "category": product.category,
+                "image_url": product.image_url,
                 "price": product.price,
                 "discount_price": product.discount_price,
                 "rating": product.rating,

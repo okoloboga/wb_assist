@@ -6,7 +6,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from aiogram import Router, F
-from aiogram.types import CallbackQuery, User, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import CallbackQuery, User, InlineKeyboardMarkup, InlineKeyboardButton, Message
+from aiogram.filters import Command
+from aiogram.fsm.context import FSMContext
 from utils.formatters import safe_edit_message, safe_send_message, handle_telegram_errors
 
 logger = logging.getLogger(__name__)
@@ -263,3 +265,6 @@ async def menu_callback(callback: CallbackQuery):
                 user_id=callback.from_user.id
             )
         await callback.answer()
+
+
+# Команда /webhook перенесена в handlers/webhook.py

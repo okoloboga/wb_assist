@@ -6,6 +6,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from aiogram import Bot, Dispatcher
 from aiogram.filters import Command
+import uvicorn
 
 # Добавляем путь к модулям бота
 sys.path.insert(0, str(Path(__file__).parent))
@@ -24,7 +25,7 @@ from handlers.analytics import router as analytics_router
 from handlers.sync import router as sync_router
 from handlers.notifications import router as notifications_router
 from handlers.prices import router as prices_router
-from handlers.polling import start_notification_polling, stop_notification_polling
+from handlers.webhook import router as webhook_router, webhook_app
 from keyboards.keyboards import main_keyboard, wb_menu_keyboard
 
 # Настройка логирования
@@ -62,18 +63,34 @@ dp.include_router(analytics_router)
 dp.include_router(sync_router)
 dp.include_router(notifications_router)
 dp.include_router(prices_router)
+dp.include_router(webhook_router)
+
+async def start_webhook_server():
+    """Запуск webhook сервера"""
+    config_uvicorn = uvicorn.Config(
+        webhook_app, 
+        host="0.0.0.0", 
+        port=8001, 
+        log_level="info"
+    )
+    server = uvicorn.Server(config_uvicorn)
+    await server.serve()
 
 async def main():
     logger.info("Bot started...")
     try:
-        # Запускаем polling уведомлений в фоне
-        polling_task = asyncio.create_task(start_notification_polling(bot))
+        # Запускаем webhook сервер в фоне
+        webhook_task = asyncio.create_task(start_webhook_server())
+        logger.info("Webhook server started on port 8001")
         
-        # Запускаем основной бот
+        # Запускаем основной бот с webhook системой
         await dp.start_polling(bot)
     finally:
-        # Останавливаем polling
-        await stop_notification_polling()
+        webhook_task.cancel()
+        try:
+            await webhook_task
+        except asyncio.CancelledError:
+            pass
         await bot.session.close()
 
 

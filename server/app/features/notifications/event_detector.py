@@ -123,7 +123,7 @@ class EventDetector:
         """Определение типа события изменения статуса"""
         status_mapping = {
             ("active", "buyout"): "order_buyout",
-            ("active", "cancelled"): "order_cancellation", 
+            ("active", "canceled"): "order_cancellation", 
             ("buyout", "return"): "order_return",
             ("active", "return"): "order_return"
         }

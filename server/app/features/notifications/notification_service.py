@@ -20,6 +20,7 @@ from app.features.bot_api.formatter import BotMessageFormatter
 from app.utils.timezone import TimezoneUtils
 from app.features.wb_api.models import WBOrder, WBCabinet, WBReview, WBProduct, WBStock
 from app.features.notifications.models import NotificationHistory
+from .webhook_sender import WebhookSender
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +39,13 @@ class NotificationService:
         self.settings_crud = NotificationSettingsCRUD()
         self.history_crud = NotificationHistoryCRUD()
         self.order_crud = OrderStatusHistoryCRUD()
+        
+        # Инициализируем WebhookSender
+        self.webhook_sender = WebhookSender()
+        
+        # Инициализируем EventDetector
+        from .event_detector import EventDetector
+        self.event_detector = EventDetector()
     
     @asynccontextmanager
     async def _get_sync_lock(self, cabinet_id: int):
@@ -104,13 +112,39 @@ class NotificationService:
                 )
                 events_processed.extend(stock_events)
             
-            # 4. Генерируем и отправляем уведомления
-            # Уведомления отправляются через polling систему
+            # 4. Отправляем уведомления через webhook
+            for event in events_processed:
+                try:
+                    # Очищаем datetime объекты для JSON сериализации
+                    clean_event = self._clean_datetime_objects(event)
+                    
+                    # Формируем текст уведомления
+                    telegram_text = self._format_notification_for_telegram(clean_event)
+                    
+                    # Отправляем webhook уведомление
+                    webhook_result = await self._send_webhook_notification(
+                        user_id=user_id,
+                        notification=clean_event,
+                        telegram_text=telegram_text,
+                        bot_webhook_url=""  # Будет получен из пользователя
+                    )
+                    
+                    if webhook_result.get("success"):
+                        notifications_sent += 1
+                        logger.info(f"📢 Notification sent for user {user_id}: {event.get('type')}")
+                        
+                        # КРИТИЧНО: Сохраняем уведомление в историю для защиты от дублирования
+                        self._save_notification_to_history(user_id, clean_event, webhook_result)
+                    else:
+                        logger.warning(f"❌ Failed to send notification for user {user_id}: {webhook_result.get('error')}")
+                        
+                except Exception as e:
+                    logger.error(f"❌ Error sending notification for user {user_id}: {e}")
             
             return {
                 "status": "success",
                 "events_processed": len(events_processed),
-                "notifications_sent": 0,  # Polling система
+                "notifications_sent": notifications_sent,
                 "events": events_processed
             }
             
@@ -119,6 +153,25 @@ class NotificationService:
             # Отправляем уведомление об ошибке пользователю
             await self._send_error_notification(user_id, "sync_processing_error", str(e))
             return {"status": "error", "error": str(e)}
+    
+    def _clean_datetime_objects(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Очистка datetime объектов для JSON сериализации"""
+        import datetime
+        
+        if isinstance(data, dict):
+            cleaned = {}
+            for key, value in data.items():
+                if isinstance(value, datetime.datetime):
+                    # Конвертируем datetime в ISO строку
+                    cleaned[key] = value.isoformat()
+                elif isinstance(value, dict):
+                    cleaned[key] = self._clean_datetime_objects(value)
+                elif isinstance(value, list):
+                    cleaned[key] = [self._clean_datetime_objects(item) if isinstance(item, dict) else item for item in value]
+                else:
+                    cleaned[key] = value
+            return cleaned
+        return data
     
     async def _process_order_events(
         self, 
@@ -159,6 +212,28 @@ class NotificationService:
         """Обработка событий отзывов"""
         events = []
         
+        if user_settings.negative_reviews_enabled:
+            # Получаем ID предыдущих отзывов
+            previous_review_ids = {review["review_id"] for review in previous_reviews}
+            
+            # Находим новые негативные отзывы (0-3 звезды)
+            for review in current_reviews:
+                if (review["review_id"] not in previous_review_ids and 
+                    review.get("rating", 0) <= 3):
+                    
+                    event = {
+                        "type": "negative_review",
+                        "user_id": user_id,
+                        "review_id": review["review_id"],
+                        "rating": review.get("rating", 0),
+                        "text": review.get("text", ""),
+                        "product_name": f"Товар {review.get('nm_id', 'N/A')}",
+                        "nm_id": review.get("nm_id"),
+                        "user_name": review.get("user_name", ""),
+                        "created_date": review.get("created_date"),
+                        "detected_at": TimezoneUtils.now_msk()
+                    }
+                    events.append(event)
         
         return events
     
@@ -180,20 +255,47 @@ class NotificationService:
         
         return events
     
-    # _send_notifications удален - используется только polling система
+    # _send_notifications удален - используется webhook система
     
     def _format_notification_for_telegram(self, notification: Dict[str, Any]) -> str:
         """Универсальное форматирование уведомления для Telegram"""
         notification_type = notification.get("type")
         
-        # Используем BotMessageFormatter для основных типов
-        if notification_type == "new_order":
-            return self.message_formatter.format_new_order_notification(notification)
+        # Для всех типов заказов используем детальный формат
+        if notification_type in ["new_order", "order_buyout", "order_cancellation", "order_return"]:
+            return self.message_formatter.format_order_detail({"order": notification})
         elif notification_type == "critical_stocks":
             return self.message_formatter.format_critical_stocks_notification(notification)
+        elif notification_type == "negative_review":
+            return self._format_negative_review_notification(notification)
         else:
             # Универсальное форматирование для остальных типов
             return self._format_universal_notification(notification)
+    
+    def _format_negative_review_notification(self, notification: Dict[str, Any]) -> str:
+        """Форматирование уведомления о негативном отзыве"""
+        try:
+            rating = notification.get("rating", 0)
+            text = notification.get("text", "")
+            product_name = notification.get("product_name", "Неизвестный товар")
+            nm_id = notification.get("nm_id", "N/A")
+            user_name = notification.get("user_name", "Аноним")
+            
+            message_text = (
+                f"😞 **НЕГАТИВНЫЙ ОТЗЫВ**\n\n"
+                f"⭐ Оценка: {rating}/5\n"
+                f"📝 Текст: {text[:200]}{'...' if len(text) > 200 else ''}\n"
+                f"📦 Товар: {product_name}\n"
+                f"🆔 ID: {nm_id}\n"
+                f"👤 От: {user_name}\n\n"
+                f"💡 Рекомендуется ответить на отзыв"
+            )
+            
+            return message_text
+            
+        except Exception as e:
+            logger.error(f"Error formatting negative review notification: {e}")
+            return "❌ Ошибка форматирования уведомления об отзыве"
     
     def _format_universal_notification(self, notification: Dict[str, Any]) -> str:
         """Универсальное форматирование уведомления в детальном формате"""
@@ -203,7 +305,7 @@ class NotificationService:
         if notification_type == "negative_review":
             rating = notification.get("rating", 0)
             text = notification.get("text", "")
-        product_name = notification.get("product_name", "Неизвестный товар")
+            product_name = notification.get("product_name", "Неизвестный товар")
             order_id = notification.get("order_id", "N/A")
             order_info = f"Заказ: #{order_id}" if order_id != "N/A" else "Заказ: неизвестен"
             time_str = TimezoneUtils.format_time_only(TimezoneUtils.now_msk())
@@ -250,9 +352,7 @@ class NotificationService:
         order_amount = notification.get("amount", notification.get("total_price", 0))
         spp_percent = notification.get("spp_percent", 0)
         customer_price = notification.get("customer_price", 0)
-        logistics_amount = notification.get("logistics_amount", 0)
-        
-        # Логистика
+        # Логистика исключена из системы
         dimensions = notification.get("dimensions", "")
         volume_liters = notification.get("volume_liters", 0)
         warehouse_rate_per_liter = notification.get("warehouse_rate_per_liter", 0)
@@ -281,8 +381,7 @@ class NotificationService:
         # Условное отображение полей
         if spp_percent or customer_price:
             message += f"🛍 СПП: {spp_percent}% (Цена для покупателя: {customer_price:,.0f}₽)\n"
-        if logistics_amount:
-            message += f"💶 Логистика WB: {logistics_amount:,.1f}₽\n"
+        # Логистика исключена из системы
         if dimensions or volume_liters:
             message += f"        Габариты: {dimensions}. ({volume_liters}л.)\n"
         if warehouse_rate_per_liter or warehouse_rate_extra:
@@ -377,7 +476,7 @@ class NotificationService:
             sync_in_progress = False
             for cabinet_id in cabinet_ids:
                 if self._is_sync_in_progress(cabinet_id):
-                    logger.info(f"🔄 Синхронизация кабинета {cabinet_id} в процессе, пропускаем polling для пользователя {user_id}")
+                    logger.info(f"🔄 Синхронизация кабинета {cabinet_id} в процессе, пропускаем webhook для пользователя {user_id}")
                     sync_in_progress = True
                     break
             
@@ -505,11 +604,12 @@ class NotificationService:
                 except (json.JSONDecodeError, KeyError):
                     continue
 
-            # Получаем новые заказы по order_date (время заказа в WB)
+            # Получаем новые заказы по created_at (время добавления в БД)
+            # КРИТИЧНО: Используем created_at вместо order_date, чтобы ловить именно НОВЫЕ записи в БД
             orders = self.db.query(WBOrder).filter(
                 and_(
-                WBOrder.cabinet_id.in_(cabinet_ids),
-                    WBOrder.order_date > last_check,  # Используем order_date вместо created_at
+                    WBOrder.cabinet_id.in_(cabinet_ids),
+                    WBOrder.created_at > last_check,  # Используем created_at - время добавления в БД
                     ~WBOrder.order_id.in_(sent_order_ids)  # Исключаем уже отправленные
                 )
             ).all()
@@ -560,7 +660,7 @@ class NotificationService:
                     "warehouse_to": order.warehouse_to or "",
                     "spp_percent": order.spp_percent or 0.0,
                     "customer_price": order.customer_price or 0.0,
-                    "logistics_amount": order.logistics_amount or 0.0,
+                    # Логистика исключена из системы
                     "dimensions": getattr(order, 'dimensions', ''),
                     "volume_liters": getattr(order, 'volume_liters', 0),
                     "warehouse_rate_per_liter": getattr(order, 'warehouse_rate_per_liter', 0),
@@ -591,7 +691,7 @@ class NotificationService:
             return []
     
     async def _get_new_reviews(self, user_id: int, cabinet_ids: List[int], last_check: datetime) -> List[Dict[str, Any]]:
-        """Получение новых негативных отзывов (0-3 звезды)"""
+        """Получение новых негативных отзывов (0-3 звезды) с защитой от дублирования"""
         try:
             
             # Проверяем, что это не первая синхронизация кабинета
@@ -609,9 +709,33 @@ class NotificationService:
                     logger.info(f"Skipping review notifications for cabinet {cabinet.id} - long break since last sync")
                     return []
             
+            # Получаем уже отправленные уведомления о негативных отзывах за последние 24 часа
+            from sqlalchemy import and_
+            sent_notifications = self.db.query(NotificationHistory).filter(
+                and_(
+                    NotificationHistory.user_id == user_id,
+                    NotificationHistory.notification_type == 'negative_review',
+                    NotificationHistory.sent_at > last_check - timedelta(hours=24)
+                )
+            ).all()
+            
+            # Извлекаем review_id из content (JSON строка)
+            sent_review_ids = set()
+            for n in sent_notifications:
+                try:
+                    import json
+                    content_data = json.loads(n.content)
+                    if "review_id" in content_data:
+                        sent_review_ids.add(content_data["review_id"])
+                except (json.JSONDecodeError, KeyError):
+                    continue
+            
             reviews = self.db.query(WBReview).filter(
-                WBReview.cabinet_id.in_(cabinet_ids),
-                WBReview.created_date > last_check  # Используем время создания отзыва, а не обновления
+                and_(
+                    WBReview.cabinet_id.in_(cabinet_ids),
+                    WBReview.created_date > last_check,  # Используем время создания отзыва, а не обновления
+                    ~WBReview.review_id.in_(sent_review_ids)  # Исключаем уже отправленные
+                )
             ).all()
             
             events = []
@@ -641,9 +765,10 @@ class NotificationService:
             return []
     
     async def _get_critical_stocks(self, user_id: int, cabinet_ids: List[int], last_check: datetime) -> List[Dict[str, Any]]:
-        """Получение критических остатков с защитой от межскладских переводов"""
+        """Получение критических остатков с защитой от межскладских переводов и дублирования"""
         try:
             from sqlalchemy import and_
+            from datetime import timedelta
             
             # Проверяем, что это не первая синхронизация кабинета
             cabinets = self.db.query(WBCabinet).filter(WBCabinet.id.in_(cabinet_ids)).all()
@@ -651,6 +776,26 @@ class NotificationService:
                 if not cabinet.last_sync_at:
                     logger.info(f"Skipping critical stocks notifications for cabinet {cabinet.id} - first sync")
                     return []
+            
+            # Получаем уже отправленные уведомления о критических остатках за последние 24 часа
+            sent_notifications = self.db.query(NotificationHistory).filter(
+                and_(
+                    NotificationHistory.user_id == user_id,
+                    NotificationHistory.notification_type == 'critical_stocks',
+                    NotificationHistory.sent_at > last_check - timedelta(hours=24)
+                )
+            ).all()
+            
+            # Извлекаем nm_id из content (JSON строка)
+            sent_nm_ids = set()
+            for n in sent_notifications:
+                try:
+                    import json
+                    content_data = json.loads(n.content)
+                    if "nm_id" in content_data:
+                        sent_nm_ids.add(content_data["nm_id"])
+                except (json.JSONDecodeError, KeyError):
+                    continue
             
             critical_threshold = 2
             
@@ -696,10 +841,11 @@ class NotificationService:
                 prev_stock_list = prev_grouped.get((nm_id, size), [])
                 previous_total = sum(stock.quantity or 0 for stock in prev_stock_list)
                 
-                # Проверяем реальное уменьшение остатков
+                # Проверяем реальное уменьшение остатков и исключаем уже отправленные
                 if (previous_total > critical_threshold and 
                     current_total <= critical_threshold and 
-                    current_total < previous_total):
+                    current_total < previous_total and
+                    nm_id not in sent_nm_ids):  # Исключаем уже отправленные
                     
                     # Получаем информацию о товаре
                     product = self.db.query(WBProduct).filter(
@@ -729,14 +875,37 @@ class NotificationService:
             return []
     
     async def _get_status_changes(self, user_id: int, cabinet_ids: List[int], last_check: datetime) -> List[Dict[str, Any]]:
-        """Получение изменений статусов заказов"""
+        """Получение изменений статусов заказов с защитой от дублирования"""
         try:
+            from sqlalchemy import and_
+            from datetime import timedelta
+            
+            # Получаем уже отправленные уведомления об изменениях статусов за последние 24 часа
+            sent_notifications = self.db.query(NotificationHistory).filter(
+                and_(
+                    NotificationHistory.user_id == user_id,
+                    NotificationHistory.notification_type.in_(['order_buyout', 'order_cancellation', 'order_return']),
+                    NotificationHistory.sent_at > last_check - timedelta(hours=24)
+                )
+            ).all()
+            
+            # Извлекаем order_id из content (JSON строка)
+            sent_order_ids = set()
+            for n in sent_notifications:
+                try:
+                    import json
+                    content_data = json.loads(n.content)
+                    if "order_id" in content_data:
+                        sent_order_ids.add(content_data["order_id"])
+                except (json.JSONDecodeError, KeyError):
+                    continue
             
             # Получаем заказы с изменениями статуса
             orders = self.db.query(WBOrder).filter(
                 WBOrder.cabinet_id.in_(cabinet_ids),
                 WBOrder.updated_at > last_check,
-                WBOrder.status.in_(['buyout', 'canceled', 'return'])
+                WBOrder.status.in_(['buyout', 'canceled', 'return']),
+                ~WBOrder.order_id.in_(sent_order_ids)  # Исключаем уже отправленные
             ).all()
             
             events = []
@@ -753,16 +922,49 @@ class NotificationService:
                 else:
                     continue
                 
+                # Получаем image_url из связанного товара
+                image_url = None
+                try:
+                    product = self.db.query(WBProduct).filter(
+                        and_(
+                            WBProduct.cabinet_id == order.cabinet_id,
+                            WBProduct.nm_id == order.nm_id
+                        )
+                    ).first()
+                    if product:
+                        image_url = product.image_url
+                except Exception as e:
+                    logger.error(f"Error getting image_url for order {order.order_id}: {e}")
+                
                 events.append({
                     "type": event_type,
                     "user_id": user_id,
                     "data": {
                         "order_id": order.order_id,
+                        "id": order.order_id,  # Для совместимости с format_order_detail
+                        "date": order.order_date.isoformat() if order.order_date else None,
                         "amount": order.total_price,
                         "product_name": order.name,
                         "brand": order.brand,
+                        "nm_id": order.nm_id,
+                        "article": order.article or "",
+                        "supplier_article": order.article or "",
+                        "size": order.size or "",
+                        "barcode": order.barcode or "",
+                        "warehouse_from": order.warehouse_from or "",
+                        "warehouse_to": order.warehouse_to or "",
+                        "spp_percent": order.spp_percent or 0.0,
+                        "customer_price": order.customer_price or 0.0,
+                        # Логистика исключена из системы
+                        "image_url": image_url,  # Добавляем image_url
                         "status": order.status,
-                        "updated_at": order.updated_at.isoformat() if order.updated_at else None
+                        "updated_at": order.updated_at.isoformat() if order.updated_at else None,
+                        "created_at": order.created_at.isoformat() if order.created_at else None,
+                        "rating": 0,  # Получать из товара
+                        "reviews_count": 0,  # Получать из товара
+                        "sales_periods": {},  # Получать из статистики
+                        "stocks": {},  # Получать из остатков
+                        "stock_days": {}  # Получать из остатков
                     },
                     "created_at": order.updated_at or TimezoneUtils.now_msk(),
                     "priority": priority
@@ -780,23 +982,68 @@ class NotificationService:
         notification: Dict[str, Any], 
         result: Dict[str, Any]
     ):
-        """Сохранение уведомления в историю"""
+        """Сохранение уведомления в историю для защиты от дублирования"""
         try:
+            import json
+            import uuid
+            from datetime import datetime
+            
+            # Генерируем уникальный ID на основе типа и связанных данных
+            notification_type = notification.get("type")
+            
+            # Определяем уникальный ключ в зависимости от типа
+            if notification_type in ["new_order", "order_buyout", "order_cancellation", "order_return"]:
+                unique_key = notification.get("order_id", notification.get("data", {}).get("order_id", "unknown"))
+            elif notification_type == "negative_review":
+                unique_key = notification.get("review_id", notification.get("data", {}).get("review_id", "unknown"))
+            elif notification_type == "critical_stocks":
+                unique_key = notification.get("nm_id", notification.get("data", {}).get("nm_id", "unknown"))
+            else:
+                unique_key = uuid.uuid4().hex[:8]
+            
+            # Добавляем timestamp для уникальности ID
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            notification_id = f"notif_{notification_type}_{unique_key}_{timestamp}"
+            
+            # Проверяем, существует ли уже такое уведомление
+            existing = self.db.query(NotificationHistory).filter(
+                NotificationHistory.id == notification_id
+            ).first()
+            
+            if existing:
+                logger.warning(f"⚠️ Notification {notification_id} already exists, skipping")
+                return
+            
+            # Сохраняем данные в JSON формате для дальнейшей проверки дубликатов
+            content_data = {
+                "order_id": notification.get("order_id", notification.get("data", {}).get("order_id")),
+                "review_id": notification.get("review_id", notification.get("data", {}).get("review_id")),
+                "nm_id": notification.get("nm_id", notification.get("data", {}).get("nm_id")),
+                "type": notification_type,
+                "timestamp": TimezoneUtils.now_msk().isoformat()
+            }
+            
             notification_data = {
-                "id": f"notif_{notification['type']}_{notification.get('order_id', notification.get('review_id', notification.get('nm_id', 'unknown')))}",
+                "id": notification_id,
                 "user_id": user_id,
-                "notification_type": notification["type"],
+                "notification_type": notification_type,
                 "priority": notification.get("priority", "MEDIUM"),
-                "title": notification.get("title", ""),
-                "content": notification.get("content", ""),
-                "sent_at": TimezoneUtils.now_msk(),
+                "title": f"Notification: {notification_type}",
+                "content": json.dumps(content_data),  # Сохраняем как JSON
+                "sent_at": TimezoneUtils.to_utc(TimezoneUtils.now_msk()),
                 "status": "delivered" if result.get("success") else "failed"
             }
             
             self.history_crud.create_notification(self.db, notification_data)
+            logger.info(f"💾 Saved notification to history: {notification_id}")
             
         except Exception as e:
             logger.error(f"Error saving notification to history: {e}")
+            # Откатываем транзакцию при ошибке
+            try:
+                self.db.rollback()
+            except Exception as rollback_error:
+                logger.error(f"Error during rollback: {rollback_error}")
     
     def _settings_to_dict(self, user_settings) -> Dict[str, Any]:
         """Преобразование настроек в словарь"""
@@ -984,7 +1231,7 @@ class NotificationService:
                     # Форматируем для Telegram
                     telegram_text = self._format_sales_notification_for_telegram(notification)
                     
-                    # Webhook удален - уведомления отправляются через polling
+                    # Webhook уведомления отправляются в реальном времени
                     notifications_sent += 1
                         
                     # Отслеживаем изменение
@@ -1033,3 +1280,139 @@ class NotificationService:
             return f"❌ {notification.get('title', 'Изменение отмены')}\n\n{notification.get('content', '')}"
         else:
             return f"📊 {notification.get('title', 'Уведомление о продаже')}\n\n{notification.get('content', '')}"
+    
+    async def _send_webhook_notification(
+        self,
+        user_id: int,
+        notification: Dict[str, Any],
+        telegram_text: str,
+        bot_webhook_url: str
+    ) -> Dict[str, Any]:
+        """
+        Отправка уведомления через webhook
+        
+        Args:
+            user_id: ID пользователя
+            notification: Данные уведомления
+            telegram_text: Текст для Telegram
+            bot_webhook_url: URL webhook бота
+            
+        Returns:
+            Результат отправки
+        """
+        try:
+            # Получаем пользователя для получения webhook URL и секрета
+            from app.features.user.models import User
+            user = self.db.query(User).filter(User.id == user_id).first()
+            
+            if not user:
+                logger.error(f"User {user_id} not found for webhook notification")
+                return {"success": False, "error": "User not found"}
+            
+            # Используем webhook URL пользователя или переданный URL
+            webhook_url = user.bot_webhook_url or bot_webhook_url
+            webhook_secret = user.webhook_secret
+            
+            if not webhook_url:
+                logger.warning(f"No webhook URL for user {user_id}")
+                return {"success": False, "error": "No webhook URL configured"}
+            
+            # Подготавливаем данные для webhook
+            # Если notification содержит data с полными данными заказа, используем их
+            webhook_data = {
+                "type": notification.get("type"),
+                "data": notification.get("data", notification),  # Используем data если есть, иначе notification
+                "user_id": user_id,
+                "telegram_id": user.telegram_id,  # Добавляем telegram_id для бота
+                "telegram_text": telegram_text
+            }
+            
+            # Детальный лог webhook данных
+            logger.info(f"📢 Webhook notification data for user {user_id}: {webhook_data}")
+            logger.info(f"📢 Notification data keys: {list(notification.keys())}")
+            if "data" in notification:
+                logger.info(f"📢 Notification data.data keys: {list(notification['data'].keys())}")
+            
+            # Отправляем webhook
+            success = await self.webhook_sender.send_notification(
+                webhook_url=webhook_url,
+                notification_data=webhook_data,
+                webhook_secret=webhook_secret
+            )
+            
+            if success:
+                logger.info(f"Webhook notification sent successfully to user {user_id}")
+                return {"success": True}
+            else:
+                logger.error(f"Failed to send webhook notification to user {user_id}")
+                return {"success": False, "error": "Webhook delivery failed"}
+                
+        except Exception as e:
+            logger.error(f"Error sending webhook notification to user {user_id}: {e}")
+            return {"success": False, "error": str(e)}
+    
+    async def send_sync_completion_notification(
+        self,
+        user_id: int,
+        cabinet_id: int,
+        is_first_sync: bool = False
+    ) -> Dict[str, Any]:
+        """
+        Отправка уведомления о завершении синхронизации через webhook
+        
+        Args:
+            user_id: ID пользователя
+            cabinet_id: ID кабинета
+            is_first_sync: Является ли это первой синхронизацией
+            
+        Returns:
+            Результат отправки
+        """
+        try:
+            # Получаем пользователя
+            from app.features.user.models import User
+            user = self.db.query(User).filter(User.id == user_id).first()
+            
+            if not user:
+                logger.error(f"User {user_id} not found for sync completion notification")
+                return {"success": False, "error": "User not found"}
+            
+            if not user.bot_webhook_url:
+                logger.warning(f"No webhook URL configured for user {user_id}")
+                return {"success": False, "error": "No webhook URL configured"}
+            
+            # Подготавливаем данные уведомления
+            notification_data = {
+                "type": "sync_completed",
+                "cabinet_id": cabinet_id,
+                "message": "Синхронизация завершена! Данные готовы к использованию.",
+                "timestamp": TimezoneUtils.now_msk().isoformat(),
+                "is_first_sync": is_first_sync
+            }
+            
+            # Формируем текст для Telegram
+            if is_first_sync:
+                telegram_text = "🎉 Первая синхронизация завершена!"
+            else:
+                # Для последующих синхронизаций не отправляем общее сообщение
+                # Отправляем только конкретные уведомления о событиях
+                return {"success": True, "message": "Sync completed, no general notification sent"}
+            
+            # Отправляем webhook уведомление
+            webhook_result = await self._send_webhook_notification(
+                user_id=user_id,
+                notification=notification_data,
+                telegram_text=telegram_text,
+                bot_webhook_url=user.bot_webhook_url
+            )
+            
+            if webhook_result.get("success"):
+                logger.info(f"✅ Sync completion webhook sent successfully to user {user_id}")
+                return {"success": True, "webhook_result": webhook_result}
+            else:
+                logger.error(f"❌ Failed to send sync completion webhook to user {user_id}: {webhook_result}")
+                return {"success": False, "error": webhook_result.get("error", "Webhook delivery failed")}
+                
+        except Exception as e:
+            logger.error(f"Error sending sync completion notification to user {user_id}: {e}")
+            return {"success": False, "error": str(e)}

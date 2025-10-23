@@ -58,10 +58,12 @@ class OrderData(BaseModel):
     spp_percent: Optional[float] = None
     customer_price: Optional[float] = None
     discount_percent: Optional[float] = None
-    logistics_amount: Optional[float] = None
+    # Логистика исключена из системы
     # Поля для остатков и nm_id
     nm_id: Optional[int] = None
     stocks: Optional[Dict[str, int]] = None
+    # Поле для изображения товара
+    image_url: Optional[str] = None
 
 
 class OrdersStatistics(BaseModel):

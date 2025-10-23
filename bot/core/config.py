@@ -37,7 +37,7 @@ class BotConfig:
     notification_retry_attempts: int = 5
     
     # Polling настройки
-    polling_interval: int = 60  # Интервал polling в секундах
+    webhook_port: int = 8001  # Порт для webhook сервера
     
     def __post_init__(self):
         """Валидация конфигурации после инициализации"""
@@ -64,7 +64,7 @@ def load_config() -> BotConfig:
         request_timeout=int(os.getenv("REQUEST_TIMEOUT", "30")),
         enable_notifications=os.getenv("ENABLE_NOTIFICATIONS", "true").lower() == "true",
         notification_retry_attempts=int(os.getenv("NOTIFICATION_RETRY_ATTEMPTS", "5")),
-        polling_interval=int(os.getenv("POLLING_INTERVAL", "60"))
+        webhook_port=int(os.getenv("WEBHOOK_PORT", "8001"))
     )
 
 

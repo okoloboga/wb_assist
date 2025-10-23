@@ -67,6 +67,10 @@ class WBSyncService:
             
             logger.info(f"API key validation successful for cabinet {cabinet.id}")
             
+            # КРИТИЧНО: Сохраняем время предыдущей синхронизации ДО начала новой
+            previous_sync_at = cabinet.last_sync_at
+            logger.info(f"📅 Previous sync time for cabinet {cabinet.id}: {previous_sync_at}")
+            
             # Создаем лог начала синхронизации
             sync_log = WBSyncLog(
                 cabinet_id=cabinet.id,
@@ -147,7 +151,8 @@ class WBSyncService:
             await self._invalidate_user_cache(cabinet.id)
             
             # Отправляем уведомление о завершении синхронизации
-            await self._send_sync_completion_notification(cabinet.id)
+            # Передаем previous_sync_at для корректного определения новых событий
+            await self._send_sync_completion_notification(cabinet.id, previous_sync_at)
             
             # Планируем автоматическую синхронизацию для нового кабинета
             if not cabinet.last_sync_at:
@@ -209,13 +214,22 @@ class WBSyncService:
         except Exception as e:
             logger.error(f"Error invalidating cache for cabinet {cabinet_id}: {e}")
     
-    async def _send_sync_completion_notification(self, cabinet_id: int):
-        """Отправка уведомления о завершении синхронизации"""
+    async def _send_sync_completion_notification(self, cabinet_id: int, previous_sync_at: datetime = None):
+        """Отправка уведомления о завершении синхронизации
+        
+        Args:
+            cabinet_id: ID кабинета
+            previous_sync_at: Время предыдущей синхронизации (ДО текущей)
+        """
         try:
             # Получаем всех пользователей кабинета
             from app.features.wb_api.crud_cabinet_users import CabinetUserCRUD
             cabinet_user_crud = CabinetUserCRUD()
             user_ids = cabinet_user_crud.get_cabinet_users(self.db, cabinet_id)
+            
+            # Импортируем NotificationService для отправки webhook уведомлений
+            from app.features.notifications.notification_service import NotificationService
+            notification_service = NotificationService(self.db)
             
             # Создаем уведомление о завершении синхронизации для каждого пользователя
             for user_id in user_ids:
@@ -234,6 +248,17 @@ class WBSyncService:
                     "timestamp": TimezoneUtils.now_msk().isoformat(),
                     "is_first_sync": is_first_sync
                 }
+                
+                # Отправляем webhook уведомление через NotificationService
+                try:
+                    webhook_result = await notification_service.send_sync_completion_notification(
+                        user_id=user_id,
+                        cabinet_id=cabinet_id,
+                        is_first_sync=is_first_sync
+                    )
+                    logger.info(f"📢 Webhook notification sent for user {user_id}: {webhook_result}")
+                except Exception as e:
+                    logger.error(f"❌ Failed to send webhook notification for user {user_id}: {e}")
                 
                 # Сохраняем уведомление в историю
                 from app.features.notifications.models import NotificationHistory
@@ -258,6 +283,39 @@ class WBSyncService:
                 if is_first_sync and cabinet_user:
                     cabinet_user.first_sync_completed = True
                     logger.info(f"🏁 First sync completed for user {user_id} in cabinet {cabinet_id}")
+                
+                # Обрабатываем уведомления о новых событиях (только для последующих синхронизаций)
+                if not is_first_sync and previous_sync_at:
+                    try:
+                        logger.info(f"🔍 Processing sync events for user {user_id} with previous_sync_at={previous_sync_at}")
+                        
+                        # Получаем данные для обработки уведомлений
+                        # Используем previous_sync_at для корректного определения новых событий
+                        current_orders = self._get_current_orders_for_notifications(cabinet_id, previous_sync_at)
+                        previous_orders = self._get_previous_orders_for_notifications(cabinet_id, previous_sync_at)
+                        current_reviews = self._get_current_reviews_for_notifications(cabinet_id, previous_sync_at)
+                        previous_reviews = self._get_previous_reviews_for_notifications(cabinet_id, previous_sync_at)
+                        current_stocks = self._get_current_stocks_for_notifications(cabinet_id, previous_sync_at)
+                        previous_stocks = self._get_previous_stocks_for_notifications(cabinet_id, previous_sync_at)
+                        
+                        logger.info(f"📊 Found {len(current_orders)} current orders, {len(previous_orders)} previous orders")
+                        
+                        # Обрабатываем события и отправляем уведомления
+                        events_result = await notification_service.process_sync_events(
+                            user_id=user_id,
+                            cabinet_id=cabinet_id,
+                            current_orders=current_orders,
+                            previous_orders=previous_orders,
+                            current_reviews=current_reviews,
+                            previous_reviews=previous_reviews,
+                            current_stocks=current_stocks,
+                            previous_stocks=previous_stocks
+                        )
+                        
+                        logger.info(f"📢 Processed sync events for user {user_id}: {events_result}")
+                        
+                    except Exception as e:
+                        logger.error(f"❌ Failed to process sync events for user {user_id}: {e}")
             
             self.db.commit()
             
@@ -577,13 +635,7 @@ class WBSyncService:
                         existing.customer_price = order_data.get("finishedPrice")
                         existing.discount_percent = order_data.get("discountPercent")
                         
-                        # Расчет логистики (упрощенный расчет)
-                        logistics_amount = self._calculate_logistics(
-                            order_data.get("warehouseName"), 
-                            order_data.get("regionName"),
-                            total_price
-                        )
-                        existing.logistics_amount = logistics_amount
+                        # Логистика исключена из системы
                         
                         # logger.info(f"Updated order {order_id}: commission_percent={commission_percent}, commission_amount={commission_amount}")
                         
@@ -640,12 +692,7 @@ class WBSyncService:
                                 spp_percent=order_data.get("spp"),
                                 customer_price=order_data.get("finishedPrice"),
                                 discount_percent=order_data.get("discountPercent"),
-                                # Расчет логистики (упрощенный расчет)
-                                logistics_amount=self._calculate_logistics(
-                                    order_data.get("warehouseName"), 
-                                    order_data.get("regionName"),
-                                    total_price
-                                ),
+                                # Логистика исключена из системы
                                 status="canceled" if order_data.get("isCancel", False) else "active",  # Исправлено: вычисляем статус
                                 order_date=self._parse_datetime(order_data.get("date"))
                             )
@@ -850,11 +897,12 @@ class WBSyncService:
     ) -> Dict[str, Any]:
         """Синхронизация отзывов"""
         try:
-            # Получаем ВСЕ отзывы с пагинацией
+            # Оптимизированная синхронизация отзывов с batch обработкой
             all_reviews_data = []
             skip = 0
-            take = 1000
+            take = 5000  # Увеличиваем размер страницы для уменьшения количества запросов
             total_fetched = 0
+            batch_size = 1000  # Размер batch для записи в БД
             
             while True:
                 reviews_response = await client.get_reviews(is_answered=True, take=take, skip=skip)
@@ -876,22 +924,42 @@ class WBSyncService:
                     break
                 
                 skip += take
+                
+                # Batch обработка: записываем в БД каждые batch_size отзывов
+                if len(all_reviews_data) >= batch_size:
+                    await self._process_reviews_batch(cabinet, all_reviews_data[:batch_size])
+                    all_reviews_data = all_reviews_data[batch_size:]
             
             logger.info(f"Total reviews fetched from WB API: {total_fetched}")
             
-            if not all_reviews_data:
-                return {"status": "success", "records_processed": 0, "records_created": 0, "records_updated": 0}
+            # Обрабатываем оставшиеся отзывы
+            if all_reviews_data:
+                await self._process_reviews_batch(cabinet, all_reviews_data)
             
-            reviews_data = all_reviews_data
+            # Получаем статистику из batch обработки
+            total_created, total_updated = await self._get_reviews_batch_stats()
             
+            return {
+                "status": "success",
+                "records_processed": total_fetched,
+                "records_created": total_created,
+                "records_updated": total_updated
+            }
+            
+        except Exception as e:
+            logger.error(f"Reviews sync failed: {str(e)}")
+            return {"status": "error", "error_message": str(e)}
+    
+    async def _process_reviews_batch(self, cabinet: WBCabinet, reviews_data: List[Dict]) -> None:
+        """Обработка batch отзывов с оптимизированной записью в БД"""
+        try:
             created = 0
             updated = 0
             
             for review_data in reviews_data:
-                review_id = review_data.get("id")  # Исправлено: id вместо reviewId
-                nm_id = review_data.get("productDetails", {}).get("nmId")  # Исправлено: из productDetails
+                review_id = review_data.get("id")
+                nm_id = review_data.get("productDetails", {}).get("nmId")
                 
-                # Пропускаем отзывы без review_id
                 if not review_id:
                     continue
                 
@@ -907,10 +975,10 @@ class WBSyncService:
                     # Обновляем существующий отзыв
                     existing.nm_id = nm_id
                     existing.text = review_data.get("text")
-                    existing.rating = review_data.get("productValuation")  # Исправлено: productValuation вместо rating
-                    existing.is_answered = review_data.get("answer") is not None  # Исправлено: проверяем наличие ответа
+                    existing.rating = review_data.get("productValuation")
+                    existing.is_answered = review_data.get("answer") is not None
                     existing.created_date = self._parse_datetime(review_data.get("createdDate"))
-                    existing.updated_date = self._parse_datetime(review_data.get("createdDate"))  # Исправлено: нет updatedDate
+                    existing.updated_date = self._parse_datetime(review_data.get("createdDate"))
                     
                     # Новые поля из WB API отзывов
                     existing.pros = review_data.get("pros")
@@ -932,10 +1000,10 @@ class WBSyncService:
                         nm_id=nm_id,
                         review_id=str(review_id),
                         text=review_data.get("text"),
-                        rating=review_data.get("productValuation"),  # Исправлено: productValuation вместо rating
-                        is_answered=review_data.get("answer") is not None,  # Исправлено: проверяем наличие ответа
+                        rating=review_data.get("productValuation"),
+                        is_answered=review_data.get("answer") is not None,
                         created_date=self._parse_datetime(review_data.get("createdDate")),
-                        updated_date=self._parse_datetime(review_data.get("createdDate")),  # Исправлено: нет updatedDate
+                        updated_date=self._parse_datetime(review_data.get("createdDate")),
                         
                         # Новые поля из WB API отзывов
                         pros=review_data.get("pros"),
@@ -951,28 +1019,30 @@ class WBSyncService:
                     self.db.add(review)
                     created += 1
             
-            try:
-                self.db.commit()
-            except Exception as commit_error:
-                logger.error(f"Error committing reviews: {commit_error}")
-                self.db.rollback()
-                # Попробуем обработать дубликаты
-                if "duplicate key value violates unique constraint" in str(commit_error):
-                    logger.warning("Detected duplicate reviews, attempting to handle gracefully")
-                    # Повторяем операцию с обработкой дубликатов
-                    return await self._handle_duplicate_reviews(cabinet, reviews_data)
-                raise commit_error
+            # Коммитим batch
+            self.db.commit()
             
-            return {
-                "status": "success",
-                "records_processed": len(reviews_data),
-                "records_created": created,
-                "records_updated": updated
-            }
+            # Сохраняем статистику
+            if not hasattr(self, '_batch_stats'):
+                self._batch_stats = {'created': 0, 'updated': 0}
+            self._batch_stats['created'] += created
+            self._batch_stats['updated'] += updated
+            
+            logger.info(f"Processed batch: {created} created, {updated} updated")
             
         except Exception as e:
-            logger.error(f"Reviews sync failed: {str(e)}")
-            return {"status": "error", "error_message": str(e)}
+            logger.error(f"Error processing reviews batch: {e}")
+            self.db.rollback()
+            raise e
+    
+    async def _get_reviews_batch_stats(self) -> tuple:
+        """Получение статистики batch обработки"""
+        if hasattr(self, '_batch_stats'):
+            stats = self._batch_stats
+            # Сбрасываем статистику
+            self._batch_stats = {'created': 0, 'updated': 0}
+            return stats['created'], stats['updated']
+        return 0, 0
     
     async def _handle_duplicate_reviews(self, cabinet: WBCabinet, reviews_data: List[Dict]) -> Dict[str, Any]:
         """Обработка дублирующихся отзывов с использованием UPSERT"""
@@ -1191,41 +1261,7 @@ class WBSyncService:
             logger.error(f"Commission calculation failed: {e}")
             return 0.0, 0.0
     
-    def _calculate_logistics(self, warehouse_from: str, warehouse_to: str, total_price: float) -> float:
-        """Расчет логистики на основе склада отправления и региона доставки"""
-        try:
-            if not warehouse_from or not warehouse_to or not total_price:
-                return 0.0
-            
-            # Упрощенный расчет логистики на основе расстояния и цены
-            # В реальности нужно использовать тарифы WB API
-            
-            # Базовые тарифы по регионам (примерные)
-            region_tariffs = {
-                "Москва": 0.0,  # Бесплатная доставка в Москву
-                "Московская область": 50.0,
-                "Санкт-Петербург": 100.0,
-                "Ленинградская область": 150.0,
-                "Центральный федеральный округ": 200.0,
-                "Северо-Западный федеральный округ": 250.0,
-                "Южный федеральный округ": 300.0,
-                "Приволжский федеральный округ": 350.0,
-                "Уральский федеральный округ": 400.0,
-                "Сибирский федеральный округ": 500.0,
-                "Дальневосточный федеральный округ": 600.0,
-            }
-            
-            # Ищем тариф для региона
-            for region, tariff in region_tariffs.items():
-                if region in warehouse_to:
-                    return tariff
-            
-            # Если регион не найден, используем средний тариф
-            return 300.0
-            
-        except Exception as e:
-            logger.error(f"Logistics calculation failed: {e}")
-            return 0.0
+    # Метод расчета логистики удален - логистика исключена из системы
 
     async def update_product_prices_from_stocks(self, cabinet: WBCabinet) -> Dict[str, Any]:
         """Обновление цен товаров из остатков"""
@@ -1309,7 +1345,7 @@ class WBSyncService:
             logger.error(f"Failed to update product ratings: {e}")
             return {"status": "error", "error_message": str(e)}
 
-    # Webhook уведомления удалены - теперь используется только polling система
+    # Webhook система для уведомлений
 
     async def _get_today_stats(self, cabinet: WBCabinet) -> Dict[str, Any]:
         """Получение статистики за сегодня"""
@@ -1641,7 +1677,7 @@ class WBSyncService:
             # Импортируем NotificationService
             from app.features.notifications.notification_service import NotificationService
             
-            notification_service = NotificationService(self.db, self.cache_manager)
+            notification_service = NotificationService(self.db)
             
             # Получаем пользователя
             # user_id у кабинета более не используется напрямую
@@ -1665,8 +1701,8 @@ class WBSyncService:
                 "sale_date": sale_data["sale_date"].isoformat() if sale_data["sale_date"] else None
             }
             
-            # Webhook удален - уведомления отправляются через polling
-            result = {"success": True, "message": "Notification queued for polling"}
+            # Webhook уведомления отправляются в реальном времени
+            result = {"success": True, "message": "Notification sent via webhook"}
             
             if result.get("success"):
                 logger.info(f"Sale notification sent for cabinet {cabinet.id}, sale {sale_data['sale_id']}")
@@ -1687,3 +1723,263 @@ class WBSyncService:
         except Exception as e:
             logger.error(f"Error parsing date {date_str}: {e}")
             return None
+    
+    def _get_current_orders_for_notifications(self, cabinet_id: int, previous_sync_at: datetime = None) -> List[Dict[str, Any]]:
+        """Получение текущих заказов для обработки уведомлений
+        
+        Args:
+            cabinet_id: ID кабинета
+            previous_sync_at: Время предыдущей синхронизации (для фильтрации новых заказов)
+        """
+        try:
+            # Если нет предыдущей синхронизации, возвращаем пустой список
+            if not previous_sync_at:
+                logger.warning(f"No previous sync time provided for cabinet {cabinet_id}")
+                return []
+            
+            # Получаем заказы, которые были созданы/обновлены после предыдущей синхронизации
+            recent_orders = self.db.query(WBOrder).filter(
+                WBOrder.cabinet_id == cabinet_id,
+                WBOrder.updated_at > previous_sync_at  # Используем previous_sync_at вместо cabinet.last_sync_at
+            ).all()
+            
+            # Получаем image_url для каждого заказа из связанного товара
+            order_data_list = []
+            for order in recent_orders:
+                # Ищем товар по nm_id для получения image_url
+                product = self.db.query(WBProduct).filter(
+                    and_(
+                        WBProduct.cabinet_id == cabinet_id,
+                        WBProduct.nm_id == order.nm_id
+                    )
+                ).first()
+                
+                order_data = {
+                    "order_id": order.order_id,
+                    "id": order.order_id,  # Для совместимости с format_order_detail
+                    "status": order.status,
+                    "amount": order.total_price,
+                    "product_name": order.name,  # Исправлено: используем name вместо product_name
+                    "brand": order.brand,
+                    "nm_id": order.nm_id,
+                    "size": order.size,
+                    "warehouse_from": order.warehouse_from,
+                    "warehouse_to": order.warehouse_to,
+                    "created_at": order.created_at,
+                    "date": order.created_at.isoformat() if order.created_at else "",  # Для format_order_detail
+                    "article": order.article,
+                    "supplier_article": order.article,
+                    "barcode": order.barcode,
+                    "spp_percent": order.spp_percent,
+                    "customer_price": order.customer_price,
+                    # Логистика исключена из системы
+                    "image_url": product.image_url if product else None,  # Добавляем image_url из товара
+                    "dimensions": "",  # Получать из товара
+                    "volume_liters": 0,  # Получать из товара
+                    "warehouse_rate_per_liter": 0,  # Получать из товара
+                    "warehouse_rate_extra": 0,  # Получать из товара
+                    "rating": 0,  # Получать из товара
+                    "reviews_count": 0,  # Получать из товара
+                    "sales_periods": {},  # Получать из статистики
+                    "stocks": {},  # Получать из остатков
+                    "stock_days": {}  # Получать из остатков
+                }
+                order_data_list.append(order_data)
+            
+            return order_data_list
+        except Exception as e:
+            logger.error(f"Error getting current orders for notifications: {e}")
+            return []
+    
+    def _get_previous_orders_for_notifications(self, cabinet_id: int, previous_sync_at: datetime = None) -> List[Dict[str, Any]]:
+        """Получение предыдущих заказов для сравнения
+        
+        Args:
+            cabinet_id: ID кабинета
+            previous_sync_at: Время предыдущей синхронизации (для фильтрации)
+        """
+        try:
+            # Если нет предыдущей синхронизации, возвращаем пустой список
+            if not previous_sync_at:
+                logger.warning(f"No previous sync time provided for cabinet {cabinet_id}")
+                return []
+            
+            # Получаем заказы, которые были обновлены до предыдущей синхронизации
+            old_orders = self.db.query(WBOrder).filter(
+                WBOrder.cabinet_id == cabinet_id,
+                WBOrder.updated_at <= previous_sync_at  # Используем previous_sync_at
+            ).all()
+            
+            # Получаем image_url для каждого заказа из связанного товара
+            order_data_list = []
+            for order in old_orders:
+                # Ищем товар по nm_id для получения image_url
+                product = self.db.query(WBProduct).filter(
+                    and_(
+                        WBProduct.cabinet_id == cabinet_id,
+                        WBProduct.nm_id == order.nm_id
+                    )
+                ).first()
+                
+                order_data = {
+                    "order_id": order.order_id,
+                    "id": order.order_id,  # Для совместимости с format_order_detail
+                    "status": order.status,
+                    "amount": order.total_price,
+                    "product_name": order.name,  # Исправлено: используем name вместо product_name
+                    "brand": order.brand,
+                    "nm_id": order.nm_id,
+                    "size": order.size,
+                    "warehouse_from": order.warehouse_from,
+                    "warehouse_to": order.warehouse_to,
+                    "created_at": order.created_at,
+                    "date": order.created_at.isoformat() if order.created_at else "",  # Для format_order_detail
+                    "article": order.article,
+                    "supplier_article": order.article,
+                    "barcode": order.barcode,
+                    "spp_percent": order.spp_percent,
+                    "customer_price": order.customer_price,
+                    # Логистика исключена из системы
+                    "image_url": product.image_url if product else None,  # Добавляем image_url из товара
+                    "dimensions": "",  # Получать из товара
+                    "volume_liters": 0,  # Получать из товара
+                    "warehouse_rate_per_liter": 0,  # Получать из товара
+                    "warehouse_rate_extra": 0,  # Получать из товара
+                    "rating": 0,  # Получать из товара
+                    "reviews_count": 0,  # Получать из товара
+                    "sales_periods": {},  # Получать из статистики
+                    "stocks": {},  # Получать из остатков
+                    "stock_days": {}  # Получать из остатков
+                }
+                order_data_list.append(order_data)
+            
+            return order_data_list
+        except Exception as e:
+            logger.error(f"Error getting previous orders for notifications: {e}")
+            return []
+    
+    def _get_current_reviews_for_notifications(self, cabinet_id: int, previous_sync_at: datetime = None) -> List[Dict[str, Any]]:
+        """Получение текущих отзывов для обработки уведомлений
+        
+        Args:
+            cabinet_id: ID кабинета
+            previous_sync_at: Время предыдущей синхронизации
+        """
+        try:
+            # Если нет предыдущей синхронизации, возвращаем пустой список
+            if not previous_sync_at:
+                logger.warning(f"No previous sync time provided for cabinet {cabinet_id}")
+                return []
+            
+            # Получаем отзывы, которые были созданы после предыдущей синхронизации
+            recent_reviews = self.db.query(WBReview).filter(
+                WBReview.cabinet_id == cabinet_id,
+                WBReview.created_date > previous_sync_at  # Используем previous_sync_at
+            ).all()
+            
+            return [{
+                "review_id": review.review_id,
+                "rating": review.rating,
+                "text": review.text,
+                "nm_id": review.nm_id,
+                "user_name": review.user_name,
+                "created_date": review.created_date
+            } for review in recent_reviews]
+        except Exception as e:
+            logger.error(f"Error getting current reviews for notifications: {e}")
+            return []
+    
+    def _get_previous_reviews_for_notifications(self, cabinet_id: int, previous_sync_at: datetime = None) -> List[Dict[str, Any]]:
+        """Получение предыдущих отзывов для сравнения
+        
+        Args:
+            cabinet_id: ID кабинета
+            previous_sync_at: Время предыдущей синхронизации
+        """
+        try:
+            # Если нет предыдущей синхронизации, возвращаем пустой список
+            if not previous_sync_at:
+                logger.warning(f"No previous sync time provided for cabinet {cabinet_id}")
+                return []
+            
+            # Получаем отзывы, которые были созданы до предыдущей синхронизации
+            old_reviews = self.db.query(WBReview).filter(
+                WBReview.cabinet_id == cabinet_id,
+                WBReview.created_date <= previous_sync_at  # Используем previous_sync_at
+            ).all()
+            
+            return [{
+                "review_id": review.review_id,
+                "rating": review.rating,
+                "text": review.text,
+                "nm_id": review.nm_id,
+                "user_name": review.user_name,
+                "created_date": review.created_date
+            } for review in old_reviews]
+        except Exception as e:
+            logger.error(f"Error getting previous reviews for notifications: {e}")
+            return []
+    
+    def _get_current_stocks_for_notifications(self, cabinet_id: int, previous_sync_at: datetime = None) -> List[Dict[str, Any]]:
+        """Получение текущих остатков для обработки уведомлений
+        
+        Args:
+            cabinet_id: ID кабинета
+            previous_sync_at: Время предыдущей синхронизации
+        """
+        try:
+            # Если нет предыдущей синхронизации, возвращаем пустой список
+            if not previous_sync_at:
+                logger.warning(f"No previous sync time provided for cabinet {cabinet_id}")
+                return []
+            
+            # Получаем остатки, которые были обновлены после предыдущей синхронизации
+            recent_stocks = self.db.query(WBStock).filter(
+                WBStock.cabinet_id == cabinet_id,
+                WBStock.updated_at > previous_sync_at  # Используем previous_sync_at
+            ).all()
+            
+            return [{
+                "nm_id": stock.nm_id,
+                "product_name": stock.name,  # Исправлено: используем name вместо product_name
+                "quantity": stock.quantity,
+                "in_way_to_client": stock.in_way_to_client,
+                "in_way_from_client": stock.in_way_from_client,
+                "warehouse_name": stock.warehouse_name,
+                "updated_at": stock.updated_at
+            } for stock in recent_stocks]
+        except Exception as e:
+            logger.error(f"Error getting current stocks for notifications: {e}")
+            return []
+    
+    def _get_previous_stocks_for_notifications(self, cabinet_id: int, previous_sync_at: datetime = None) -> List[Dict[str, Any]]:
+        """Получение предыдущих остатков для сравнения
+        
+        Args:
+            cabinet_id: ID кабинета
+            previous_sync_at: Время предыдущей синхронизации
+        """
+        try:
+            # Если нет предыдущей синхронизации, возвращаем пустой список
+            if not previous_sync_at:
+                logger.warning(f"No previous sync time provided for cabinet {cabinet_id}")
+                return []
+            
+            # Получаем остатки, которые были обновлены до предыдущей синхронизации
+            old_stocks = self.db.query(WBStock).filter(
+                WBStock.cabinet_id == cabinet_id,
+                WBStock.updated_at <= previous_sync_at  # Используем previous_sync_at
+            ).all()
+            
+            return [{
+                "nm_id": stock.nm_id,
+                "product_name": stock.name,  # Исправлено: используем name вместо product_name
+                "quantity": stock.quantity,
+                "in_way_to_client": stock.in_way_to_client,
+                "in_way_from_client": stock.in_way_from_client,
+                "warehouse_name": stock.warehouse_name,
+                "updated_at": stock.updated_at
+            } for stock in old_stocks]
+        except Exception as e:
+            logger.error(f"Error getting previous stocks for notifications: {e}")
+            return []

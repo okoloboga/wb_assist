@@ -163,7 +163,7 @@ async def handle_new_order_notification(message: Message, data: dict):
     commission_amount = order_data.get('commission_amount', 0)
     spp_percent = order_data.get('spp_percent', 0)
     customer_price = order_data.get('customer_price', 0)
-    logistics_amount = order_data.get('logistics_amount', 0)
+    # Логистика исключена из системы
     dimensions = order_data.get('dimensions', '')
     volume_liters = order_data.get('volume_liters', 0)
     warehouse_rate_per_liter = order_data.get('warehouse_rate_per_liter', 0)
@@ -186,7 +186,7 @@ async def handle_new_order_notification(message: Message, data: dict):
     text += f"💰 Цена заказа: {order_amount:,.0f}₽\n"
     text += f"💶 Комиссия WB: {commission_percent}% ({commission_amount:,.0f}₽)\n"
     text += f"🛍 СПП: {spp_percent}% (Цена для покупателя: {customer_price:,.0f}₽)\n"
-    text += f"💶 Логистика WB: {logistics_amount:,.1f}₽\n"
+    # Логистика исключена из системы
     text += f"        Габариты: {dimensions}. ({volume_liters}л.)\n"
     text += f"        Тариф склада: {warehouse_rate_per_liter:,.1f}₽ за 1л. | {warehouse_rate_extra:,.1f}₽ за л. свыше)\n"
     text += f"🌟 Оценка: {rating}\n"

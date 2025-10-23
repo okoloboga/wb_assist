@@ -12,8 +12,8 @@ from api.client import bot_api_client
 from keyboards.keyboards import wb_menu_keyboard, main_keyboard, create_analytics_keyboard
 from utils.formatters import format_error_message, format_currency, format_percentage
 from utils.formatters import safe_send_message, safe_edit_message
-from gpt_integration.aggregator import aggregate
-from gpt_integration.pipeline import run_analysis
+# from gpt_integration.aggregator import aggregate
+# from gpt_integration.pipeline import run_analysis
 
 router = Router()
 
@@ -307,58 +307,51 @@ async def llm_analysis(callback: CallbackQuery):
         }
     }
 
-    try:
-        assembled_data = aggregate(data_sources)
-    except Exception as e:
-        await safe_edit_message(
-            callback=callback,
-            text=f"❌ Ошибка агрегации данных:\n\n{e}",
-            reply_markup=create_analytics_keyboard(period=period),
-            user_id=callback.from_user.id
-        )
-        await callback.answer()
-        return
+    # Временно отключен AI-анализ
+    # try:
+    #     assembled_data = aggregate(data_sources)
+    # except Exception as e:
+    #     await safe_edit_message(
+    #         callback=callback,
+    #         text=f"❌ Ошибка агрегации данных:\n\n{e}",
+    #         reply_markup=create_analytics_keyboard(period=period),
+    #         user_id=callback.from_user.id
+    #     )
+    #     await callback.answer()
+    #     return
 
-    # Запускаем LLM анализ
-    try:
-        result = run_analysis(
-            data=assembled_data,
-            validate=True
-        )
-    except Exception as e:
-        await safe_edit_message(
-            callback=callback,
-            text=f"❌ Ошибка выполнения LLM‑анализа:\n\n{e}",
-            reply_markup=create_analytics_keyboard(period=period),
-            user_id=callback.from_user.id
-        )
-        await callback.answer()
-        return
+    # # Запускаем LLM анализ
+    # try:
+    #     result = run_analysis(
+    #         data=assembled_data,
+    #         validate=True
+    #     )
+    # except Exception as e:
+    #     await safe_edit_message(
+    #         callback=callback,
+    #         text=f"❌ Ошибка выполнения LLM‑анализа:\n\n{e}",
+    #         reply_markup=create_analytics_keyboard(period=period),
+    #         user_id=callback.from_user.id
+    #     )
+    #     await callback.answer()
+    #     return
 
-    # Отправляем чанки в Telegram
-    chunks = (((result or {}).get("telegram") or {}).get("chunks")) or []
-    if not chunks:
-        # Фолбэк — отправим сырой ответ, если есть
-        raw_text = (result or {}).get("raw_response") or "⚠️ Анализ завершён, но нет сообщений для Telegram."
-        await safe_send_message(
-            message=callback.message,
-            text=raw_text,
-            user_id=callback.from_user.id
-        )
-    else:
-        for part in chunks:
-            await safe_send_message(
-                message=callback.message,
-                text=part,
-                user_id=callback.from_user.id
-            )
-
-    # Финальное сообщение с клавиатурой
-    await safe_send_message(
-        message=callback.message,
-        text="✅ LLM‑анализ завершён",
+    # Временно отключен AI-анализ - показываем базовую аналитику
+    await safe_edit_message(
+        callback=callback,
+        text="📊 **Аналитика продаж**\n\n"
+             "🤖 AI-анализ временно отключен.\n"
+             "Используйте базовые отчеты для анализа данных.",
         reply_markup=create_analytics_keyboard(period=period),
         user_id=callback.from_user.id
     )
+
+    # Финальное сообщение с клавиатурой
+    # await safe_send_message(
+    #     message=callback.message,
+    #     text="✅ LLM‑анализ завершён",
+    #     reply_markup=create_analytics_keyboard(period=period),
+    #     user_id=callback.from_user.id
+    # )
 
     await callback.answer("Готово")

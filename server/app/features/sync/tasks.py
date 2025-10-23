@@ -41,10 +41,8 @@ def sync_cabinet_data(self, cabinet_id: int) -> Dict[str, Any]:
         import asyncio
         result = asyncio.run(sync_service.sync_all_data(cabinet))
         
-        # Обновляем время последней синхронизации
-        from datetime import timezone
-        cabinet.last_sync_at = datetime.now(timezone.utc)
-        db.commit()
+        # УБРАНО: Обновление last_sync_at теперь делается внутри sync_all_data()
+        # для правильной работы с уведомлениями
         
         logger.info(f"Синхронизация кабинета {cabinet_id} завершена: {result}")
         return {"status": "success", "cabinet_id": cabinet_id, "result": result}

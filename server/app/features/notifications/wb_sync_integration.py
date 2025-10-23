@@ -31,7 +31,7 @@ class WBSyncNotificationIntegration:
     ) -> Dict[str, Any]:
         """Обработка уведомлений после синхронизации данных"""
         try:
-            # Webhook удален - используется только polling
+            # Webhook система для уведомлений
             # Получаем пользователя
             from app.features.user.models import User
             from app.features.wb_api.crud_cabinet_users import CabinetUserCRUD

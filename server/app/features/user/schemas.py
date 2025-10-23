@@ -60,6 +60,8 @@ class UserResponse(BaseModel):
     username: Optional[str]
     first_name: str
     last_name: Optional[str]
+    bot_webhook_url: Optional[str]
+    webhook_secret: Optional[str]
     created_at: datetime
     updated_at: Optional[datetime]
 
@@ -70,6 +72,8 @@ class UserUpdate(BaseModel):
     username: Optional[str] = Field(None, min_length=1, max_length=32)
     first_name: Optional[str] = Field(None, min_length=1, max_length=64)
     last_name: Optional[str] = Field(None, min_length=1, max_length=64)
+    bot_webhook_url: Optional[str] = Field(None, max_length=500)
+    webhook_secret: Optional[str] = Field(None, max_length=100)
 
     @field_validator('username')
     @classmethod

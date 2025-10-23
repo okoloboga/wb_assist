@@ -112,3 +112,5 @@ migrations/versions/*
 # Test Data
 test_data/
 fixtures/
+server/old
+bot/old

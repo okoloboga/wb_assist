@@ -22,6 +22,11 @@ class BotAPIResponse:
     telegram_text: Optional[str] = None
     error: Optional[str] = None
     status_code: int = 200
+    # Дополнительные поля для совместимости с новой структурой API
+    orders: Optional[List[Dict[str, Any]]] = None
+    pagination: Optional[Dict[str, Any]] = None
+    order: Optional[Dict[str, Any]] = None
+    stocks: Optional[Dict[str, Any]] = None
 
 
 class BotAPIClient:
@@ -113,7 +118,12 @@ class BotAPIClient:
                     success=True,
                     data=data.get("data"),
                     telegram_text=data.get("telegram_text"),
-                    status_code=response.status
+                    status_code=response.status,
+                    # Заполняем новые поля для совместимости
+                    orders=data.get("orders"),
+                    pagination=data.get("pagination"),
+                    order=data.get("order"),
+                    stocks=data.get("stocks")
                 )
             elif response.status == 404:
                 logger.warning(f"🔍 Resource not found: {response.url}")
@@ -193,13 +203,23 @@ class BotAPIClient:
                         response_data = {"error": "Invalid response format"}
                         logger.error(f"   ❌ Ошибка парсинга JSON: Invalid response format")
                     
+                    # Логируем структуру ответа для отладки
+                    logger.info(f"🔍 DEBUG: response_data structure: {response_data}")
+                    logger.info(f"🔍 DEBUG: orders from response: {response_data.get('orders') if isinstance(response_data, dict) else None}")
+                    logger.info(f"🔍 DEBUG: pagination from response: {response_data.get('pagination') if isinstance(response_data, dict) else None}")
+                    
                     result = BotAPIResponse(
                         success=resp.status < 400,
                         data=response_data,
                         telegram_text=response_data.get("telegram_text") if isinstance(response_data, dict) else None,
                         error=response_data.get("error") if isinstance(response_data, dict) else None,
-                        status_code=resp.status
+                        status_code=resp.status,
+                        # Заполняем новые поля для совместимости
+                        orders=response_data.get("orders") if isinstance(response_data, dict) else None,
+                        pagination=response_data.get("pagination") if isinstance(response_data, dict) else None
                     )
+                    
+                    logger.info(f"🔍 DEBUG: BotAPIResponse created - orders: {result.orders}, pagination: {result.pagination}")
                     
                     logger.info(f"✅ Запрос выполнен успешно: {result.success}")
                     return result
@@ -247,6 +267,7 @@ class BotAPIClient:
         logger.info(f"   🔧 Method: {method}")
         logger.info(f"   📋 Params: {params}")
         logger.info(f"   📦 JSON: {json_data}")
+        logger.info(f"🔍 DEBUG: Starting request to {url}")
         logger.info(f"   🔑 Headers: {self.headers}")
         
         try:
@@ -404,6 +425,13 @@ class BotAPIClient:
         logger.info(f"🛠 Обновление настроек уведомлений для пользователя {user_id}: {updates}")
         params = {"telegram_id": user_id}
         return await self._make_request("POST", "/notifications/settings", params=params, json_data=updates)
+
+    async def update_user_webhook(self, user_id: int, webhook_url: str) -> BotAPIResponse:
+        """Обновить webhook URL пользователя"""
+        logger.info(f"🔗 Обновление webhook URL для пользователя {user_id}: {webhook_url}")
+        params = {"telegram_id": user_id}
+        json_data = {"bot_webhook_url": webhook_url}
+        return await self._make_request("POST", "/users/webhook", params=params, json_data=json_data)
 
     # ===== НОВЫЕ МЕТОДЫ ДЛЯ СТАТИСТИКИ ЗАКАЗОВ =====
 

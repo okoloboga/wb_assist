@@ -21,25 +21,16 @@ router = Router()
 @router.callback_query(F.data == "orders")
 async def show_orders_menu(callback: CallbackQuery):
     """Показать меню заказов"""
-    logger.info(f"🔍 DEBUG: Обработчик orders вызван для пользователя {callback.from_user.id}")
-    
-    logger.info(f"🔍 DEBUG: Вызываем bot_api_client.get_recent_orders с user_id={callback.from_user.id}")
     response = await bot_api_client.get_recent_orders(
         user_id=callback.from_user.id,
         limit=10,
         offset=0
     )
     
-    logger.info(f"🔍 DEBUG: Получен ответ от API: success={response.success}, status_code={response.status_code}")
-    if response.error:
-        logger.info(f"🔍 DEBUG: Ошибка API: {response.error}")
-    
-    logger.info(f"🔍 DEBUG: Response data: {response.data}")
-    logger.info(f"🔍 DEBUG: Telegram text: {response.telegram_text}")
-    
-    if response.success and response.data:
-        orders = response.data.get("orders", [])
-        pagination = response.data.get("pagination", {})
+    if response.success:
+        # Новая структура ответа: данные в корне response
+        orders = response.orders or []
+        pagination = response.pagination or {}
         
         if orders:
             keyboard = create_orders_keyboard(
@@ -86,9 +77,10 @@ async def show_recent_orders(callback: CallbackQuery):
         offset=0
     )
     
-    if response.success and response.data:
-        orders = response.data.get("orders", [])
-        pagination = response.data.get("pagination", {})
+    if response.success:
+        # Новая структура ответа: данные в корне response
+        orders = response.orders or []
+        pagination = response.pagination or {}
         
         if orders:
             keyboard = create_orders_keyboard(
@@ -131,9 +123,10 @@ async def show_orders_page(callback: CallbackQuery):
         offset=offset
     )
     
-    if response.success and response.data:
-        orders = response.data.get("orders", [])
-        pagination = response.data.get("pagination", {})
+    if response.success:
+        # Новая структура ответа: данные в корне response
+        orders = response.orders or []
+        pagination = response.pagination or {}
         
         keyboard = create_orders_keyboard(
             orders=orders,
@@ -166,9 +159,16 @@ async def show_order_details(callback: CallbackQuery):
     
     response = await bot_api_client.get_order_details(order_id=order_id, user_id=callback.from_user.id)
     
-    if response.success and response.data:
-        order = response.data.get("order", {})
+    if response.success:
+        # Используем новое поле order из response
+        order = response.order or {}
         image_url = order.get("image_url")
+        
+        # Детальные логи для отладки
+        logger.info(f"📢 Order detail response: {response}")
+        logger.info(f"📢 Order data: {order}")
+        logger.info(f"📢 Order image_url: {image_url}")
+        logger.info(f"📢 Telegram text: {response.telegram_text}")
         
         # Создаем клавиатуру для детального просмотра
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
@@ -185,12 +185,14 @@ async def show_order_details(callback: CallbackQuery):
         # Если есть изображение, отправляем фото с подписью, иначе обычное сообщение
         if image_url:
             try:
+                logger.info(f"📢 Sending photo for order detail: {image_url}")
                 await callback.message.delete()
                 await callback.message.answer_photo(
                     photo=image_url,
                     caption=response.telegram_text or "🧾 Детали заказа",
                     reply_markup=keyboard
                 )
+                logger.info(f"📢 Photo sent successfully for order {order_id}")
             except Exception as e:
                 logger.error(f"Ошибка отправки фото: {e}")
                 await callback.message.edit_text(
@@ -198,6 +200,7 @@ async def show_order_details(callback: CallbackQuery):
                     reply_markup=keyboard
                 )
         else:
+            logger.info(f"📢 No image_url for order {order_id}, sending text only")
             await callback.message.edit_text(
                 response.telegram_text or "🧾 Детали заказа",
                 reply_markup=keyboard
@@ -221,9 +224,10 @@ async def cmd_orders(message: Message):
         offset=0
     )
     
-    if response.success and response.data:
-        orders = response.data.get("orders", [])
-        pagination = response.data.get("pagination", {})
+    if response.success:
+        # Новая структура ответа: данные в корне response
+        orders = response.orders or []
+        pagination = response.pagination or {}
         
         if orders:
             keyboard = create_orders_keyboard(

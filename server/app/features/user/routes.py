@@ -6,7 +6,7 @@ from typing import List
 import logging
 
 from ...core.database import get_db
-from .schemas import UserCreate, UserResponse
+from .schemas import UserCreate, UserResponse, UserUpdate
 from .crud import UserCRUD
 
 # Настройка логирования для routes
@@ -137,3 +137,39 @@ async def get_all_users(
     user_crud = UserCRUD(db)
     users = user_crud.get_all_users(skip=skip, limit=limit)
     return users
+
+
+@user_router.post("/webhook", response_model=UserResponse)
+async def update_user_webhook(
+    telegram_id: int,
+    webhook_data: dict,
+    db: Session = Depends(get_db)
+):
+    """
+    Обновить webhook URL пользователя.
+    """
+    try:
+        user_crud = UserCRUD(db)
+        user = user_crud.get_user_by_telegram_id(telegram_id)
+        
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Пользователь не найден"
+            )
+        
+        # Обновляем webhook URL
+        update_data = UserUpdate(bot_webhook_url=webhook_data.get("bot_webhook_url"))
+        updated_user = user_crud.update_user(telegram_id, update_data)
+        
+        logger.info(f"API: Обновлен webhook URL для пользователя {telegram_id}")
+        return updated_user
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"API: Ошибка обновления webhook URL: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Внутренняя ошибка сервера"
+        )

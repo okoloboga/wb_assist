@@ -39,7 +39,7 @@ class NotificationHistory(Base):
     """История отправленных уведомлений"""
     __tablename__ = "notification_history"
     
-    id = Column(String(50), primary_key=True)  # notif_12345
+    id = Column(String(100), primary_key=True)  # notif_12345
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     notification_type = Column(String(50), nullable=False, index=True)
     priority = Column(String(20), nullable=False)

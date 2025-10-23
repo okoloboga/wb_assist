@@ -83,6 +83,7 @@ async def get_recent_orders(
         if not result["success"]:
             raise HTTPException(status_code=500, detail=result["error"])
         
+        
         return OrdersResponse(
             status="success",
             orders=result["data"].get("orders"),
