@@ -168,12 +168,35 @@ async def receive_auto_webhook(
                     parse_mode="Markdown"
                 )
         else:
-            # Для других типов уведомлений просто отправляем готовый текст
-            await bot.send_message(
-                chat_id=telegram_id,
-                text=telegram_text,
-                parse_mode="Markdown"
-            )
+            # Для других типов уведомлений проверяем наличие image_url
+            data = notification_data.get("data", {})
+            image_url = data.get("image_url")
+            
+            if image_url:
+                # Если есть изображение, отправляем фото с подписью
+                try:
+                    await bot.send_photo(
+                        chat_id=telegram_id,
+                        photo=image_url,
+                        caption=telegram_text,
+                        parse_mode="Markdown"
+                    )
+                    logger.info(f"📸 Sent photo notification to telegram_id {telegram_id}: {image_url}")
+                except Exception as e:
+                    logger.error(f"Error sending photo notification: {e}")
+                    # Фолбэк - отправляем обычное сообщение
+                    await bot.send_message(
+                        chat_id=telegram_id,
+                        text=telegram_text,
+                        parse_mode="Markdown"
+                    )
+            else:
+                # Если нет изображения, отправляем обычное сообщение
+                await bot.send_message(
+                    chat_id=telegram_id,
+                    text=telegram_text,
+                    parse_mode="Markdown"
+                )
         
         logger.info(f"✅ Webhook notification sent to telegram_id {telegram_id}")
 

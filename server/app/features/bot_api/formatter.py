@@ -505,49 +505,68 @@ class BotMessageFormatter:
             # Остатки
             stocks = order.get("stocks", {})
             
-            # Формируем сообщение в новом формате
-            message = f"""Order ID: {order_id} от {order_date}
-Статус: {status}
-
-WB ID: {wb_order_id}
-NM ID (товар): {nm_id}
-Название: {product_name}"""
+            # Определяем тип заказа по статусу
+            status_map = {
+                "active": "Заказ",
+                "buyout": "Выкуп", 
+                "canceled": "Отмена",
+                "return": "Возврат"
+            }
+            order_type = status_map.get(status, "Заказ")
             
-            if article:
-                message += f"\nАртикул: {article}"
-            if size:
-                message += f"\nРазмер: {size}"
-            if barcode:
-                message += f"\nШтрихкод: {barcode}"
+            # Форматируем дату и время из ISO формата
+            formatted_datetime = order_date
+            if 'T' in order_date:
+                date_part = order_date.split('T')[0]  # 2025-10-23
+                time_part = order_date.split('T')[1][:5]  # 14:13
+                # Преобразуем дату в формат ДД.ММ.ГГГГ
+                year, month, day = date_part.split('-')
+                formatted_datetime = f"{day}.{month}.{year} {time_part}"
+            
+            # Формируем сообщение в новом формате
+            message = f"""{order_type} ID: {order_id} от {formatted_datetime}
+
+🆔 {nm_id} / {article} / ({size})
+🎹 {barcode}"""
             
             message += f"""
 
-💰 Финансовые данные:
+💰 Финансы:
 Цена заказа: {total_price:,.1f}₽
 СПП %: {spp_percent}%
 Цена для покупателя: {customer_price:,.1f}₽
 Скидка: {discount_percent}%"""
             
             if warehouse_from or warehouse_to:
-                message += f"\n\n{warehouse_from} -> {warehouse_to}"
+                message += f"\n\n🚛 {warehouse_from} -> {warehouse_to}"
             
-            # Продажи
+            # Выкупы в табличном формате
             if sales_periods:
+                sales_7 = sales_periods.get('7_days', 0)
+                sales_14 = sales_periods.get('14_days', 0)
+                sales_30 = sales_periods.get('30_days', 0)
                 message += f"""
 
-📈 Продажи за периоды:
-За 7 дней: {sales_periods.get('7_days', 0)} продажи
-За 14 дней: {sales_periods.get('14_days', 0)} продажи
-За 30 дней: {sales_periods.get('30_days', 0)} продажи"""
+📈 Выкупы за периоды:
+7 | 14 | 30 дней:
+{sales_7} | {sales_14} | {sales_30}"""
             
             # Статистика заказов
             if orders_stats:
+                total_orders = orders_stats.get('total_orders', 0)
+                active_orders = orders_stats.get('active_orders', 0)
+                canceled_orders = orders_stats.get('canceled_orders', 0)
+                buyout_orders = orders_stats.get('buyout_orders', 0)
+                return_orders = orders_stats.get('return_orders', 0)
+                
                 message += f"""
 
 🔍 Статистика по заказам:
-Всего заказов: {orders_stats.get('total_orders', 0)}
-Активные: {orders_stats.get('active_orders', 0)} заказ
-Отмененные: {orders_stats.get('canceled_orders', 0)} заказов"""
+Всего: {total_orders} заказов
+Активные: {active_orders}
+Отмененные: {canceled_orders}
+Выкупы: {buyout_orders}
+Возвраты: {return_orders}"""
             
             # Рейтинги и отзывы
             message += f"""
@@ -556,18 +575,29 @@ NM ID (товар): {nm_id}
 Средний рейтинг: {avg_rating:.2f}
 Всего отзывов: {reviews_count}"""
             
-            # Распределение рейтингов
-            if rating_distribution:
-                message += "\nРаспределение рейтингов:"
-                for rating in sorted(rating_distribution.keys(), reverse=True):
-                    count = rating_distribution[rating]
-                    # Правильное склонение слова "звезда"
-                    stars_word = "звезда" if rating == 1 else ("звезды" if rating in [2, 3, 4] else "звезд")
-                    # Правильное склонение слова "отзыв"
-                    reviews_word = "отзыв" if count % 10 == 1 and count % 100 != 11 else (
-                        "отзыва" if count % 10 in [2, 3, 4] and count % 100 not in [12, 13, 14] else "отзывов"
-                    )
-                    message += f"\n{rating} {stars_word}: {count} {reviews_word}"
+            # Распределение рейтингов в вертикальном формате (в процентах)
+            if rating_distribution and reviews_count > 0:
+                # Собираем данные по звездам (от 5 до 1)
+                stars_5 = rating_distribution.get(5, 0)
+                stars_4 = rating_distribution.get(4, 0)
+                stars_3 = rating_distribution.get(3, 0)
+                stars_2 = rating_distribution.get(2, 0)
+                stars_1 = rating_distribution.get(1, 0)
+                
+                # Рассчитываем проценты
+                pct_5 = (stars_5 / reviews_count) * 100
+                pct_4 = (stars_4 / reviews_count) * 100
+                pct_3 = (stars_3 / reviews_count) * 100
+                pct_2 = (stars_2 / reviews_count) * 100
+                pct_1 = (stars_1 / reviews_count) * 100
+                
+                message += f"""
+
+5⭐ - {pct_5:.1f}%
+4⭐ - {pct_4:.1f}%
+3⭐ - {pct_3:.1f}%
+2⭐ - {pct_2:.1f}%
+1⭐ - {pct_1:.1f}%"""
             
             # Остатки
             if stocks:

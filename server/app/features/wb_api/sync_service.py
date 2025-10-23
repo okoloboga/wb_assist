@@ -297,8 +297,11 @@ class WBSyncService:
                         previous_reviews = self._get_previous_reviews_for_notifications(cabinet_id, previous_sync_at)
                         current_stocks = self._get_current_stocks_for_notifications(cabinet_id, previous_sync_at)
                         previous_stocks = self._get_previous_stocks_for_notifications(cabinet_id, previous_sync_at)
+                        current_sales = self._get_current_sales_for_notifications(cabinet_id, previous_sync_at)
+                        previous_sales = self._get_previous_sales_for_notifications(cabinet_id, previous_sync_at)
                         
                         logger.info(f"📊 Found {len(current_orders)} current orders, {len(previous_orders)} previous orders")
+                        logger.info(f"📊 Found {len(current_sales)} current sales, {len(previous_sales)} previous sales")
                         
                         # Обрабатываем события и отправляем уведомления
                         events_result = await notification_service.process_sync_events(
@@ -309,7 +312,9 @@ class WBSyncService:
                             current_reviews=current_reviews,
                             previous_reviews=previous_reviews,
                             current_stocks=current_stocks,
-                            previous_stocks=previous_stocks
+                            previous_stocks=previous_stocks,
+                            current_sales=current_sales,
+                            previous_sales=previous_sales
                         )
                         
                         logger.info(f"📢 Processed sync events for user {user_id}: {events_result}")
@@ -1494,9 +1499,16 @@ class WBSyncService:
         try:
             logger.info(f"Starting sales sync for cabinet {cabinet.id}")
             
+            # Определяем тип синхронизации
+            # Первичная синхронизация: last_sync_at == None (получаем все данные)
+            # Последующие синхронизации: last_sync_at != None (только новые данные)
+            is_initial_sync = cabinet.last_sync_at is None
+            flag = 0 if is_initial_sync else 1
+            
+            logger.info(f"Sales sync type: {'initial' if is_initial_sync else 'incremental'} (flag={flag})")
+            
             # Получаем данные продаж из WB API
-            # Для уменьшения нагрузки: после первичной загрузки используем узкое окно и инкрементальный флаг
-            sales_data = await client.get_sales(date_from, flag=1)
+            sales_data = await client.get_sales(date_from, flag=flag)
             
             if not sales_data:
                 logger.warning(f"No sales data received for cabinet {cabinet.id}")
@@ -1553,9 +1565,8 @@ class WBSyncService:
                         sales_crud.create_sale(self.db, sale_data)
                         records_created += 1
                         
-                        # Если нужно отправлять уведомления, обрабатываем новую продажу
-                        if should_notify:
-                            await self._process_sale_notification(cabinet, sale_data)
+                        # Уведомления о продажах обрабатываются через NotificationService.process_sync_events
+                        # после завершения всей синхронизации
                     
                     records_processed += 1
                     
@@ -1671,47 +1682,6 @@ class WBSyncService:
                 "message": f"Claims sync failed: {str(e)}"
             }
     
-    async def _process_sale_notification(self, cabinet: WBCabinet, sale_data: Dict[str, Any]):
-        """Обработка уведомления о новой продаже/возврате"""
-        try:
-            # Импортируем NotificationService
-            from app.features.notifications.notification_service import NotificationService
-            
-            notification_service = NotificationService(self.db)
-            
-            # Получаем пользователя
-            # user_id у кабинета более не используется напрямую
-            from app.features.wb_api.crud_cabinet_users import CabinetUserCRUD
-            cabinet_user_crud = CabinetUserCRUD()
-            user_ids = cabinet_user_crud.get_cabinet_users(self.db, cabinet.id)
-            user = self.db.query(User).filter(User.id.in_(user_ids)).first() if user_ids else None
-            if not user:
-                logger.warning(f"User not found for cabinet {cabinet.id}")
-                return
-            
-            # Определяем тип уведомления
-            notification_type = "order_buyout" if sale_data["type"] == "buyout" else "order_return"
-            
-            # Создаем данные для уведомления
-            notification_data = {
-                "order_id": sale_data["order_id"],
-                "product_name": sale_data["product_name"],
-                "amount": sale_data["amount"],
-                "type": sale_data["type"],
-                "sale_date": sale_data["sale_date"].isoformat() if sale_data["sale_date"] else None
-            }
-            
-            # Webhook уведомления отправляются в реальном времени
-            result = {"success": True, "message": "Notification sent via webhook"}
-            
-            if result.get("success"):
-                logger.info(f"Sale notification sent for cabinet {cabinet.id}, sale {sale_data['sale_id']}")
-            else:
-                logger.warning(f"Failed to send sale notification: {result.get('error')}")
-                
-        except Exception as e:
-            logger.error(f"Error processing sale notification: {e}")
-    
     def _parse_wb_date(self, date_str: str) -> Optional[datetime]:
         """Парсинг даты из WB API"""
         if not date_str:
@@ -1759,6 +1729,7 @@ class WBSyncService:
                     "id": order.order_id,  # Для совместимости с format_order_detail
                     "status": order.status,
                     "amount": order.total_price,
+                    "total_price": order.total_price,  # ← ДОБАВЛЕНО!
                     "product_name": order.name,  # Исправлено: используем name вместо product_name
                     "brand": order.brand,
                     "nm_id": order.nm_id,
@@ -1766,12 +1737,14 @@ class WBSyncService:
                     "warehouse_from": order.warehouse_from,
                     "warehouse_to": order.warehouse_to,
                     "created_at": order.created_at,
+                    "order_date": order.order_date,  # ← ДОБАВЛЕНО!
                     "date": order.created_at.isoformat() if order.created_at else "",  # Для format_order_detail
                     "article": order.article,
                     "supplier_article": order.article,
                     "barcode": order.barcode,
                     "spp_percent": order.spp_percent,
                     "customer_price": order.customer_price,
+                    "discount_percent": order.discount_percent,  # ← ДОБАВЛЕНО!
                     # Логистика исключена из системы
                     "image_url": product.image_url if product else None,  # Добавляем image_url из товара
                     "dimensions": "",  # Получать из товара
@@ -1982,4 +1955,80 @@ class WBSyncService:
             } for stock in old_stocks]
         except Exception as e:
             logger.error(f"Error getting previous stocks for notifications: {e}")
+            return []
+    
+    def _get_current_sales_for_notifications(self, cabinet_id: int, previous_sync_at: datetime = None) -> List[Dict[str, Any]]:
+        """Получение текущих продаж для обработки уведомлений
+        
+        Args:
+            cabinet_id: ID кабинета
+            previous_sync_at: Время предыдущей синхронизации
+        """
+        try:
+            from ..wb_api.models_sales import WBSales
+            
+            # Если нет предыдущей синхронизации, возвращаем пустой список
+            if not previous_sync_at:
+                logger.warning(f"No previous sync time provided for cabinet {cabinet_id}")
+                return []
+            
+            # Получаем продажи, которые были созданы после предыдущей синхронизации
+            recent_sales = self.db.query(WBSales).filter(
+                WBSales.cabinet_id == cabinet_id,
+                WBSales.created_at > previous_sync_at
+            ).all()
+            
+            return [{
+                "sale_id": sale.sale_id,
+                "order_id": sale.order_id,
+                "nm_id": sale.nm_id,
+                "product_name": sale.product_name,
+                "brand": sale.brand,
+                "size": sale.size,
+                "amount": sale.amount,
+                "sale_date": sale.sale_date,
+                "type": sale.type,  # 'buyout' или 'return'
+                "status": sale.status,
+                "is_cancel": sale.is_cancel
+            } for sale in recent_sales]
+        except Exception as e:
+            logger.error(f"Error getting current sales for notifications: {e}")
+            return []
+    
+    def _get_previous_sales_for_notifications(self, cabinet_id: int, previous_sync_at: datetime = None) -> List[Dict[str, Any]]:
+        """Получение предыдущих продаж для сравнения
+        
+        Args:
+            cabinet_id: ID кабинета
+            previous_sync_at: Время предыдущей синхронизации
+        """
+        try:
+            from ..wb_api.models_sales import WBSales
+            
+            # Если нет предыдущей синхронизации, возвращаем пустой список
+            if not previous_sync_at:
+                logger.warning(f"No previous sync time provided for cabinet {cabinet_id}")
+                return []
+            
+            # Получаем продажи, которые были созданы до предыдущей синхронизации
+            old_sales = self.db.query(WBSales).filter(
+                WBSales.cabinet_id == cabinet_id,
+                WBSales.created_at <= previous_sync_at
+            ).all()
+            
+            return [{
+                "sale_id": sale.sale_id,
+                "order_id": sale.order_id,
+                "nm_id": sale.nm_id,
+                "product_name": sale.product_name,
+                "brand": sale.brand,
+                "size": sale.size,
+                "amount": sale.amount,
+                "sale_date": sale.sale_date,
+                "type": sale.type,  # 'buyout' или 'return'
+                "status": sale.status,
+                "is_cancel": sale.is_cancel
+            } for sale in old_sales]
+        except Exception as e:
+            logger.error(f"Error getting previous sales for notifications: {e}")
             return []

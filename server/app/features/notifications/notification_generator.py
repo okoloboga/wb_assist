@@ -23,18 +23,12 @@ class NotificationGenerator:
             return None
         
         # Генерируем уведомление в зависимости от типа события
-        if event_type == "new_order":
-            return self._generate_new_order_notification(event_data, user_settings)
-        elif event_type == "order_buyout":
-            return self._generate_order_buyout_notification(event_data, user_settings)
-        elif event_type == "order_cancellation":
-            return self._generate_order_cancellation_notification(event_data, user_settings)
-        elif event_type == "order_return":
-            return self._generate_order_return_notification(event_data, user_settings)
-        elif event_type == "negative_review":
+        if event_type == "negative_review":
             return self._generate_negative_review_notification(event_data, user_settings)
         elif event_type == "critical_stocks":
             return self._generate_critical_stocks_notification(event_data, user_settings)
+        # Для заказов (new_order, order_buyout, order_cancellation, order_return) 
+        # используется детальный формат в NotificationService
         
         return None
     
@@ -55,101 +49,6 @@ class NotificationGenerator:
         
         return user_settings.get(setting_key, True)
     
-    def _generate_new_order_notification(self, event_data: Dict[str, Any], user_settings: Dict[str, Any]) -> Dict[str, Any]:
-        """Генерация уведомления о новом заказе"""
-        order_id = event_data.get("order_id", "N/A")
-        amount = event_data.get("amount", 0)
-        product_name = event_data.get("product_name", "Неизвестный товар")
-        brand = event_data.get("brand", "Неизвестный бренд")
-        
-        title = f"🛒 Новый заказ #{order_id}"
-        content = self._format_new_order_content(order_id, amount, product_name, brand)
-        
-        return {
-            "type": "new_order",
-            "user_id": event_data.get("user_id"),
-            "order_id": order_id,
-            "amount": amount,
-            "title": title,
-            "content": content,
-            "priority": "HIGH",
-            "grouping_enabled": user_settings.get("grouping_enabled", True),
-            "max_group_size": user_settings.get("max_group_size", 5),
-            "group_timeout": user_settings.get("group_timeout", 300),
-            "generated_at": TimezoneUtils.now_msk()
-        }
-    
-    def _generate_order_buyout_notification(self, event_data: Dict[str, Any], user_settings: Dict[str, Any]) -> Dict[str, Any]:
-        """Генерация уведомления о выкупе заказа"""
-        order_id = event_data.get("order_id", "N/A")
-        amount = event_data.get("amount", 0)
-        product_name = event_data.get("product_name", "Неизвестный товар")
-        brand = event_data.get("brand", "Неизвестный бренд")
-        
-        title = f"✅ Заказ #{order_id} выкуплен"
-        content = self._format_order_buyout_content(order_id, amount, product_name, brand)
-        
-        return {
-            "type": "order_buyout",
-            "user_id": event_data.get("user_id"),
-            "order_id": order_id,
-            "amount": amount,
-            "title": title,
-            "content": content,
-            "priority": "HIGH",
-            "grouping_enabled": user_settings.get("grouping_enabled", True),
-            "max_group_size": user_settings.get("max_group_size", 5),
-            "group_timeout": user_settings.get("group_timeout", 300),
-            "generated_at": TimezoneUtils.now_msk()
-        }
-    
-    def _generate_order_cancellation_notification(self, event_data: Dict[str, Any], user_settings: Dict[str, Any]) -> Dict[str, Any]:
-        """Генерация уведомления об отмене заказа"""
-        order_id = event_data.get("order_id", "N/A")
-        amount = event_data.get("amount", 0)
-        product_name = event_data.get("product_name", "Неизвестный товар")
-        brand = event_data.get("brand", "Неизвестный бренд")
-        
-        title = f"❌ Заказ #{order_id} отменен"
-        content = self._format_order_cancellation_content(order_id, amount, product_name, brand)
-        
-        return {
-            "type": "order_cancellation",
-            "user_id": event_data.get("user_id"),
-            "order_id": order_id,
-            "amount": amount,
-            "title": title,
-            "content": content,
-            "priority": "HIGH",
-            "grouping_enabled": user_settings.get("grouping_enabled", True),
-            "max_group_size": user_settings.get("max_group_size", 5),
-            "group_timeout": user_settings.get("group_timeout", 300),
-            "generated_at": TimezoneUtils.now_msk()
-        }
-    
-    def _generate_order_return_notification(self, event_data: Dict[str, Any], user_settings: Dict[str, Any]) -> Dict[str, Any]:
-        """Генерация уведомления о возврате заказа"""
-        order_id = event_data.get("order_id", "N/A")
-        amount = event_data.get("amount", 0)
-        product_name = event_data.get("product_name", "Неизвестный товар")
-        brand = event_data.get("brand", "Неизвестный бренд")
-        
-        title = f"🔄 Заказ #{order_id} возвращен"
-        content = self._format_order_return_content(order_id, amount, product_name, brand)
-        
-        return {
-            "type": "order_return",
-            "user_id": event_data.get("user_id"),
-            "order_id": order_id,
-            "amount": amount,
-            "title": title,
-            "content": content,
-            "priority": "HIGH",
-            "grouping_enabled": user_settings.get("grouping_enabled", True),
-            "max_group_size": user_settings.get("max_group_size", 5),
-            "group_timeout": user_settings.get("group_timeout", 300),
-            "generated_at": TimezoneUtils.now_msk()
-        }
     
     def _generate_negative_review_notification(self, event_data: Dict[str, Any], user_settings: Dict[str, Any]) -> Dict[str, Any]:
         """Генерация уведомления о негативном отзыве"""
@@ -205,45 +104,6 @@ class NotificationGenerator:
             "generated_at": TimezoneUtils.now_msk()
         }
     
-    def _format_new_order_content(self, order_id: int, amount: int, product_name: str, brand: str) -> str:
-        """Форматирование контента уведомления о новом заказе"""
-        return f"""🛒 Новый заказ #{order_id}
-
-💰 Сумма: {amount:,} ₽
-📦 Товар: {product_name}
-🏷️ Бренд: {brand}
-
-Время: {TimezoneUtils.format_time_only(TimezoneUtils.now_msk())}"""
-    
-    def _format_order_buyout_content(self, order_id: int, amount: int, product_name: str, brand: str) -> str:
-        """Форматирование контента уведомления о выкупе заказа"""
-        return f"""✅ Заказ #{order_id} выкуплен
-
-💰 Сумма: {amount:,} ₽
-📦 Товар: {product_name}
-🏷️ Бренд: {brand}
-
-Время: {TimezoneUtils.format_time_only(TimezoneUtils.now_msk())}"""
-    
-    def _format_order_cancellation_content(self, order_id: int, amount: int, product_name: str, brand: str) -> str:
-        """Форматирование контента уведомления об отмене заказа"""
-        return f"""❌ Заказ #{order_id} отменен
-
-💰 Сумма: {amount:,} ₽
-📦 Товар: {product_name}
-🏷️ Бренд: {brand}
-
-Время: {TimezoneUtils.format_time_only(TimezoneUtils.now_msk())}"""
-    
-    def _format_order_return_content(self, order_id: int, amount: int, product_name: str, brand: str) -> str:
-        """Форматирование контента уведомления о возврате заказа"""
-        return f"""🔄 Заказ #{order_id} возвращен
-
-💰 Сумма: {amount:,} ₽
-📦 Товар: {product_name}
-🏷️ Бренд: {brand}
-
-Время: {TimezoneUtils.format_time_only(TimezoneUtils.now_msk())}"""
     
     def _format_negative_review_content(self, review_id: int, rating: int, text: str, product_name: str, order_id: Optional[int]) -> str:
         """Форматирование контента уведомления о негативном отзыве"""
