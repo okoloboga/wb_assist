@@ -172,7 +172,7 @@ async def receive_auto_webhook(
             await bot.send_message(
                 chat_id=telegram_id,
                 text=telegram_text,
-                parse_mode="Markdown"
+                parse_mode="MarkdownV2" if notification_type == "analysis_completed" else "Markdown"
             )
         
         logger.info(f"✅ Webhook notification sent to telegram_id {telegram_id}")

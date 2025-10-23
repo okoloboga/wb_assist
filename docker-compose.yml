@@ -109,6 +109,7 @@ services:
       - REQUEST_TIMEOUT=600
       - WEBHOOK_SECRET=${WEBHOOK_SECRET:-default_webhook_secret}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - GPT_SERVICE_URL=http://gpt:9000
     networks:
       - app-network
 
@@ -119,12 +120,13 @@ services:
     ports:
       - "9000:9000"
     environment:
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - OPENAI_BASE_URL=${OPENAI_BASE_URL}
-      - OPENAI_MODEL=${OPENAI_MODEL}
-      - OPENAI_TEMPERATURE=${OPENAI_TEMPERATURE}
-      - OPENAI_MAX_TOKENS=${OPENAI_MAX_TOKENS}
-      - GPT_PORT=${GPT_PORT}
+      
+      - SERVER_HOST=http://server:8000
+      - API_SECRET_KEY=${API_SECRET_KEY}
+      - BOT_WEBHOOK_BASE=http://bot:8001
+    volumes:
+      - ./gpt_integration:/app/gpt_integration
+      - ./bot/utils:/app/utils
     networks:
       - app-network
 
