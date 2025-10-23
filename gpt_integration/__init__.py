@@ -1,3 +1,3 @@
-from .gpt_client import GPTClient, LLMConfig
+from .gpt_client import GPTClient
 
-__all__ = ["GPTClient", "LLMConfig"]
+__all__ = ["GPTClient"]

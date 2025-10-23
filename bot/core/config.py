@@ -36,8 +36,17 @@ class BotConfig:
     enable_notifications: bool = True
     notification_retry_attempts: int = 5
     
-    # Polling настройки
+    # Webhook настройки
     webhook_port: int = 8001  # Порт для webhook сервера
+    
+    # LLM (GPT) настройки
+    openai_api_key: Optional[str] = None
+    openai_base_url: Optional[str] = None
+    openai_model: str = "gpt-4o-mini"
+    openai_temperature: float = 0.2
+    openai_max_tokens: int = 800
+    openai_timeout: int = 30
+    openai_system_prompt: Optional[str] = None
     
     def __post_init__(self):
         """Валидация конфигурации после инициализации"""
@@ -64,7 +73,15 @@ def load_config() -> BotConfig:
         request_timeout=int(os.getenv("REQUEST_TIMEOUT", "30")),
         enable_notifications=os.getenv("ENABLE_NOTIFICATIONS", "true").lower() == "true",
         notification_retry_attempts=int(os.getenv("NOTIFICATION_RETRY_ATTEMPTS", "5")),
-        webhook_port=int(os.getenv("WEBHOOK_PORT", "8001"))
+        webhook_port=int(os.getenv("WEBHOOK_PORT", "8001")),
+        # LLM (GPT)
+        openai_api_key=os.getenv("OPENAI_API_KEY"),
+        openai_base_url=os.getenv("OPENAI_BASE_URL"),
+        openai_model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+        openai_temperature=float(os.getenv("OPENAI_TEMPERATURE", "0.2")),
+        openai_max_tokens=int(os.getenv("OPENAI_MAX_TOKENS", "800")),
+        openai_timeout=int(os.getenv("OPENAI_TIMEOUT", "30")),
+        openai_system_prompt=os.getenv("OPENAI_SYSTEM_PROMPT")
     )
 
 

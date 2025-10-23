@@ -2,6 +2,8 @@ from typing import Dict, Any, Optional, List
 from datetime import datetime
 import logging
 import re
+from functools import wraps
+import inspect
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import CallbackQuery, Message
 
@@ -134,7 +136,8 @@ async def safe_edit_message(
     callback: CallbackQuery, 
     text: str, 
     reply_markup=None,
-    user_id: int = None
+    user_id: int = None,
+    parse_mode: Optional[str] = None
 ) -> bool:
     """
     Безопасно редактировать сообщение с обработкой TelegramBadRequest
@@ -155,7 +158,8 @@ async def safe_edit_message(
         # Редактируем сообщение
         await callback.message.edit_text(
             text,
-            reply_markup=reply_markup
+            reply_markup=reply_markup,
+            parse_mode=parse_mode
         )
         return True
         
@@ -184,7 +188,8 @@ async def safe_send_message(
     message: Message,
     text: str,
     reply_markup=None,
-    user_id: int = None
+    user_id: int = None,
+    parse_mode: Optional[str] = None
 ) -> bool:
     """
     Безопасно отправить сообщение с обработкой ошибок
@@ -195,7 +200,8 @@ async def safe_send_message(
     try:
         await message.answer(
             text=text,
-            reply_markup=reply_markup
+            reply_markup=reply_markup,
+            parse_mode=parse_mode
         )
         return True
         
@@ -209,11 +215,20 @@ async def safe_send_message(
 
 def handle_telegram_errors(func):
     """
-    Декоратор для автоматической обработки Telegram ошибок в обработчиках
+    Декоратор для автоматической обработки Telegram ошибок в обработчиках.
+    Фильтрует лишние kwargs, которые Aiogram передаёт (например, 'dispatcher').
     """
+    @wraps(func)
     async def wrapper(*args, **kwargs):
         try:
-            return await func(*args, **kwargs)
+            # Оставляем только те kwargs, которые ожидает целевая функция
+            try:
+                sig = inspect.signature(func)
+                allowed = set(sig.parameters.keys())
+                filtered_kwargs = {k: v for k, v in kwargs.items() if k in allowed}
+            except Exception:
+                filtered_kwargs = kwargs
+            return await func(*args, **filtered_kwargs)
         except TelegramBadRequest as e:
             # Находим callback или message в аргументах
             callback = None
@@ -266,7 +281,7 @@ def escape_markdown_v2(text: str) -> str:
     if not text:
         return ""
     specials = r"_[]()~`>#+-=|{}.!*"
-    return re.sub(f"([{re.escape(specials)}])", r"\\\\\1", text)
+    return re.sub(f"([{re.escape(specials)}])", r"\\\1", text)
 
 
 def split_telegram_message(text: str, limit: int = 4000) -> List[str]:
