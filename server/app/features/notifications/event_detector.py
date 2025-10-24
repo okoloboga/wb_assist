@@ -60,11 +60,16 @@ class EventDetector:
         """Обнаружение изменений статуса заказов"""
         events = []
         
+        # Логирование для диагностики
+        logger.info(f"🔍 [detect_status_changes] User {user_id}: current_orders={len(current_orders)}, previous_orders={len(previous_orders)}")
+        
         # Создаем словарь предыдущих статусов
         previous_statuses = {
             order["order_id"]: order.get("status", "unknown") 
             for order in previous_orders
         }
+        
+        logger.info(f"🔍 [detect_status_changes] Previous statuses: {previous_statuses}")
         
         # Проверяем изменения статуса
         for order in current_orders:
@@ -72,8 +77,12 @@ class EventDetector:
             current_status = order.get("status", "unknown")
             previous_status = previous_statuses.get(order_id)
             
+            logger.info(f"🔍 [detect_status_changes] Order {order_id}: previous={previous_status}, current={current_status}")
+            
             if previous_status and previous_status != current_status:
                 event_type = self._get_status_change_event_type(previous_status, current_status)
+                
+                logger.info(f"🔍 [detect_status_changes] Status change detected: {previous_status} → {current_status}, event_type={event_type}")
                 
                 if event_type:  # Только для значимых изменений
                     event = {
@@ -88,7 +97,9 @@ class EventDetector:
                         "detected_at": TimezoneUtils.now_msk()
                     }
                     events.append(event)
+                    logger.info(f"🔍 [detect_status_changes] Event created: {event}")
         
+        logger.info(f"🔍 [detect_status_changes] Total events detected: {len(events)}")
         return events
     
     

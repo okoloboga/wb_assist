@@ -119,11 +119,11 @@ class BotAPIClient:
                     data=data.get("data"),
                     telegram_text=data.get("telegram_text"),
                     status_code=response.status,
-                    # Заполняем новые поля для совместимости
-                    orders=data.get("data", {}).get("orders"),  # ← ИСПРАВЛЕНО!
-                    pagination=data.get("data", {}).get("pagination"),  # ← ИСПРАВЛЕНО!
-                    order=data.get("data", {}).get("order"),  # ← ИСПРАВЛЕНО!
-                    stocks=data.get("data", {}).get("stocks")  # ← ИСПРАВЛЕНО!
+                    # Единообразная структура - поля в корне ответа
+                    orders=data.get("orders"),
+                    pagination=data.get("pagination"),
+                    order=data.get("order"),
+                    stocks=data.get("stocks")
                 )
             elif response.status == 404:
                 logger.warning(f"🔍 Resource not found: {response.url}")

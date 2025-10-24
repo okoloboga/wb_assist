@@ -133,7 +133,15 @@ class BotAPIService:
             return {
                 "success": True,
                 "data": dashboard_data,
-                "telegram_text": telegram_text
+                "telegram_text": telegram_text,
+                # Единообразные поля для всех эндпоинтов
+                "orders": [],
+                "pagination": {},
+                "statistics": {},
+                "stocks": {},
+                "reviews": {},
+                "analytics": {},
+                "order": None
             }
             
         except Exception as e:
@@ -177,7 +185,15 @@ class BotAPIService:
             result = {
                 "success": True,
                 "data": orders_data,
-                "telegram_text": telegram_text
+                "telegram_text": telegram_text,
+                # Единообразные поля для всех эндпоинтов
+                "orders": orders_data.get("orders", []),
+                "pagination": orders_data.get("pagination", {}),
+                "statistics": orders_data.get("statistics", {}),
+                "stocks": {},
+                "reviews": {},
+                "analytics": {},
+                "order": None
             }
             
             # Кэширование отключено для заказов (см. комментарий выше)
@@ -424,7 +440,15 @@ class BotAPIService:
             return {
                 "success": True,
                 "data": order_data,
-                "telegram_text": telegram_text
+                "telegram_text": telegram_text,
+                # Единообразные поля для всех эндпоинтов
+                "orders": [],
+                "pagination": {},
+                "statistics": {},
+                "stocks": {},
+                "reviews": {},
+                "analytics": {},
+                "order": order_data
             }
             
         except Exception as e:
@@ -539,7 +563,15 @@ class BotAPIService:
             return {
                 "success": True,
                 "data": stocks_data,
-                "telegram_text": telegram_text
+                "telegram_text": telegram_text,
+                # Единообразные поля для всех эндпоинтов
+                "orders": [],
+                "pagination": {},
+                "statistics": {},
+                "stocks": stocks_data,
+                "reviews": {},
+                "analytics": {},
+                "order": None
             }
             
         except Exception as e:
@@ -570,7 +602,15 @@ class BotAPIService:
             return {
                 "success": True,
                 "data": reviews_data,
-                "telegram_text": telegram_text
+                "telegram_text": telegram_text,
+                # Единообразные поля для всех эндпоинтов
+                "orders": [],
+                "pagination": {},
+                "statistics": {},
+                "stocks": {},
+                "reviews": reviews_data,
+                "analytics": {},
+                "order": None
             }
             
         except Exception as e:
@@ -599,7 +639,15 @@ class BotAPIService:
             return {
                 "success": True,
                 "data": analytics_data,
-                "telegram_text": telegram_text
+                "telegram_text": telegram_text,
+                # Единообразные поля для всех эндпоинтов
+                "orders": [],
+                "pagination": {},
+                "statistics": {},
+                "stocks": {},
+                "reviews": {},
+                "analytics": analytics_data,
+                "order": None
             }
             
         except Exception as e:
@@ -827,7 +875,15 @@ class BotAPIService:
                     "active_cabinets": active_count,
                     "last_check": datetime.now(timezone.utc).isoformat()
                 },
-                "telegram_text": telegram_text
+                "telegram_text": telegram_text,
+                # Единообразные поля для всех эндпоинтов
+                "orders": [],
+                "pagination": {},
+                "statistics": {},
+                "stocks": {},
+                "reviews": {},
+                "analytics": {},
+                "order": None
             }
             
         except Exception as e:
@@ -985,7 +1041,7 @@ class BotAPIService:
             if status:
                 orders_query = orders_query.filter(WBOrder.status == status)
             
-            orders_query = orders_query.order_by(WBOrder.order_date.desc())
+            orders_query = orders_query.order_by(WBOrder.created_at.desc())
             
             total_orders = orders_query.count()
             logger.info(f"📊 [_fetch_orders_from_db] Total orders in DB: {total_orders}")

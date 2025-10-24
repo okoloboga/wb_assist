@@ -53,25 +53,45 @@ async def show_orders_menu(callback: CallbackQuery):
                        "Заказы появятся здесь после первой продажи.")
             new_markup = wb_menu_keyboard()
         
-        # Безопасно редактируем сообщение
-        await safe_edit_message(
-            callback=callback,
-            text=new_text,
-            reply_markup=new_markup,
-            user_id=callback.from_user.id
-        )
+        # Проверяем, есть ли текст в текущем сообщении
+        current_text = getattr(callback.message, "text", None)
+        if current_text:
+            # Если есть текст, пытаемся отредактировать
+            await safe_edit_message(
+                callback=callback,
+                text=new_text,
+                reply_markup=new_markup,
+                user_id=callback.from_user.id
+            )
+        else:
+            # Если нет текста (только фото), удаляем старое и отправляем новое
+            await callback.message.delete()
+            await callback.message.answer(
+                text=new_text,
+                reply_markup=new_markup
+            )
     else:
         error_message = format_error_message(response.error, response.status_code)
         new_text = f"❌ Ошибка загрузки заказов:\n\n{error_message}"
         new_markup = wb_menu_keyboard()
         
-        # Безопасно редактируем сообщение
-        await safe_edit_message(
-            callback=callback,
-            text=new_text,
-            reply_markup=new_markup,
-            user_id=callback.from_user.id
-        )
+        # Проверяем, есть ли текст в текущем сообщении
+        current_text = getattr(callback.message, "text", None)
+        if current_text:
+            # Если есть текст, пытаемся отредактировать
+            await safe_edit_message(
+                callback=callback,
+                text=new_text,
+                reply_markup=new_markup,
+                user_id=callback.from_user.id
+            )
+        else:
+            # Если нет текста (только фото), удаляем старое и отправляем новое
+            await callback.message.delete()
+            await callback.message.answer(
+                text=new_text,
+                reply_markup=new_markup
+            )
     
     await callback.answer()
 

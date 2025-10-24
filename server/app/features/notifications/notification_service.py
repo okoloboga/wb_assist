@@ -3,6 +3,7 @@ Notification Service - единый сервис для всех типов ув
 """
 
 import asyncio
+import json
 import logging
 from datetime import datetime, timedelta
 from typing import Dict, List, Any, Optional
@@ -42,6 +43,10 @@ class NotificationService:
         
         # Инициализируем WebhookSender
         self.webhook_sender = WebhookSender()
+        
+        # Инициализируем Redis клиент
+        from ...core.redis import get_redis_client
+        self.redis_client = get_redis_client()
         
         # Инициализируем EventDetector
         from .event_detector import EventDetector
@@ -86,6 +91,13 @@ class NotificationService:
             if not user_settings:
                 user_settings = self.settings_crud.create_default_settings(self.db, user_id)
             
+            # Логирование настроек для диагностики
+            logger.info(f"🔧 [process_sync_events] User {user_id} settings: "
+                       f"notifications_enabled={user_settings.notifications_enabled}, "
+                       f"order_buyouts_enabled={user_settings.order_buyouts_enabled}, "
+                       f"order_cancellations_enabled={user_settings.order_cancellations_enabled}, "
+                       f"order_returns_enabled={user_settings.order_returns_enabled}")
+            
             # Проверяем, включены ли уведомления
             if not user_settings.notifications_enabled:
                 logger.info(f"Notifications disabled for user {user_id}")
@@ -95,9 +107,11 @@ class NotificationService:
             events_processed = []
             
             # 1. Обрабатываем заказы (новые заказы + изменения статуса)
+            logger.info(f"🔧 [process_sync_events] Processing orders: current={len(current_orders)}, previous={len(previous_orders)}")
             order_events = await self._process_order_events(
                 user_id, current_orders, previous_orders, user_settings
             )
+            logger.info(f"🔧 [process_sync_events] Order events found: {len(order_events)}")
             events_processed.extend(order_events)
             
             # 2. Обрабатываем отзывы (негативные отзывы)
@@ -134,8 +148,7 @@ class NotificationService:
                     webhook_result = await self._send_webhook_notification(
                         user_id=user_id,
                         notification=clean_event,
-                        telegram_text=telegram_text,
-                        bot_webhook_url=""  # Будет получен из пользователя
+                        telegram_text=telegram_text
                     )
                     
                     if webhook_result.get("success"):
@@ -192,21 +205,42 @@ class NotificationService:
         """Обработка событий заказов"""
         events = []
         
+        logger.info(f"🔧 [_process_order_events] User {user_id}: new_orders_enabled={user_settings.new_orders_enabled}")
+        
         # Обнаруживаем новые заказы
         if user_settings.new_orders_enabled:
+            logger.info(f"🔧 [_process_order_events] Detecting new orders...")
             new_order_events = self.event_detector.detect_new_orders(
                 user_id, current_orders, previous_orders
             )
+            logger.info(f"🔧 [_process_order_events] New order events: {len(new_order_events)}")
             events.extend(new_order_events)
         
         # Обнаруживаем изменения статуса заказов
-        if (user_settings.order_buyouts_enabled or 
-            user_settings.order_cancellations_enabled or 
-            user_settings.order_returns_enabled):
+        status_check_enabled = (user_settings.order_buyouts_enabled or 
+                              user_settings.order_cancellations_enabled or 
+                              user_settings.order_returns_enabled)
+        
+        logger.info(f"🔧 [_process_order_events] Status change detection enabled: {status_check_enabled}")
+        logger.info(f"🔧 [_process_order_events] Status settings: buyouts={user_settings.order_buyouts_enabled}, "
+                   f"cancellations={user_settings.order_cancellations_enabled}, returns={user_settings.order_returns_enabled}")
+        
+        if status_check_enabled:
+            logger.info(f"🔧 [_process_order_events] Detecting status changes...")
+            # ИСПРАВЛЕНИЕ: Используем StatusChangeMonitor вместо EventDetector
+            from .status_monitor import StatusChangeMonitor
+            status_monitor = StatusChangeMonitor()
             
-            status_change_events = self.event_detector.detect_status_changes(
-                user_id, current_orders, previous_orders
+            # Отслеживаем изменения статуса
+            status_changes = status_monitor.track_order_changes(
+                user_id, current_orders, self.redis_client
             )
+            
+            # Получаем события изменений статуса
+            status_change_events = status_monitor.get_status_change_events(status_changes)
+            
+            logger.info(f"🔧 [_process_order_events] Status changes detected: {len(status_changes)}")
+            logger.info(f"🔧 [_process_order_events] Status change events: {len(status_change_events)}")
             events.extend(status_change_events)
         
         return events
@@ -435,79 +469,11 @@ class NotificationService:
                         stocks_dict[size] = quantity
                 order_data["stocks"] = stocks_dict
                 
-                # Получаем статистику продаж (выкупы за периоды)
-                from datetime import datetime, timedelta
-                now = datetime.now()
-                
-                sales_periods = {}
-                for days in [7, 14, 30]:
-                    start_date = now - timedelta(days=days)
-                    from ..wb_api.models_sales import WBSales
-                    
-                    count = self.db.query(func.count(WBSales.id)).filter(
-                        WBSales.cabinet_id == cabinet_id,
-                        WBSales.nm_id == nm_id_from_db,
-                        WBSales.sale_date >= start_date,
-                        WBSales.type == 'buyout',
-                        WBSales.is_cancel == False
-                    ).scalar() or 0
-                    sales_periods[f"{days}_days"] = count
-                
-                order_data["sales_periods"] = sales_periods
-                
-                # Получаем статистику заказов
-                orders_stats = {}
-                total_orders = self.db.query(func.count(WBOrder.id)).filter(
-                    WBOrder.cabinet_id == cabinet_id,
-                    WBOrder.nm_id == nm_id_from_db
-                ).scalar() or 0
-                
-                active_orders = self.db.query(func.count(WBOrder.id)).filter(
-                    WBOrder.cabinet_id == cabinet_id,
-                    WBOrder.nm_id == nm_id_from_db,
-                    WBOrder.status == 'active'
-                ).scalar() or 0
-                
-                canceled_orders = self.db.query(func.count(WBOrder.id)).filter(
-                    WBOrder.cabinet_id == cabinet_id,
-                    WBOrder.nm_id == nm_id_from_db,
-                    WBOrder.status == 'canceled'
-                ).scalar() or 0
-                
-                buyout_orders = self.db.query(func.count(WBSales.id)).filter(
-                    WBSales.cabinet_id == cabinet_id,
-                    WBSales.nm_id == nm_id_from_db,
-                    WBSales.type == 'buyout',
-                    WBSales.is_cancel == False
-                ).scalar() or 0
-                
-                return_orders = self.db.query(func.count(WBSales.id)).filter(
-                    WBSales.cabinet_id == cabinet_id,
-                    WBSales.nm_id == nm_id_from_db,
-                    WBSales.type == 'return',
-                    WBSales.is_cancel == False
-                ).scalar() or 0
-                
-                orders_stats = {
-                    "total_orders": total_orders,
-                    "active_orders": active_orders,
-                    "canceled_orders": canceled_orders,
-                    "buyout_orders": buyout_orders,
-                    "return_orders": return_orders
-                }
-                order_data["orders_stats"] = orders_stats
-                
-                # Получаем распределение рейтингов
-                rating_distribution = {}
-                for rating in [5, 4, 3, 2, 1]:
-                    count = self.db.query(func.count(WBReview.id)).filter(
-                        WBReview.cabinet_id == cabinet_id,
-                        WBReview.nm_id == nm_id_from_db,
-                        WBReview.rating == rating
-                    ).scalar() or 0
-                    rating_distribution[rating] = count
-                
-                order_data["rating_distribution"] = rating_distribution
+                # Временно отключаем сложную статистику для уведомлений
+                # чтобы избежать проблем с парсингом Markdown
+                order_data["sales_periods"] = {}
+                order_data["orders_stats"] = {}
+                order_data["rating_distribution"] = {}
                 
                 logger.info(f"✅ Enhanced notification data for order {order_id}: nm_id={nm_id_from_db}, product={product.name if product else 'N/A'}")
             else:
@@ -1542,7 +1508,7 @@ class NotificationService:
         user_id: int,
         notification: Dict[str, Any],
         telegram_text: str,
-        bot_webhook_url: str
+        bot_webhook_url: str = None
     ) -> Dict[str, Any]:
         """
         Отправка уведомления через webhook
@@ -1551,7 +1517,7 @@ class NotificationService:
             user_id: ID пользователя
             notification: Данные уведомления
             telegram_text: Текст для Telegram
-            bot_webhook_url: URL webhook бота
+            bot_webhook_url: URL webhook бота (опционально, используется из БД пользователя)
             
         Returns:
             Результат отправки
@@ -1601,11 +1567,42 @@ class NotificationService:
                 return {"success": True}
             else:
                 logger.error(f"Failed to send webhook notification to user {user_id}")
-                return {"success": False, "error": "Webhook delivery failed"}
+                # Fallback: сохраняем в очередь для повторной отправки
+                await self._save_to_retry_queue(user_id, notification, telegram_text)
+                return {"success": False, "error": "Saved to retry queue"}
                 
         except Exception as e:
             logger.error(f"Error sending webhook notification to user {user_id}: {e}")
-            return {"success": False, "error": str(e)}
+            # Fallback: сохраняем в очередь для повторной отправки
+            try:
+                await self._save_to_retry_queue(user_id, notification, telegram_text)
+                return {"success": False, "error": "Saved to retry queue"}
+            except Exception as fallback_error:
+                logger.error(f"Fallback failed for user {user_id}: {fallback_error}")
+                return {"success": False, "error": "Complete failure"}
+    
+    async def _save_to_retry_queue(self, user_id: int, notification: Dict[str, Any], telegram_text: str):
+        """Сохранение уведомления в очередь для повторной отправки"""
+        try:
+            # Сохраняем в Redis для повторной отправки
+            retry_data = {
+                "user_id": user_id,
+                "notification": notification,
+                "telegram_text": telegram_text,
+                "retry_count": 0,
+                "max_retries": 3,
+                "created_at": TimezoneUtils.now_msk().isoformat()
+            }
+            
+            # Используем Redis для хранения очереди повторных отправок
+            retry_key = f"notification_retry:{user_id}:{notification.get('type', 'unknown')}"
+            await self.redis_client.setex(retry_key, 3600, json.dumps(retry_data))  # TTL 1 час
+            
+            logger.info(f"💾 Saved notification to retry queue for user {user_id}")
+            
+        except Exception as e:
+            logger.error(f"Failed to save to retry queue: {e}")
+            raise
     
     async def send_sync_completion_notification(
         self,

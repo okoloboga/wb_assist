@@ -101,8 +101,10 @@ async def receive_auto_webhook(
         logger.info(f"Received auto webhook notification for user {telegram_id} (type: {notification_type})")
 
         # Обрабатываем уведомление напрямую через отправку сообщения
-        # Получаем экземпляр бота из глобального контекста
-        from __main__ import bot
+        # Получаем экземпляр бота из конфигурации
+        from core.config import config
+        from aiogram import Bot
+        bot = Bot(token=config.bot_token)
         
         # Для sync_completed уведомлений показываем dashboard с клавиатурой
         if notification_type == "sync_completed":
@@ -129,14 +131,47 @@ async def receive_auto_webhook(
                         text += "📊 Ваши данные готовы к использованию:\n\n"
                         text += dashboard_text
                         
-                        await bot.send_message(
-                            chat_id=telegram_id,
-                            text=text,
-                            reply_markup=wb_menu_keyboard(),
-                            parse_mode="Markdown"
-                        )
+                        try:
+                            await bot.send_message(
+                                chat_id=telegram_id,
+                                text=text,
+                                reply_markup=wb_menu_keyboard(),
+                                parse_mode="Markdown"
+                            )
+                            logger.info(f"🎉 First sync completion sent to telegram_id {telegram_id}")
+                        except Exception as send_error:
+                            logger.error(f"Error sending first sync message: {send_error}")
+                            # Финальный фолбэк без форматирования
+                            await bot.send_message(
+                                chat_id=telegram_id,
+                                text=f"🎉 ПЕРВАЯ СИНХРОНИЗАЦИЯ ЗАВЕРШЕНА!\n\n✅ {telegram_text}\n\n📊 Ваши данные готовы к использованию.",
+                                reply_markup=wb_menu_keyboard()
+                            )
                     else:
                         # Фолбэк если dashboard недоступен
+                        text = f"🎉 **ПЕРВАЯ СИНХРОНИЗАЦИЯ ЗАВЕРШЕНА!**\n\n"
+                        text += f"✅ {telegram_text}\n\n"
+                        text += "📊 Ваши данные готовы к использованию."
+                        
+                        try:
+                            await bot.send_message(
+                                chat_id=telegram_id,
+                                text=text,
+                                reply_markup=wb_menu_keyboard(),
+                                parse_mode="Markdown"
+                            )
+                        except Exception as send_error:
+                            logger.error(f"Error sending fallback message: {send_error}")
+                            # Финальный фолбэк без форматирования
+                            await bot.send_message(
+                                chat_id=telegram_id,
+                                text=f"🎉 ПЕРВАЯ СИНХРОНИЗАЦИЯ ЗАВЕРШЕНА!\n\n✅ {telegram_text}\n\n📊 Ваши данные готовы к использованию.",
+                                reply_markup=wb_menu_keyboard()
+                            )
+                except Exception as e:
+                    logger.error(f"Error getting dashboard for telegram_id {telegram_id}: {e}")
+                    # Фолбэк при ошибке - показываем меню
+                    try:
                         text = f"🎉 **ПЕРВАЯ СИНХРОНИЗАЦИЯ ЗАВЕРШЕНА!**\n\n"
                         text += f"✅ {telegram_text}\n\n"
                         text += "📊 Ваши данные готовы к использованию."
@@ -147,26 +182,32 @@ async def receive_auto_webhook(
                             reply_markup=wb_menu_keyboard(),
                             parse_mode="Markdown"
                         )
-                except Exception as e:
-                    logger.error(f"Error getting dashboard for telegram_id {telegram_id}: {e}")
-                    # Фолбэк при ошибке - показываем меню
-                    text = f"🎉 **ПЕРВАЯ СИНХРОНИЗАЦИЯ ЗАВЕРШЕНА!**\n\n"
-                    text += f"✅ {telegram_text}\n\n"
-                    text += "📊 Ваши данные готовы к использованию."
-                    
-                    await bot.send_message(
-                        chat_id=telegram_id,
-                        text=text,
-                        reply_markup=wb_menu_keyboard(),
-                        parse_mode="Markdown"
-                    )
+                    except Exception as final_error:
+                        logger.error(f"Final fallback failed for telegram_id {telegram_id}: {final_error}")
+                        # Последний шанс - простое сообщение
+                        await bot.send_message(
+                            chat_id=telegram_id,
+                            text=f"🎉 ПЕРВАЯ СИНХРОНИЗАЦИЯ ЗАВЕРШЕНА!\n\n✅ {telegram_text}"
+                        )
             else:
                 # Последующие синхронизации - только уведомление
-                await bot.send_message(
-                    chat_id=telegram_id,
-                    text=telegram_text,
-                    parse_mode="Markdown"
-                )
+                try:
+                    await bot.send_message(
+                        chat_id=telegram_id,
+                        text=telegram_text,
+                        parse_mode="Markdown"
+                    )
+                    logger.info(f"📱 Sync completion sent to telegram_id {telegram_id}")
+                except Exception as e:
+                    logger.error(f"Error sending sync completion to telegram_id {telegram_id}: {e}")
+                    # Фолбэк без форматирования
+                    try:
+                        await bot.send_message(
+                            chat_id=telegram_id,
+                            text=telegram_text
+                        )
+                    except Exception as fallback_error:
+                        logger.error(f"Fallback sync completion failed for telegram_id {telegram_id}: {fallback_error}")
         else:
             # Для других типов уведомлений проверяем наличие image_url
             data = notification_data.get("data", {})
@@ -179,24 +220,32 @@ async def receive_auto_webhook(
                         chat_id=telegram_id,
                         photo=image_url,
                         caption=telegram_text,
-                        parse_mode="Markdown"
+                        parse_mode=None  # ← ОТКЛЮЧАЕМ MARKDOWN!
                     )
                     logger.info(f"📸 Sent photo notification to telegram_id {telegram_id}: {image_url}")
                 except Exception as e:
                     logger.error(f"Error sending photo notification: {e}")
                     # Фолбэк - отправляем обычное сообщение
+                    try:
+                        await bot.send_message(
+                            chat_id=telegram_id,
+                            text=telegram_text,
+                            parse_mode=None  # ← ОТКЛЮЧАЕМ MARKDOWN!
+                        )
+                        logger.info(f"📱 Fallback message sent to telegram_id {telegram_id}")
+                    except Exception as fallback_error:
+                        logger.error(f"Fallback message failed for telegram_id {telegram_id}: {fallback_error}")
+            else:
+                # Если нет изображения, отправляем обычное сообщение
+                try:
                     await bot.send_message(
                         chat_id=telegram_id,
                         text=telegram_text,
-                        parse_mode="Markdown"
+                        parse_mode=None  # ← ОТКЛЮЧАЕМ MARKDOWN!
                     )
-            else:
-                # Если нет изображения, отправляем обычное сообщение
-                await bot.send_message(
-                    chat_id=telegram_id,
-                    text=telegram_text,
-                    parse_mode="Markdown"
-                )
+                    logger.info(f"📱 Message sent to telegram_id {telegram_id}")
+                except Exception as e:
+                    logger.error(f"Error sending message to telegram_id {telegram_id}: {e}")
         
         logger.info(f"✅ Webhook notification sent to telegram_id {telegram_id}")
 
