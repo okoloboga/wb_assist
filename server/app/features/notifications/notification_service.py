@@ -76,6 +76,8 @@ class NotificationService:
         previous_reviews: List[Dict[str, Any]] = None,
         current_stocks: List[Dict[str, Any]] = None,
         previous_stocks: List[Dict[str, Any]] = None,
+        current_sales: List[Dict[str, Any]] = None,
+        previous_sales: List[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Обработка всех событий синхронизации и отправка уведомлений"""
         try:
@@ -112,7 +114,14 @@ class NotificationService:
                 )
                 events_processed.extend(stock_events)
             
-            # 4. Отправляем уведомления через webhook
+            # 4. Обрабатываем продажи (выкупы и возвраты)
+            if current_sales and previous_sales:
+                sales_events = await self._process_sales_events(
+                    user_id, current_sales, previous_sales, user_settings
+                )
+                events_processed.extend(sales_events)
+            
+            # 5. Отправляем уведомления через webhook
             for event in events_processed:
                 try:
                     # Очищаем datetime объекты для JSON сериализации
@@ -255,6 +264,63 @@ class NotificationService:
         
         return events
     
+    async def _process_sales_events(
+        self,
+        user_id: int,
+        current_sales: List[Dict[str, Any]],
+        previous_sales: List[Dict[str, Any]],
+        user_settings
+    ) -> List[Dict[str, Any]]:
+        """Обработка событий продаж (выкупов и возвратов)"""
+        events = []
+        
+        # Проверяем, включены ли уведомления о выкупах
+        if user_settings.order_buyout_enabled:
+            # Получаем ID существующих продаж
+            previous_sale_ids = {sale.get("sale_id") for sale in previous_sales if sale.get("sale_id")}
+            
+            # Находим новые выкупы
+            for sale in current_sales:
+                sale_id = sale.get("sale_id")
+                if sale_id and sale_id not in previous_sale_ids:
+                    sale_type = sale.get("type")
+                    
+                    # Выкупы
+                    if sale_type == "buyout" and user_settings.order_buyout_enabled:
+                        event = {
+                            "type": "order_buyout",
+                            "user_id": user_id,
+                            "sale_id": sale_id,
+                            "order_id": sale.get("order_id"),
+                            "amount": sale.get("amount", 0),
+                            "product_name": sale.get("product_name", ""),
+                            "brand": sale.get("brand", ""),
+                            "size": sale.get("size", ""),
+                            "nm_id": sale.get("nm_id"),
+                            "sale_date": sale.get("sale_date"),
+                            "detected_at": TimezoneUtils.now_msk()
+                        }
+                        events.append(event)
+                    
+                    # Возвраты
+                    elif sale_type == "return" and user_settings.order_return_enabled:
+                        event = {
+                            "type": "order_return",
+                            "user_id": user_id,
+                            "sale_id": sale_id,
+                            "order_id": sale.get("order_id"),
+                            "amount": sale.get("amount", 0),
+                            "product_name": sale.get("product_name", ""),
+                            "brand": sale.get("brand", ""),
+                            "size": sale.get("size", ""),
+                            "nm_id": sale.get("nm_id"),
+                            "sale_date": sale.get("sale_date"),
+                            "detected_at": TimezoneUtils.now_msk()
+                        }
+                        events.append(event)
+        
+        return events
+    
     # _send_notifications удален - используется webhook система
     
     def _format_notification_for_telegram(self, notification: Dict[str, Any]) -> str:
@@ -263,7 +329,9 @@ class NotificationService:
         
         # Для всех типов заказов используем детальный формат
         if notification_type in ["new_order", "order_buyout", "order_cancellation", "order_return"]:
-            return self.message_formatter.format_order_detail({"order": notification})
+            # Преобразуем событие уведомления в формат, который понимает format_order_detail
+            order_data = self._convert_notification_to_order_format(notification)
+            return self.message_formatter.format_order_detail({"order": order_data})
         elif notification_type == "critical_stocks":
             return self.message_formatter.format_critical_stocks_notification(notification)
         elif notification_type == "negative_review":
@@ -271,6 +339,194 @@ class NotificationService:
         else:
             # Универсальное форматирование для остальных типов
             return self._format_universal_notification(notification)
+    
+    def _convert_notification_to_order_format(self, notification: Dict[str, Any]) -> Dict[str, Any]:
+        """Преобразование события уведомления в формат заказа для format_order_detail"""
+        notification_type = notification.get("type")
+        nm_id = notification.get("nm_id")
+        order_id = notification.get("order_id")
+        
+        # Базовые поля из события
+        order_data = {
+            "id": order_id or notification.get("sale_id", "N/A"),
+            "order_id": order_id or "N/A",
+            "date": notification.get("sale_date", notification.get("detected_at", "")),
+            "status": self._get_status_from_notification_type(notification_type),
+            "nm_id": nm_id or "N/A",
+            "product_name": notification.get("product_name", "Неизвестно"),
+            "article": notification.get("article", ""),
+            "size": notification.get("size", ""),
+            "barcode": notification.get("barcode", ""),
+            "total_price": notification.get("amount", 0),
+            "spp_percent": 0,
+            "customer_price": 0,
+            "discount_percent": 0,
+            "warehouse_from": notification.get("warehouse_from", ""),
+            "warehouse_to": notification.get("warehouse_to", ""),
+            "sales_periods": {},
+            "orders_stats": {},
+            "avg_rating": 0,
+            "reviews_count": 0,
+            "rating_distribution": {},
+            "stocks": {}
+        }
+        
+        # Пытаемся получить дополнительные данные из базы данных
+        # Сначала пробуем по nm_id, если его нет - по order_id
+        try:
+            from ..wb_api.models import WBOrder, WBProduct, WBReview, WBStock
+            from sqlalchemy import func
+            
+            # Ищем заказ в базе данных
+            order_in_db = None
+            if order_id and order_id != "N/A":
+                order_in_db = self.db.query(WBOrder).filter(
+                    WBOrder.order_id == str(order_id)
+                ).first()
+            
+            # Если нашли заказ, получаем nm_id
+            if order_in_db:
+                nm_id_from_db = order_in_db.nm_id
+                cabinet_id = order_in_db.cabinet_id
+                
+                # Получаем данные товара
+                product = self.db.query(WBProduct).filter(
+                    WBProduct.cabinet_id == cabinet_id,
+                    WBProduct.nm_id == nm_id_from_db
+                ).first()
+                
+                if product:
+                    order_data.update({
+                        "nm_id": nm_id_from_db,
+                        "product_name": product.name or order_data["product_name"],
+                        "article": product.article or order_data["article"],
+                        "avg_rating": product.rating or 0,
+                        "image_url": product.image_url,  # ← ДОБАВЛЕНО!
+                        "total_price": order_in_db.total_price or order_data["total_price"],
+                        "spp_percent": order_in_db.spp_percent or 0,
+                        "customer_price": order_in_db.customer_price or 0,
+                        "discount_percent": order_in_db.discount_percent or 0,
+                        "warehouse_from": order_in_db.warehouse_from or "",
+                        "warehouse_to": order_in_db.warehouse_to or "",
+                        "size": order_in_db.size or order_data["size"],
+                        "barcode": order_in_db.barcode or order_data["barcode"]
+                    })
+                
+                # Получаем количество отзывов
+                reviews_count = self.db.query(func.count(WBReview.id)).filter(
+                    WBReview.cabinet_id == cabinet_id,
+                    WBReview.nm_id == nm_id_from_db
+                ).scalar() or 0
+                order_data["reviews_count"] = reviews_count
+                
+                # Получаем остатки
+                stocks = self.db.query(WBStock).filter(
+                    WBStock.cabinet_id == cabinet_id,
+                    WBStock.nm_id == nm_id_from_db
+                ).all()
+                
+                stocks_dict = {}
+                for stock in stocks:
+                    size = stock.size or "ONE SIZE"
+                    quantity = stock.quantity or 0
+                    if size in stocks_dict:
+                        stocks_dict[size] += quantity
+                    else:
+                        stocks_dict[size] = quantity
+                order_data["stocks"] = stocks_dict
+                
+                # Получаем статистику продаж (выкупы за периоды)
+                from datetime import datetime, timedelta
+                now = datetime.now()
+                
+                sales_periods = {}
+                for days in [7, 14, 30]:
+                    start_date = now - timedelta(days=days)
+                    from ..wb_api.models_sales import WBSales
+                    
+                    count = self.db.query(func.count(WBSales.id)).filter(
+                        WBSales.cabinet_id == cabinet_id,
+                        WBSales.nm_id == nm_id_from_db,
+                        WBSales.sale_date >= start_date,
+                        WBSales.type == 'buyout',
+                        WBSales.is_cancel == False
+                    ).scalar() or 0
+                    sales_periods[f"{days}_days"] = count
+                
+                order_data["sales_periods"] = sales_periods
+                
+                # Получаем статистику заказов
+                orders_stats = {}
+                total_orders = self.db.query(func.count(WBOrder.id)).filter(
+                    WBOrder.cabinet_id == cabinet_id,
+                    WBOrder.nm_id == nm_id_from_db
+                ).scalar() or 0
+                
+                active_orders = self.db.query(func.count(WBOrder.id)).filter(
+                    WBOrder.cabinet_id == cabinet_id,
+                    WBOrder.nm_id == nm_id_from_db,
+                    WBOrder.status == 'active'
+                ).scalar() or 0
+                
+                canceled_orders = self.db.query(func.count(WBOrder.id)).filter(
+                    WBOrder.cabinet_id == cabinet_id,
+                    WBOrder.nm_id == nm_id_from_db,
+                    WBOrder.status == 'canceled'
+                ).scalar() or 0
+                
+                buyout_orders = self.db.query(func.count(WBSales.id)).filter(
+                    WBSales.cabinet_id == cabinet_id,
+                    WBSales.nm_id == nm_id_from_db,
+                    WBSales.type == 'buyout',
+                    WBSales.is_cancel == False
+                ).scalar() or 0
+                
+                return_orders = self.db.query(func.count(WBSales.id)).filter(
+                    WBSales.cabinet_id == cabinet_id,
+                    WBSales.nm_id == nm_id_from_db,
+                    WBSales.type == 'return',
+                    WBSales.is_cancel == False
+                ).scalar() or 0
+                
+                orders_stats = {
+                    "total_orders": total_orders,
+                    "active_orders": active_orders,
+                    "canceled_orders": canceled_orders,
+                    "buyout_orders": buyout_orders,
+                    "return_orders": return_orders
+                }
+                order_data["orders_stats"] = orders_stats
+                
+                # Получаем распределение рейтингов
+                rating_distribution = {}
+                for rating in [5, 4, 3, 2, 1]:
+                    count = self.db.query(func.count(WBReview.id)).filter(
+                        WBReview.cabinet_id == cabinet_id,
+                        WBReview.nm_id == nm_id_from_db,
+                        WBReview.rating == rating
+                    ).scalar() or 0
+                    rating_distribution[rating] = count
+                
+                order_data["rating_distribution"] = rating_distribution
+                
+                logger.info(f"✅ Enhanced notification data for order {order_id}: nm_id={nm_id_from_db}, product={product.name if product else 'N/A'}")
+            else:
+                logger.warning(f"❌ Order {order_id} not found in database for notification enhancement")
+                
+        except Exception as e:
+            logger.warning(f"Could not fetch additional data for notification: {e}")
+        
+        return order_data
+    
+    def _get_status_from_notification_type(self, notification_type: str) -> str:
+        """Получение статуса заказа из типа уведомления"""
+        status_mapping = {
+            "new_order": "active",
+            "order_buyout": "buyout",
+            "order_cancellation": "canceled",
+            "order_return": "return"
+        }
+        return status_mapping.get(notification_type, "unknown")
     
     def _format_negative_review_notification(self, notification: Dict[str, Any]) -> str:
         """Форматирование уведомления о негативном отзыве"""

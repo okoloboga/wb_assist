@@ -470,81 +470,141 @@ class BotMessageFormatter:
             
             # Основная информация
             order_id = order.get("id", "N/A")
+            wb_order_id = order.get("order_id", "N/A")
             order_date = self._format_datetime(order.get("date", ""))
-            brand = order.get("brand", "Неизвестно")
-            product_name = order.get("product_name", "Неизвестно")
+            status = order.get("status", "unknown")
+            
+            # Товар
             nm_id = order.get("nm_id", "N/A")
-            supplier_article = order.get("supplier_article", order.get("article", ""))
+            product_name = order.get("product_name", "Неизвестно")
+            article = order.get("article", "")
             size = order.get("size", "")
             barcode = order.get("barcode", "")
-            warehouse_from = order.get("warehouse_from", "")
-            warehouse_to = order.get("warehouse_to", "")
-            status = order.get("status", "")
             
-            # Финансовая информация
-            order_amount = order.get("amount", 0)
+            # Финансы
+            total_price = order.get("total_price", 0)
             spp_percent = order.get("spp_percent", 0)
             customer_price = order.get("customer_price", 0)
-            # Логистика исключена из системы
-            dimensions = order.get("dimensions", "")
-            volume_liters = order.get("volume_liters", 0)
-            warehouse_rate_per_liter = order.get("warehouse_rate_per_liter", 0)
-            warehouse_rate_extra = order.get("warehouse_rate_extra", 0)
+            discount_percent = order.get("discount_percent", 0)
             
-            # Рейтинги и отзывы
-            rating = order.get("rating", 0)
-            reviews_count = order.get("reviews_count", 0)
+            # Склады
+            warehouse_from = order.get("warehouse_from", "")
+            warehouse_to = order.get("warehouse_to", "")
             
-            # Статистика
+            # Продажи
             sales_periods = order.get("sales_periods", {})
+            
+            # Статистика заказов
+            orders_stats = order.get("orders_stats", {})
+            
+            # Рейтинги
+            avg_rating = order.get("avg_rating", 0)
+            reviews_count = order.get("reviews_count", 0)
+            rating_distribution = order.get("rating_distribution", {})
             
             # Остатки
             stocks = order.get("stocks", {})
-            stock_days = order.get("stock_days", {})
             
-            # Формируем сообщение
-            message = f"🧾 Заказ [#{order_id}] {order_date}\n\n"
-            message += f"✏ {product_name}\n"
-            message += f"🆔 {nm_id} / {supplier_article} / ({size})\n"
-            if barcode:
-                message += f"🎹 {barcode}\n"
-            message += f"🚛 {warehouse_from} ⟶ {warehouse_to}\n"
-            message += f"💰 Цена заказа: {order_amount:,.0f}₽\n"
+            # Определяем тип заказа по статусу
             status_map = {
-                "active": "Активен",
-                "buyout": "Выкуплен",
-                "canceled": "Отменен",
-                "cancelled": "Отменен",
-                "return": "Возврат",
-                "returned": "Возврат"
+                "active": "Заказ",
+                "buyout": "Выкуп", 
+                "canceled": "Отмена",
+                "return": "Возврат"
             }
-            ru_status = status_map.get(status, status)
-            if ru_status:
-                message += f"📅 Статус: {ru_status}\n"
-            if spp_percent or customer_price:
-                message += f"🛍 СПП: {spp_percent}% (Цена для покупателя: {customer_price:,.0f}₽)\n"
-            # Логистика исключена из системы
-            if dimensions or volume_liters:
-                message += f"        Габариты: {dimensions}. ({volume_liters}л.)\n"
-            if warehouse_rate_per_liter or warehouse_rate_extra:
-                message += f"        Тариф склада: {warehouse_rate_per_liter:,.1f}₽ за 1л. | {warehouse_rate_extra:,.1f}₽ за л. свыше)\n"
-            if rating or reviews_count:
-                message += f"🌟 Оценка: {rating}\n"
-            message += f"💬 Отзывы: {reviews_count}\n"
+            order_type = status_map.get(status, "Заказ")
             
-            # Продажи (оставляем только эту метрику)
-            if sales_periods and any(sales_periods.values()):
-                message += f"📖 Продаж за 7 / 14 / 30 дней:\n"
-            message += f"        {sales_periods.get('7_days', 0)} | {sales_periods.get('14_days', 0)} | {sales_periods.get('30_days', 0)} шт.\n"
+            # Форматируем дату и время из ISO формата
+            formatted_datetime = order_date
+            if 'T' in order_date:
+                date_part = order_date.split('T')[0]  # 2025-10-23
+                time_part = order_date.split('T')[1][:5]  # 14:13
+                # Преобразуем дату в формат ДД.ММ.ГГГГ
+                year, month, day = date_part.split('-')
+                formatted_datetime = f"{day}.{month}.{year} {time_part}"
             
-            # Остатки (если предоставлены)
-            if stocks and any(stocks.values()):
-                message += f"📦 Остаток:\n"
-            for size in ["L", "M", "S", "XL"]:
-                stock_count = stocks.get(size, 0)
-                stock_days_count = stock_days.get(size, 0)
-                if stock_count > 0 or stock_days_count > 0:
-                    message += f"        {size} ({stock_count} шт.) ≈ на {stock_days_count} дн.\n"
+            # Формируем сообщение в новом формате
+            message = f"""{order_type} ID: {order_id} от {formatted_datetime}
+
+🆔 {nm_id} / {article} / ({size})
+🎹 {barcode}"""
+            
+            message += f"""
+
+💰 Финансы:
+Цена заказа: {total_price:,.1f}₽
+СПП %: {spp_percent}%
+Цена для покупателя: {customer_price:,.1f}₽
+Скидка: {discount_percent}%"""
+            
+            if warehouse_from or warehouse_to:
+                message += f"\n\n🚛 {warehouse_from} -> {warehouse_to}"
+            
+            # Выкупы в табличном формате
+            if sales_periods:
+                sales_7 = sales_periods.get('7_days', 0)
+                sales_14 = sales_periods.get('14_days', 0)
+                sales_30 = sales_periods.get('30_days', 0)
+                message += f"""
+
+📈 Выкупы за периоды:
+7 | 14 | 30 дней:
+{sales_7} | {sales_14} | {sales_30}"""
+            
+            # Статистика заказов
+            if orders_stats:
+                total_orders = orders_stats.get('total_orders', 0)
+                active_orders = orders_stats.get('active_orders', 0)
+                canceled_orders = orders_stats.get('canceled_orders', 0)
+                buyout_orders = orders_stats.get('buyout_orders', 0)
+                return_orders = orders_stats.get('return_orders', 0)
+                
+                message += f"""
+
+🔍 Статистика по заказам:
+Всего: {total_orders} заказов
+Активные: {active_orders}
+Отмененные: {canceled_orders}
+Выкупы: {buyout_orders}
+Возвраты: {return_orders}"""
+            
+            # Рейтинги и отзывы
+            message += f"""
+
+⭐ Рейтинг и отзывы:
+Средний рейтинг: {avg_rating:.2f}
+Всего отзывов: {reviews_count}"""
+            
+            # Распределение рейтингов в вертикальном формате (в процентах)
+            if rating_distribution and reviews_count > 0:
+                # Собираем данные по звездам (от 5 до 1)
+                stars_5 = rating_distribution.get(5, 0)
+                stars_4 = rating_distribution.get(4, 0)
+                stars_3 = rating_distribution.get(3, 0)
+                stars_2 = rating_distribution.get(2, 0)
+                stars_1 = rating_distribution.get(1, 0)
+                
+                # Рассчитываем проценты
+                pct_5 = (stars_5 / reviews_count) * 100
+                pct_4 = (stars_4 / reviews_count) * 100
+                pct_3 = (stars_3 / reviews_count) * 100
+                pct_2 = (stars_2 / reviews_count) * 100
+                pct_1 = (stars_1 / reviews_count) * 100
+                
+                message += f"""
+
+5⭐ - {pct_5:.1f}%
+4⭐ - {pct_4:.1f}%
+3⭐ - {pct_3:.1f}%
+2⭐ - {pct_2:.1f}%
+1⭐ - {pct_1:.1f}%"""
+            
+            # Остатки
+            if stocks:
+                message += "\n\n📦 Остатки по размерам:"
+                for size_key in sorted(stocks.keys()):
+                    quantity = stocks[size_key]
+                    message += f"\n{size_key}: {quantity} шт."
             
             return self._truncate_message(message)
             
@@ -564,11 +624,11 @@ class BotMessageFormatter:
             message = "🔑 СТАТУС WB КАБИНЕТОВ\n\n"
             
             for i, cabinet in enumerate(cabinets, 1):
-                name = cabinet.name or 'Неизвестный кабинет'
-                status = 'active' if cabinet.is_active else 'inactive'
-                api_status = 'valid' if cabinet.is_active else 'invalid'
-                connected_at = cabinet.created_at.isoformat() if cabinet.created_at else None
-                last_sync = cabinet.last_sync_at.isoformat() if cabinet.last_sync_at else None
+                name = cabinet.get('name', 'Неизвестный кабинет')
+                status = cabinet.get('status', 'inactive')
+                api_status = cabinet.get('api_key_status', 'invalid')
+                connected_at = cabinet.get('connected_at')
+                last_sync = cabinet.get('last_sync')
                 
                 # Статус кабинета
                 status_emoji = "✅" if status == "active" else "❌"

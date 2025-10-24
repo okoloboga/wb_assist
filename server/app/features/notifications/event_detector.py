@@ -34,6 +34,17 @@ class EventDetector:
                     "status": order.get("status", "unknown"),
                     "product_name": order.get("product_name", ""),
                     "brand": order.get("brand", ""),
+                    "nm_id": order.get("nm_id"),  # ← ДОБАВЛЕНО!
+                    "size": order.get("size", ""),  # ← ДОБАВЛЕНО!
+                    "article": order.get("article", ""),  # ← ДОБАВЛЕНО!
+                    "barcode": order.get("barcode", ""),  # ← ДОБАВЛЕНО!
+                    "warehouse_from": order.get("warehouse_from", ""),  # ← ДОБАВЛЕНО!
+                    "warehouse_to": order.get("warehouse_to", ""),  # ← ДОБАВЛЕНО!
+                    "total_price": order.get("total_price", 0),  # ← ДОБАВЛЕНО!
+                    "spp_percent": order.get("spp_percent", 0),  # ← ДОБАВЛЕНО!
+                    "customer_price": order.get("customer_price", 0),  # ← ДОБАВЛЕНО!
+                    "discount_percent": order.get("discount_percent", 0),  # ← ДОБАВЛЕНО!
+                    "order_date": order.get("order_date"),  # ← ДОБАВЛЕНО!
                     "detected_at": TimezoneUtils.now_msk()
                 }
                 events.append(event)

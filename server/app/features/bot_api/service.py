@@ -146,27 +146,21 @@ class BotAPIService:
     async def get_recent_orders(self, user: Dict[str, Any], limit: int = 10, offset: int = 0, status: Optional[str] = None) -> Dict[str, Any]:
         """Получение последних заказов пользователя с кэшированием"""
         try:
+            logger.info(f"🔍 [get_recent_orders] Starting for telegram_id={user['telegram_id']}, limit={limit}, offset={offset}, status={status}")
+            
             cabinet = await self.get_user_cabinet(user["telegram_id"])
             if not cabinet:
+                logger.error(f"❌ [get_recent_orders] Cabinet not found for telegram_id={user['telegram_id']}")
                 return {
                     "success": False,
                     "error": "Кабинет WB не найден"
                 }
             
-            # Создаем ключ кэша
-            cache_key = f"orders:{cabinet.id}:{limit}:{offset}:{status or 'all'}"
+            logger.info(f"✅ [get_recent_orders] Cabinet found: id={cabinet.id}, name={cabinet.name}")
             
-            # Проверяем кэш
-            try:
-                cached_data = await self.cache_manager.get(cache_key)
-                if cached_data:
-                    logger.info(f"📦 Cache hit for orders {cache_key}")
-                    return json.loads(cached_data)
-            except AttributeError:
-                # Если кэш не поддерживает get, пропускаем
-                logger.warning("Cache manager doesn't support get method, skipping cache")
-            except Exception as cache_error:
-                logger.warning(f"Cache error: {cache_error}, skipping cache")
+            # Временно отключаем кэширование для заказов, чтобы новые заказы сразу появлялись
+            # TODO: Добавить инвалидацию кэша при создании новых заказов
+            logger.info(f"🔄 [get_recent_orders] Fetching fresh orders data (cache disabled for real-time updates)")
             
             # Получаем данные из БД
             orders_data = await self._fetch_orders_from_db(cabinet, limit, offset, status)
@@ -174,21 +168,20 @@ class BotAPIService:
             # Форматируем Telegram сообщение
             telegram_text = self.formatter.format_orders(orders_data)
             
+            # Логируем результат
+            orders_list = orders_data.get("orders", [])
+            logger.info(f"📋 [get_recent_orders] Fetched {len(orders_list)} orders from DB")
+            for i, order in enumerate(orders_list[:3]):  # Показываем первые 3 заказа
+                logger.info(f"   Order {i+1}: ID={order.get('id')}, WB_ID={order.get('order_id')}, Date={order.get('order_date')}, Status={order.get('status')}")
+            
             result = {
                 "success": True,
                 "data": orders_data,
                 "telegram_text": telegram_text
             }
             
-            # Кэшируем результат
-            try:
-                await self.cache_manager.set(cache_key, json.dumps(result), ttl=self.cache_ttl)
-                logger.info(f"💾 Cached orders data for {cache_key}")
-            except AttributeError:
-                # Если кэш не поддерживает set, пропускаем
-                logger.warning("Cache manager doesn't support set method, skipping cache")
-            except Exception as cache_error:
-                logger.warning(f"Cache error: {cache_error}, skipping cache")
+            # Кэширование отключено для заказов (см. комментарий выше)
+            logger.info(f"📋 [get_recent_orders] Orders data fetched successfully (no caching)")
             
             return result
             
@@ -287,12 +280,16 @@ class BotAPIService:
                 )
             ).all()
             
-            # Формируем остатки по размерам
+            # Формируем остатки по размерам (суммируем по всем складам)
             stocks_dict = {}
             for stock in stocks:
                 size = stock.size or "ONE SIZE"
                 quantity = stock.quantity or 0
-                stocks_dict[size] = quantity
+                # Суммируем остатки по всем складам для одного размера
+                if size in stocks_dict:
+                    stocks_dict[size] += quantity
+                else:
+                    stocks_dict[size] = quantity
             
             # Получаем статистику отзывов для товара
             reviews_count = self.db.query(WBReview).filter(
@@ -308,6 +305,58 @@ class BotAPIService:
             except Exception as e:
                 logger.error(f"Ошибка получения статистики товара: {e}")
                 product_stats = {"buyout_rates": {}, "order_speed": {}, "sales_periods": {}}
+            
+            # Получаем статистику по всем заказам этого товара
+            from sqlalchemy import case
+            from ..wb_api.models_sales import WBSales
+            
+            # Статистика заказов (активные и отмененные)
+            orders_stats = self.db.query(
+                func.count(WBOrder.id).label('total_orders'),
+                func.count(case((WBOrder.status == 'active', 1))).label('active_orders'),
+                func.count(case((WBOrder.status == 'canceled', 1))).label('canceled_orders')
+            ).filter(
+                and_(
+                    WBOrder.cabinet_id == order.cabinet_id,
+                    WBOrder.nm_id == order.nm_id
+                )
+            ).first()
+            
+            # Статистика продаж (выкупы и возвраты из таблицы WBSales)
+            sales_stats = self.db.query(
+                func.count(case((WBSales.type == 'buyout', 1))).label('buyout_count'),
+                func.count(case((WBSales.type == 'return', 1))).label('return_count')
+            ).filter(
+                and_(
+                    WBSales.cabinet_id == order.cabinet_id,
+                    WBSales.nm_id == order.nm_id,
+                    WBSales.is_cancel == False  # Только не отмененные
+                )
+            ).first()
+            
+            # Получаем распределение рейтингов
+            rating_distribution = self.db.query(
+                WBReview.rating,
+                func.count(WBReview.id).label('count')
+            ).filter(
+                and_(
+                    WBReview.cabinet_id == order.cabinet_id,
+                    WBReview.nm_id == order.nm_id,
+                    WBReview.rating.isnot(None)
+                )
+            ).group_by(WBReview.rating).all()
+            
+            # Форматируем распределение рейтингов
+            rating_dist_dict = {int(row.rating): row.count for row in rating_distribution}
+            
+            # Получаем средний рейтинг из отзывов (более точный)
+            avg_rating = self.db.query(func.avg(WBReview.rating)).filter(
+                and_(
+                    WBReview.cabinet_id == order.cabinet_id,
+                    WBReview.nm_id == order.nm_id,
+                    WBReview.rating.isnot(None)
+                )
+            ).scalar()
             
             # Форматируем данные заказа
             image_url = product.image_url if product and hasattr(product, 'image_url') else None
@@ -349,7 +398,19 @@ class BotAPIService:
                 # Реальная статистика
                 "buyout_rates": product_stats["buyout_rates"],
                 "order_speed": product_stats["order_speed"],
-                "sales_periods": product_stats["sales_periods"]
+                "sales_periods": product_stats["sales_periods"],
+                # Статистика заказов по товару
+                "orders_stats": {
+                    "total_orders": orders_stats.total_orders or 0 if orders_stats else 0,
+                    "active_orders": orders_stats.active_orders or 0 if orders_stats else 0,
+                    "canceled_orders": orders_stats.canceled_orders or 0 if orders_stats else 0,
+                    "buyout_orders": sales_stats.buyout_count or 0 if sales_stats else 0,
+                    "return_orders": sales_stats.return_count or 0 if sales_stats else 0
+                },
+                # Распределение рейтингов
+                "rating_distribution": rating_dist_dict,
+                # Средний рейтинг из отзывов (более точный)
+                "avg_rating": round(float(avg_rating), 2) if avg_rating else 0.0
             }
             
             # Отладочный лог
@@ -898,10 +959,14 @@ class BotAPIService:
     async def _fetch_orders_from_db(self, cabinet: WBCabinet, limit: int, offset: int, status: Optional[str] = None) -> Dict[str, Any]:
         """Получение заказов из БД"""
         try:
+            logger.info(f"🔍 [_fetch_orders_from_db] Starting for cabinet_id={cabinet.id}, limit={limit}, offset={offset}, status={status}")
+            
             # Начало дня в МСК
             now_msk = TimezoneUtils.now_msk()
             today_start_msk = TimezoneUtils.get_today_start_msk()
             yesterday_start_msk = TimezoneUtils.get_yesterday_start_msk()
+            
+            logger.info(f"📅 [_fetch_orders_from_db] Time ranges - now_msk={now_msk}, today_start={today_start_msk}")
             
             # Конвертируем в UTC для фильтров БД
             today_start = TimezoneUtils.to_utc(today_start_msk)
@@ -914,6 +979,8 @@ class BotAPIService:
                 WBOrder.cabinet_id == cabinet.id
             )
             
+            logger.info(f"🔍 [_fetch_orders_from_db] Base query created for cabinet_id={cabinet.id}")
+            
             # Применяем фильтр по статусу если указан
             if status:
                 orders_query = orders_query.filter(WBOrder.status == status)
@@ -921,7 +988,33 @@ class BotAPIService:
             orders_query = orders_query.order_by(WBOrder.order_date.desc())
             
             total_orders = orders_query.count()
+            logger.info(f"📊 [_fetch_orders_from_db] Total orders in DB: {total_orders}")
+            
             orders = orders_query.offset(offset).limit(limit).all()
+            logger.info(f"📋 [_fetch_orders_from_db] Fetched {len(orders)} orders from DB (offset={offset}, limit={limit})")
+            
+            # Логируем первые несколько заказов для отладки
+            for i, order in enumerate(orders[:5]):
+                logger.info(f"   Order {i+1}: ID={order.id}, WB_ID={order.order_id}, Date={order.order_date}, Status={order.status}, Name={order.name}")
+            
+            # Специальная проверка для заказа 3989767063804279912
+            specific_order = self.db.query(WBOrder).filter(
+                WBOrder.cabinet_id == cabinet.id,
+                WBOrder.order_id == "3989767063804279912"
+            ).first()
+            
+            if specific_order:
+                logger.info(f"✅ [SPECIFIC ORDER FOUND] Order 3989767063804279912: ID={specific_order.id}, Date={specific_order.order_date}, Status={specific_order.status}")
+            else:
+                logger.warning(f"❌ [SPECIFIC ORDER NOT FOUND] Order 3989767063804279912 not found in cabinet {cabinet.id}")
+                
+                # Проверим, есть ли этот заказ в других кабинетах
+                all_orders_with_id = self.db.query(WBOrder).filter(
+                    WBOrder.order_id == "3989767063804279912"
+                ).all()
+                logger.info(f"🔍 [SPECIFIC ORDER SEARCH] Found {len(all_orders_with_id)} orders with this ID in all cabinets")
+                for order in all_orders_with_id:
+                    logger.info(f"   Order in cabinet {order.cabinet_id}: ID={order.id}, Date={order.order_date}, Status={order.status}")
             
             # Получаем все nm_id для batch загрузки продуктов
             nm_ids = [order.nm_id for order in orders]
@@ -941,6 +1034,9 @@ class BotAPIService:
                 
                 orders_list.append({
                     "id": order.id,
+                    "order_id": order.order_id,  # ← ДОБАВЛЕНО!
+                    "order_date": order.order_date.isoformat() if order.order_date else None,  # ← ИСПРАВЛЕНО!
+                    "status": order.status,  # ← ДОБАВЛЕНО!
                     "date": order.order_date.isoformat() if order.order_date else None,
                     "amount": order.total_price or 0,
                     "product_name": order.name or "Неизвестно",
@@ -1390,7 +1486,12 @@ class BotAPIService:
             stocks_dict = {}
             for stock in stocks:
                 size = stock.size or "Unknown"
-                stocks_dict[size] = stock.quantity or 0
+                quantity = stock.quantity or 0
+                # Суммируем остатки по всем складам для одного размера
+                if size in stocks_dict:
+                    stocks_dict[size] += quantity
+                else:
+                    stocks_dict[size] = quantity
             products_dict[nm_id]["stocks"] = stocks_dict
         
         # Сортируем по количеству продаж
@@ -1463,18 +1564,20 @@ class BotAPIService:
                 "30_days": now - timedelta(days=30)
             }
             
-            # Получаем заказы товара за разные периоды
+            # Получаем выкупы товара за разные периоды из таблицы WBSales
+            from ..wb_api.models_sales import WBSales
             sales_periods = {}
             for period_name, start_date in periods.items():
-                orders = self.db.query(WBOrder).filter(
+                buyouts = self.db.query(WBSales).filter(
                     and_(
-                        WBOrder.cabinet_id == cabinet_id,
-                        WBOrder.nm_id == nm_id,
-                        WBOrder.order_date >= start_date,
-                        WBOrder.status != 'canceled'
+                        WBSales.cabinet_id == cabinet_id,
+                        WBSales.nm_id == nm_id,
+                        WBSales.sale_date >= start_date,
+                        WBSales.type == 'buyout',
+                        WBSales.is_cancel == False
                     )
                 ).all()
-                sales_periods[period_name] = len(orders)
+                sales_periods[period_name] = len(buyouts)
             
             # Рассчитываем выкуп (пока упрощенно - все заказы считаем выкупленными)
             buyout_rates = {}

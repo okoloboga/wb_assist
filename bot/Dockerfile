@@ -10,5 +10,4 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy bot and gpt_integration into image
 COPY . /app
 
-# Run bot as a module so imports from repo work
-CMD ["python", "-m", "bot"]
+CMD ["python", "bot/__main__.py"]

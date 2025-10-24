@@ -1,284 +1,714 @@
+# 📋 ДЕТАЛЬНАЯ ИНФОРМАЦИЯ О ЗАКАЗЕ - ТЕХНИЧЕСКАЯ ДОКУМЕНТАЦИЯ
 
+## 🎯 Обзор
 
-Заказы
+Этот документ описывает полный процесс получения и отображения детальной информации о заказе в Telegram боте WB Assist.
 
-Order ID: 2452 ✓
-WB Order ID: 96932207636229823973
-NM ID (товар): 317313124 ✓
-Название: Юбки ✓
-Бренд: SLAVALOOK BRAND ✓
-Артикул: slavalookbrand_shorts_skirt_vinous
-Размер: L ✓
-Штрихкод: 2042583874119 ✓
-Статус: active ✓
-💰 Финансовые данные:
-Цена заказа: 3000.0₽ ✓
-СПП %: 27.0% ✓
-Цена для покупателя: 571.0₽ ✓
-Комиссия: 20.0%
+---
+
+## 📊 ПРИМЕР ОТОБРАЖЕНИЯ
+
+```
+Заказ ID: 2207 от 23.10.2025 13:00
+
+🆔 225287280 / slavabrand_dress_white_belt / (M)
+🎹 2041472975210
+
+💰 Финансы:
+Цена заказа: 8,100.0₽
+СПП %: 23.0%
+Цена для покупателя: 1,626.0₽
 Скидка: 74.0%
-🏢 Логистика:
-Склад от: Рязань (Тюшевское) ✓
-Склад к: Кемеровская область ✓
-Дата заказа: 2025-10-23 04:56:41+00:00 ✓
 
-⭐ Рейтинг и отзывы:
-Средний рейтинг: 4.69 (из WBReview) vs 0.0 (в логе)
-Всего отзывов: 26 ✓
-Распределение рейтингов:
-5 звезд: 21 отзыв
-4 звезды: 3 отзыва
-3 звезды: 1 отзыв
-2 звезды: 1 отзыв
+🚛 Казань -> Нижегородская область
 
-📦 Остатки по размерам:
-L: 2 шт. ✓
-XL: 18 шт.
-M: 0 шт.
-
-📈 Продажи за периоды:
-За 7 дней: 4 продажи
-За 14 дней: 4 продажи
-За 30 дней: 4 продажи
+📈 Выкупы за периоды:
+7 | 14 | 30 дней:
+19 | 25 | 32
 
 🔍 Статистика по заказам:
-Всего заказов: 38
-Активные: 21 заказ
-Отмененные: 17 заказов
+Всего: 140 заказов
+Активные: 85
+Отмененные: 55
+Выкупы: 32
+Возвраты: 7
 
-ИСТОЧНИКИ
+⭐ Рейтинг и отзывы:
+Средний рейтинг: 4.63
+Всего отзывов: 351
 
-## 📋 **Источники данных для получения подробной информации о заказе**
+5⭐ - 84.4%
+4⭐ - 5.8%
+3⭐ - 3.9%
+2⭐ - 1.9%
+1⭐ - 3.9%
 
-### 🗄️ **Основные таблицы базы данных:**
+📦 Остатки по размерам:
+L: 91 шт.
+M: 86 шт.
+S: 46 шт.
+XL: 0 шт.
+```
 
-#### 1. **`WBOrder`** - основная таблица заказов
+---
+
+## 🔄 ПРОЦЕСС ПОЛУЧЕНИЯ ДАННЫХ
+
+### 1️⃣ **Инициализация запроса (Telegram Bot)**
+
+**Файл:** `bot/handlers/orders.py`  
+**Функция:** `show_order_details(callback: CallbackQuery)`  
+**Строки:** 151-215
+
+#### Входные данные:
+- **Callback data:** `order_details_{order_id}` (например, `order_details_2207`)
+- **User ID:** `callback.from_user.id` (Telegram ID пользователя)
+
+#### Процесс:
+1. Парсим `order_id` из callback data (строка 155)
+2. Вызываем API клиент: `bot_api_client.get_order_details(order_id, user_id)` (строка 160)
+
+---
+
+### 2️⃣ **HTTP запрос к серверу (Bot API Client)**
+
+**Файл:** `bot/api/client.py`  
+**Функция:** `get_order_details(order_id: int, user_id: int)`  
+**Строки:** 351-354
+
+#### HTTP запрос:
+```http
+GET /api/v1/bot/orders/{order_id}?telegram_id={user_id}
+Headers:
+  X-API-SECRET-KEY: {API_SECRET_KEY}
+  Content-Type: application/json
+```
+
+**Пример:** `GET /api/v1/bot/orders/2207?telegram_id=5101525651`
+
+#### Retry логика:
+- **Максимум попыток:** 3
+- **Timeout:** 30 секунд
+- **Exponential backoff:** 1s → 2s → 4s
+
+---
+
+### 3️⃣ **Обработка запроса на сервере (Bot API Service)**
+
+**Файл:** `server/app/features/bot_api/routes.py`  
+**Endpoint:** `GET /api/v1/bot/orders/{order_id}`  
+**Функция:** `get_order_detail(order_id, telegram_id, db)`
+
+#### Процесс:
+1. Получаем пользователя по `telegram_id` из таблицы `users`
+2. Вызываем сервис: `BotAPIService.get_order_detail(order_id, user.id, db)`
+
+---
+
+### 4️⃣ **Сбор данных о заказе (Bot API Service)**
+
+**Файл:** `server/app/features/bot_api/service.py`  
+**Функция:** `get_order_detail(order_id: int, user_id: int, db: Session)`  
+**Строки:** 247-429
+
+#### 📊 **ИСПОЛЬЗУЕМЫЕ ТАБЛИЦЫ БД:**
+
+| Таблица | Назначение | Поля |
+|---------|-----------|------|
+| **users** | Связь Telegram → Cabinet | `id`, `telegram_id` |
+| **cabinet_users** | Связь User → Cabinet | `user_id`, `cabinet_id` |
+| **wb_cabinets** | WB кабинеты | `id`, `api_key`, `name` |
+| **wb_orders** | Заказы WB | `id`, `order_id`, `nm_id`, `name`, `article`, `size`, `barcode`, `total_price`, `spp_percent`, `customer_price`, `discount_percent`, `warehouse_from`, `warehouse_to`, `order_date`, `status` |
+| **wb_products** | Товары WB | `nm_id`, `rating`, `image_url` |
+| **wb_stocks** | Остатки товаров | `nm_id`, `size`, `quantity`, `warehouse_name` |
+| **wb_reviews** | Отзывы | `nm_id`, `rating`, `created_at` |
+| **wb_sales** | Продажи и возвраты | `nm_id`, `type` ('buyout'/'return'), `sale_date`, `is_cancel` |
+
+---
+
+#### 📝 **ДЕТАЛЬНЫЙ ПРОЦЕСС СБОРА ДАННЫХ:**
+
+##### **Шаг 1: Получение основного заказа**
+**Строки:** 260-272  
+**Запрос:**
 ```sql
--- Основные поля заказа
-SELECT id, order_id, nm_id, status, name, brand, article, size, 
-       barcode, total_price, spp_percent, customer_price, 
-       logistics_amount, warehouse_from, warehouse_to, 
-       order_date, created_at, updated_at, cabinet_id
-FROM wb_orders 
-WHERE nm_id = 317313124;
+SELECT * FROM wb_orders 
+WHERE id = {order_id} 
+  AND cabinet_id = {cabinet.id}
 ```
 
-#### 2. **`WBReview`** - отзывы и рейтинги
+**Получаемые данные:**
+- Order ID (внутренний)
+- WB Order ID
+- NM ID товара
+- Название товара
+- Артикул, размер, штрихкод
+- Цены (total_price, spp_percent, customer_price, discount_percent)
+- Склады (warehouse_from, warehouse_to)
+- Дата заказа, статус
+
+---
+
+##### **Шаг 2: Получение информации о товаре**
+**Строки:** 274-280  
+**Запрос:**
 ```sql
--- Статистика по отзывам
-SELECT 
-    AVG(rating) as avg_rating,
-    COUNT(*) as total_reviews,
-    rating,
-    COUNT(*) as rating_count
-FROM wb_reviews 
-WHERE nm_id = 317313124
-GROUP BY rating
-ORDER BY rating;
+SELECT * FROM wb_products 
+WHERE cabinet_id = {cabinet_id} 
+  AND nm_id = {order.nm_id}
 ```
 
-#### 3. **`WBStock`** - остатки товаров
+**Получаемые данные:**
+- Рейтинг товара (`rating`)
+- URL изображения (`image_url`)
+
+---
+
+##### **Шаг 3: Получение остатков товара по размерам**
+**Строки:** 282-299  
+**Запрос:**
 ```sql
--- Остатки по размерам и складам
-SELECT size, warehouse_name, quantity, updated_at
-FROM wb_stocks 
-WHERE nm_id = 317313124
-ORDER BY size, warehouse_name;
+SELECT * FROM wb_stocks 
+WHERE cabinet_id = {cabinet_id} 
+  AND nm_id = {order.nm_id}
 ```
 
-#### 4. **`WBSales`** - продажи за периоды
-```sql
--- Продажи за периоды
-SELECT 
-    COUNT(*) as sales_7_days
-FROM wb_sales 
-WHERE nm_id = 317313124 
-  AND sale_date >= NOW() - INTERVAL '7 days';
-```
-
-### 🐍 **Python код для получения данных:**
-
-#### **1. Подключение к базе данных:**
+**Обработка:**
 ```python
-import sys
-sys.path.append('/app')
-from app.core.database import get_db
-from app.features.wb_api.models import WBOrder, WBProduct, WBStock, WBReview, WBSales
-from sqlalchemy.orm import Session
-from sqlalchemy import func
-
-db = next(get_db())
-```
-
-#### **2. Получение основного заказа:**
-```python
-# Поиск заказа по ID
-order = db.query(WBOrder).filter(WBOrder.id == 2452).first()
-
-# Поиск заказа по NM ID
-orders = db.query(WBOrder).filter(WBOrder.nm_id == 317313124).all()
-```
-
-#### **3. Получение рейтинга и отзывов:**
-```python
-# Статистика по отзывам
-reviews_stats = db.query(
-    func.avg(WBReview.rating).label('avg_rating'),
-    func.count(WBReview.id).label('total_reviews')
-).filter(WBReview.nm_id == 317313124).first()
-
-# Все отзывы с группировкой по рейтингам
-reviews = db.query(WBReview).filter(WBReview.nm_id == 317313124).all()
-```
-
-#### **4. Получение остатков:**
-```python
-# Остатки по размерам
-stocks = db.query(WBStock).filter(WBStock.nm_id == 317313124).all()
-
-# Группировка по размерам
-stock_by_size = {}
+# Суммируем остатки по всем складам для одного размера
+stocks_dict = {}
 for stock in stocks:
-    size = stock.size or 'Без размера'
-    if size not in stock_by_size:
-        stock_by_size[size] = 0
-    stock_by_size[size] += stock.quantity or 0
+    size = stock.size or "ONE SIZE"
+    quantity = stock.quantity or 0
+    if size in stocks_dict:
+        stocks_dict[size] += quantity  # Суммирование!
+    else:
+        stocks_dict[size] = quantity
 ```
 
-#### **5. Получение продаж за периоды:**
+**Результат:** `{"L": 91, "M": 86, "S": 46, "XL": 0}`
+
+---
+
+##### **Шаг 4: Получение количества отзывов**
+**Строки:** 301-307  
+**Запрос:**
+```sql
+SELECT COUNT(*) FROM wb_reviews 
+WHERE cabinet_id = {cabinet_id} 
+  AND nm_id = {order.nm_id}
+```
+
+**Результат:** `reviews_count = 351`
+
+---
+
+##### **Шаг 5: Получение статистики продаж**
+**Функция:** `_get_product_statistics(cabinet_id, nm_id)`  
+**Строки:** 1527-1582
+
+**5.1 Выкупы за периоды (7/14/30 дней):**
+```sql
+SELECT * FROM wb_sales 
+WHERE cabinet_id = {cabinet_id} 
+  AND nm_id = {nm_id}
+  AND sale_date >= {start_date}
+  AND type = 'buyout'
+  AND is_cancel = False
+```
+
+**Периоды:**
+- `7_days`: последние 7 дней
+- `14_days`: последние 14 дней
+- `30_days`: последние 30 дней
+
+**Результат:** `{"7_days": 19, "14_days": 25, "30_days": 32}`
+
+---
+
+##### **Шаг 6: Получение статистики по заказам**
+**Строки:** 316-342
+
+**6.1 Статистика заказов (активные/отмененные):**
+```sql
+SELECT 
+    COUNT(id) as total_orders,
+    COUNT(CASE WHEN status = 'active' THEN 1 END) as active_orders,
+    COUNT(CASE WHEN status = 'canceled' THEN 1 END) as canceled_orders
+FROM wb_orders 
+WHERE cabinet_id = {cabinet_id} 
+  AND nm_id = {nm_id}
+```
+
+**6.2 Статистика продаж (выкупы/возвраты):**
+```sql
+SELECT 
+    COUNT(CASE WHEN type = 'buyout' THEN 1 END) as buyout_count,
+    COUNT(CASE WHEN type = 'return' THEN 1 END) as return_count
+FROM wb_sales 
+WHERE cabinet_id = {cabinet_id} 
+  AND nm_id = {nm_id}
+  AND is_cancel = False
+```
+
+**Результат:**
 ```python
-from datetime import datetime, timedelta
-
-# Продажи за 7 дней
-seven_days_ago = datetime.utcnow() - timedelta(days=7)
-sales_7_days = db.query(WBSales).filter(
-    WBSales.nm_id == 317313124,
-    WBSales.sale_date >= seven_days_ago
-).count()
+{
+    "total_orders": 140,
+    "active_orders": 85,
+    "canceled_orders": 55,
+    "buyout_orders": 32,
+    "return_orders": 7
+}
 ```
 
-### 🐳 **Docker команды для выполнения:**
+---
 
-#### **1. Выполнение Python скрипта в контейнере:**
-```bash
-docker exec $(docker ps -q --filter "name=server") python -c "
-# Ваш Python код здесь
-"
+##### **Шаг 7: Получение распределения рейтингов**
+**Строки:** 344-353
+
+**Запрос:**
+```sql
+SELECT 
+    rating,
+    COUNT(id) as count
+FROM wb_reviews 
+WHERE cabinet_id = {cabinet_id} 
+  AND nm_id = {nm_id}
+  AND rating IS NOT NULL
+GROUP BY rating
 ```
 
-#### **2. Прямое подключение к PostgreSQL:**
-```bash
-# Подключение к базе данных
-docker exec -it $(docker ps -q --filter "name=server") psql -U postgres -d wb_assist
+**Результат:** `{5: 290, 4: 30, 3: 10, 2: 5, 1: 16}`
 
-# Выполнение SQL запросов
-SELECT * FROM wb_orders WHERE nm_id = 317313124;
+**Расчет процентов (в форматтере):**
+```python
+pct_5 = (290 / 351) * 100 = 84.4%
+pct_4 = (30 / 351) * 100 = 5.8%
+pct_3 = (10 / 351) * 100 = 3.9%
+pct_2 = (5 / 351) * 100 = 1.9%
+pct_1 = (16 / 351) * 100 = 3.9%
 ```
 
-### 📊 **Структура данных для форматирования:**
+---
 
-#### **Основные поля заказа:**
+##### **Шаг 8: Получение среднего рейтинга**
+**Строки:** 346-353
+
+**Запрос:**
+```sql
+SELECT AVG(rating) FROM wb_reviews 
+WHERE cabinet_id = {cabinet_id} 
+  AND nm_id = {nm_id}
+  AND rating IS NOT NULL
+```
+
+**Результат:** `avg_rating = 4.63`
+
+---
+
+#### 📦 **ФОРМИРОВАНИЕ ИТОГОВОГО ОБЪЕКТА ДАННЫХ**
+
+**Строки:** 360-420
+
 ```python
 order_data = {
-    "id": order.id,
-    "order_id": order.order_id,
-    "nm_id": order.nm_id,
-    "status": order.status,
-    "name": order.name,
-    "brand": order.brand,
-    "article": order.article,
-    "size": order.size,
-    "barcode": order.barcode,
-    "total_price": order.total_price,
-    "spp_percent": order.spp_percent,
-    "customer_price": order.customer_price,
-    "logistics_amount": order.logistics_amount,
-    "warehouse_from": order.warehouse_from,
-    "warehouse_to": order.warehouse_to,
-    "order_date": order.order_date.isoformat() if order.order_date else None
-}
-```
-
-#### **Дополнительные данные:**
-```python
-# Рейтинг и отзывы
-rating_data = {
-    "avg_rating": reviews_stats.avg_rating,
-    "total_reviews": reviews_stats.total_reviews
-}
-
-# Остатки
-stocks_data = {
-    size: quantity for size, quantity in stock_by_size.items()
-}
-
-# Продажи
-sales_data = {
-    "sales_7_days": sales_7_days,
-    "sales_14_days": sales_14_days,
-    "sales_30_days": sales_30_days
-}
-```
-
-### 🔧 **Полезные SQL запросы:**
-
-#### **1. Полная информация о заказе:**
-```sql
-SELECT 
-    o.*,
-    p.rating as product_rating,
-    p.reviews_count as product_reviews_count
-FROM wb_orders o
-LEFT JOIN wb_products p ON o.nm_id = p.nm_id
-WHERE o.id = 2452;
-```
-
-#### **2. Статистика по товару:**
-```sql
-SELECT 
-    o.nm_id,
-    COUNT(o.id) as total_orders,
-    COUNT(CASE WHEN o.status = 'active' THEN 1 END) as active_orders,
-    COUNT(CASE WHEN o.status = 'canceled' THEN 1 END) as canceled_orders,
-    AVG(r.rating) as avg_rating,
-    COUNT(r.id) as total_reviews
-FROM wb_orders o
-LEFT JOIN wb_reviews r ON o.nm_id = r.nm_id
-WHERE o.nm_id = 317313124
-GROUP BY o.nm_id;
-```
-
-### 📝 **Итоговый шаблон для получения данных:**
-
-```python
-def get_order_detailed_info(order_id: int):
-    db = next(get_db())
+    # Основная информация о заказе
+    "id": 2207,
+    "order_id": "5669701717467158671",  # WB ID
+    "nm_id": 225287280,
+    "article": "slavabrand_dress_white_belt",
+    "size": "M",
+    "barcode": "2041472975210",
+    "status": "active",
     
-    # 1. Основной заказ
-    order = db.query(WBOrder).filter(WBOrder.id == order_id).first()
+    # Название и бренд
+    "product_name": "Платья",
+    "brand": "SLAVABRAND",
     
-    # 2. Рейтинг и отзывы
-    reviews_stats = db.query(
-        func.avg(WBReview.rating).label('avg_rating'),
-        func.count(WBReview.id).label('total_reviews')
-    ).filter(WBReview.nm_id == order.nm_id).first()
+    # Даты
+    "date": "2025-10-23T13:00:00+00:00",
+    "order_date": "2025-10-23T13:00:00+00:00",
     
-    # 3. Остатки
-    stocks = db.query(WBStock).filter(WBStock.nm_id == order.nm_id).all()
+    # Финансы
+    "total_price": 8100.0,
+    "spp_percent": 23.0,
+    "customer_price": 1626.0,
+    "discount_percent": 74.0,
     
-    # 4. Продажи
-    sales_7_days = db.query(WBSales).filter(
-        WBSales.nm_id == order.nm_id,
-        WBSales.sale_date >= datetime.utcnow() - timedelta(days=7)
-    ).count()
+    # Склады
+    "warehouse_from": "Казань",
+    "warehouse_to": "Нижегородская область",
     
-    return {
-        "order": order,
-        "rating": reviews_stats.avg_rating,
-        "reviews_count": reviews_stats.total_reviews,
-        "stocks": stocks,
-        "sales_7_days": sales_7_days
+    # Изображение товара
+    "image_url": "https://basket-xx.wbbasket.ru/.../1.webp",
+    
+    # Рейтинг и отзывы
+    "rating": 4.7,  # Из wb_products
+    "avg_rating": 4.63,  # Средний из отзывов
+    "reviews_count": 351,
+    "rating_distribution": {5: 290, 4: 30, 3: 10, 2: 5, 1: 16},
+    
+    # Выкупы за периоды
+    "sales_periods": {
+        "7_days": 19,
+        "14_days": 25,
+        "30_days": 32
+    },
+    
+    # Статистика заказов
+    "orders_stats": {
+        "total_orders": 140,
+        "active_orders": 85,
+        "canceled_orders": 55,
+        "buyout_orders": 32,
+        "return_orders": 7
+    },
+    
+    # Остатки по размерам (суммированные по всем складам)
+    "stocks": {
+        "L": 91,
+        "M": 86,
+        "S": 46,
+        "XL": 0
     }
+}
 ```
 
-Эти источники и методы позволят вам получать полную информацию о заказах для форматирования сообщений пользователям! 🎯
+---
+
+### 5️⃣ **Форматирование сообщения (Bot API Formatter)**
+
+**Файл:** `server/app/features/bot_api/formatter.py`  
+**Функция:** `format_order_detail(data: Dict[str, Any])`  
+**Строки:** 458-606
+
+#### Процесс форматирования:
+
+**1. Заголовок:**
+```python
+# Определение типа заказа по статусу
+status_map = {
+    "active": "Заказ",
+    "buyout": "Выкуп", 
+    "canceled": "Отмена",
+    "return": "Возврат"
+}
+
+# Форматирование даты: "23.10.2025 13:00"
+date_part = "2025-10-23"
+time_part = "13:00"
+year, month, day = date_part.split('-')
+formatted_datetime = f"{day}.{month}.{year} {time_part}"
+
+# Результат: "Заказ ID: 2207 от 23.10.2025 13:00"
+```
+
+**2. Идентификаторы товара:**
+```python
+# 🆔 {nm_id} / {article} / ({size})
+# 🎹 {barcode}
+
+# Результат:
+# 🆔 225287280 / slavabrand_dress_white_belt / (M)
+# 🎹 2041472975210
+```
+
+**3. Финансовая информация:**
+```python
+# Использование f-string с форматированием чисел
+total_price = 8100.0
+spp_percent = 23.0
+customer_price = 1626.0
+discount_percent = 74.0
+
+# Результат:
+# Цена заказа: 8,100.0₽
+# СПП %: 23.0%
+# Цена для покупателя: 1,626.0₽
+# Скидка: 74.0%
+```
+
+**4. Выкупы за периоды:**
+```python
+sales_7 = sales_periods.get('7_days', 0)   # 19
+sales_14 = sales_periods.get('14_days', 0)  # 25
+sales_30 = sales_periods.get('30_days', 0)  # 32
+
+# Результат:
+# 📈 Выкупы за периоды:
+# 7 | 14 | 30 дней:
+# 19 | 25 | 32
+```
+
+**5. Статистика заказов:**
+```python
+# Результат:
+# 🔍 Статистика по заказам:
+# Всего: 140 заказов
+# Активные: 85
+# Отмененные: 55
+# Выкупы: 32
+# Возвраты: 7
+```
+
+**6. Распределение рейтингов (в процентах):**
+```python
+stars_5 = 290
+pct_5 = (290 / 351) * 100 = 84.4%
+
+# Результат:
+# 5⭐ - 84.4%
+# 4⭐ - 5.8%
+# 3⭐ - 3.9%
+# 2⭐ - 1.9%
+# 1⭐ - 3.9%
+```
+
+**7. Остатки по размерам:**
+```python
+# Сортировка по размерам
+sorted_stocks = sorted(stocks.keys())
+
+# Результат:
+# 📦 Остатки по размерам:
+# L: 91 шт.
+# M: 86 шт.
+# S: 46 шт.
+# XL: 0 шт.
+```
+
+---
+
+### 6️⃣ **Отправка ответа клиенту**
+
+**Файл:** `server/app/features/bot_api/service.py`  
+**Строки:** 415-422
+
+```python
+return {
+    "success": True,
+    "data": order_data,
+    "telegram_text": formatted_text  # Готовое сообщение
+}
+```
+
+**HTTP Response:**
+```json
+{
+  "success": true,
+  "data": {...},
+  "telegram_text": "Заказ ID: 2207 от 23.10.2025 13:00\n\n🆔 225287280...",
+  "order": {
+    "id": 2207,
+    "nm_id": 225287280,
+    "image_url": "https://..."
+  }
+}
+```
+
+---
+
+### 7️⃣ **Отображение в Telegram**
+
+**Файл:** `bot/handlers/orders.py`  
+**Строки:** 186-207
+
+#### Логика отображения:
+
+**Если есть изображение товара:**
+```python
+await callback.message.answer_photo(
+    photo=image_url,
+    caption=response.telegram_text,
+    reply_markup=keyboard
+)
+```
+
+**Если нет изображения:**
+```python
+await callback.message.edit_text(
+    response.telegram_text,
+    reply_markup=keyboard
+)
+```
+
+**Клавиатура:**
+```python
+InlineKeyboardMarkup(inline_keyboard=[
+    [InlineKeyboardButton(
+        text="🔙 К списку заказов",
+        callback_data="orders"
+    )]
+])
+```
+
+---
+
+## 🗄️ СХЕМА БАЗЫ ДАННЫХ
+
+### Связи таблиц:
+
+```
+users (telegram_id)
+  ↓
+cabinet_users (user_id, cabinet_id)
+  ↓
+wb_cabinets (id, api_key)
+  ↓
+  ├─→ wb_orders (cabinet_id, nm_id)
+  ├─→ wb_products (cabinet_id, nm_id)
+  ├─→ wb_stocks (cabinet_id, nm_id)
+  ├─→ wb_reviews (cabinet_id, nm_id)
+  └─→ wb_sales (cabinet_id, nm_id)
+```
+
+### Индексы для оптимизации:
+
+**wb_orders:**
+- `idx_order_id` на `order_id`
+- `idx_nm_id` на `nm_id`
+- `idx_order_date` на `order_date`
+- `idx_order_status` на `status`
+- `uq_cabinet_order_id` на `(cabinet_id, order_id)` - UNIQUE
+
+**wb_sales:**
+- `idx_sales_nm_id` на `nm_id`
+- `idx_sales_date` на `sale_date`
+- `idx_sales_type` на `type`
+- `idx_sales_is_cancel` на `is_cancel`
+- `uq_cabinet_sale_id` на `(cabinet_id, sale_id)` - UNIQUE
+
+**wb_stocks:**
+- `idx_stocks_nm_id` на `nm_id`
+
+**wb_reviews:**
+- `idx_reviews_nm_id` на `nm_id`
+
+---
+
+## ⚡ ПРОИЗВОДИТЕЛЬНОСТЬ
+
+### Количество SQL запросов для одного заказа:
+
+1. **Получение пользователя** - 1 запрос
+2. **Получение связи user-cabinet** - 1 запрос
+3. **Получение заказа** - 1 запрос
+4. **Получение товара** - 1 запрос
+5. **Получение остатков** - 1 запрос
+6. **Подсчет отзывов** - 1 запрос
+7. **Статистика заказов** - 1 запрос
+8. **Статистика продаж** - 1 запрос
+9. **Распределение рейтингов** - 1 запрос
+10. **Средний рейтинг** - 1 запрос
+11. **Выкупы за 3 периода** - 3 запроса
+
+**ИТОГО: ~13 SQL запросов**
+
+### Оптимизация:
+- Используются индексы на всех полях фильтрации
+- Группировка данных на уровне SQL (GROUP BY)
+- Агрегация в одном запросе (COUNT, AVG)
+
+---
+
+## 🔒 БЕЗОПАСНОСТЬ
+
+### Проверка прав доступа:
+
+1. **Telegram ID → User ID** (таблица `users`)
+2. **User ID → Cabinet ID** (таблица `cabinet_users`)
+3. **Order.cabinet_id == Cabinet.id** - проверка владения заказом
+
+**Пользователь может видеть только заказы своих кабинетов!**
+
+---
+
+## 🚀 МАСШТАБИРУЕМОСТЬ
+
+### Текущие ограничения:
+- Все данные в одной базе SQLite
+- Синхронные SQL запросы
+- Нет кэширования
+
+### Возможные улучшения:
+1. **Кэширование** часто запрашиваемых данных (Redis)
+2. **Объединение запросов** (JOIN вместо множественных SELECT)
+3. **Асинхронные запросы** (SQLAlchemy async)
+4. **Пагинация** для больших объемов данных
+
+---
+
+## 📝 КЛЮЧЕВЫЕ ФАЙЛЫ
+
+| Файл | Назначение | Строки |
+|------|-----------|--------|
+| `bot/handlers/orders.py` | Обработчик команд бота | 151-215 |
+| `bot/api/client.py` | HTTP клиент | 351-354 |
+| `server/app/features/bot_api/routes.py` | API эндпоинты | - |
+| `server/app/features/bot_api/service.py` | Бизнес-логика | 247-429 |
+| `server/app/features/bot_api/formatter.py` | Форматирование сообщений | 458-606 |
+| `server/app/features/wb_api/models.py` | Модели БД (заказы) | 74-125 |
+| `server/app/features/wb_api/models_sales.py` | Модели БД (продажи) | 9-48 |
+
+---
+
+## 🐛 ЛОГИРОВАНИЕ
+
+### Ключевые логи:
+
+**Bot:**
+```python
+logger.info(f"📢 Order detail response: {response}")
+logger.info(f"📢 Order data: {order}")
+logger.info(f"📢 Order image_url: {image_url}")
+```
+
+**Server:**
+```python
+logger.info(f"Order data for order {order_id}")
+logger.info(f"Order data keys: {list(order_data.keys())}")
+logger.error(f"Ошибка получения деталей заказа: {e}")
+```
+
+---
+
+## ✅ ИТОГОВЫЙ ПОТОК ДАННЫХ
+
+```
+Telegram Bot (User clicks order)
+  ↓ callback: "order_details_2207"
+  
+Bot Handler (orders.py)
+  ↓ GET /api/v1/bot/orders/2207?telegram_id=5101525651
+  
+Server API (routes.py)
+  ↓ BotAPIService.get_order_detail()
+  
+Database Queries:
+  ├─ wb_orders (основной заказ)
+  ├─ wb_products (рейтинг, изображение)
+  ├─ wb_stocks (остатки)
+  ├─ wb_reviews (отзывы, рейтинги)
+  └─ wb_sales (выкупы, возвраты)
+  
+Formatter (formatter.py)
+  ↓ format_order_detail()
+  
+Server Response (JSON)
+  ↓ {success, data, telegram_text, order}
+  
+Bot Client (client.py)
+  ↓ BotAPIResponse
+  
+Telegram Message
+  ↓ Photo + Caption OR Text + Keyboard
+  
+User sees formatted order details
+```
+
+---
+
+**Дата создания:** 23.10.2025  
+**Автор:** WB Assist Development Team  
+**Версия:** 1.0

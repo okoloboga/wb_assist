@@ -21,16 +21,24 @@ router = Router()
 @router.callback_query(F.data == "orders")
 async def show_orders_menu(callback: CallbackQuery):
     """Показать меню заказов"""
+    logger.info(f"🔍 [show_orders_menu] User {callback.from_user.id} requested orders menu")
+    
     response = await bot_api_client.get_recent_orders(
         user_id=callback.from_user.id,
         limit=10,
         offset=0
     )
     
+    logger.info(f"📡 [show_orders_menu] API response: success={response.success}, error={response.error}")
+    
     if response.success:
         # Новая структура ответа: данные в корне response
         orders = response.orders or []
         pagination = response.pagination or {}
+        
+        logger.info(f"📋 [show_orders_menu] Received {len(orders)} orders from API")
+        for i, order in enumerate(orders[:3]):  # Показываем первые 3 заказа
+            logger.info(f"   Order {i+1}: ID={order.get('id')}, WB_ID={order.get('order_id')}, Date={order.get('date')}, Amount={order.get('amount')}")
         
         if orders:
             keyboard = create_orders_keyboard(
@@ -218,16 +226,24 @@ async def show_order_details(callback: CallbackQuery):
 @router.message(Command("orders"))
 async def cmd_orders(message: Message):
     """Команда /orders"""
+    logger.info(f"🔍 [cmd_orders] User {message.from_user.id} used /orders command")
+    
     response = await bot_api_client.get_recent_orders(
         user_id=message.from_user.id,
         limit=10,
         offset=0
     )
     
+    logger.info(f"📡 [cmd_orders] API response: success={response.success}, error={response.error}")
+    
     if response.success:
         # Новая структура ответа: данные в корне response
         orders = response.orders or []
         pagination = response.pagination or {}
+        
+        logger.info(f"📋 [cmd_orders] Received {len(orders)} orders from API")
+        for i, order in enumerate(orders[:3]):  # Показываем первые 3 заказа
+            logger.info(f"   Order {i+1}: ID={order.get('id')}, WB_ID={order.get('order_id')}, Date={order.get('date')}, Amount={order.get('amount')}")
         
         if orders:
             keyboard = create_orders_keyboard(
