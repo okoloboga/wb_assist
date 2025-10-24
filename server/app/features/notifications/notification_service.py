@@ -2034,18 +2034,14 @@ class NotificationService:
             return []
     
     async def _check_buyouts_simple(self, cabinet_id: int, last_sync_at: datetime) -> List:
-        """Простая проверка выкупов - ИСПРАВЛЕНО: ищем в WBSales за последние 24 часа"""
+        """Простая проверка выкупов - ИСПРАВЛЕНО: ищем в WBSales с момента последней синхронизации"""
         try:
             from app.features.wb_api.models_sales import WBSales
             
-            # Ищем выкупы за последние 24 часа (независимо от last_sync_at)
-            from datetime import datetime, timedelta
-            now = datetime.now()
-            last_24h = now - timedelta(hours=24)
-            
+            # Ищем выкупы с момента последней синхронизации
             buyouts = self.db.query(WBSales).filter(
                 WBSales.cabinet_id == cabinet_id,
-                WBSales.sale_date > last_24h,  # За последние 24 часа
+                WBSales.sale_date > last_sync_at,  # С момента последней синхронизации
                 WBSales.type == "buyout",
                 WBSales.is_cancel == False
             ).all()
@@ -2077,18 +2073,14 @@ class NotificationService:
             return []
     
     async def _check_returns_simple(self, cabinet_id: int, last_sync_at: datetime) -> List:
-        """Простая проверка возвратов - ИСПРАВЛЕНО: ищем за последние 24 часа"""
+        """Простая проверка возвратов - ИСПРАВЛЕНО: ищем с момента последней синхронизации"""
         try:
             from app.features.wb_api.models_sales import WBSales
             
-            # Ищем возвраты за последние 24 часа
-            from datetime import datetime, timedelta
-            now = datetime.now()
-            last_24h = now - timedelta(hours=24)
-            
+            # Ищем возвраты с момента последней синхронизации
             returns = self.db.query(WBSales).filter(
                 WBSales.cabinet_id == cabinet_id,
-                WBSales.sale_date > last_24h,  # За последние 24 часа
+                WBSales.sale_date > last_sync_at,  # С момента последней синхронизации
                 WBSales.type == "return",
                 WBSales.is_cancel == False
             ).all()
@@ -2134,18 +2126,14 @@ class NotificationService:
             return []
     
     async def _check_negative_reviews_simple(self, cabinet_id: int, last_sync_at: datetime) -> List:
-        """Простая проверка негативных отзывов - ИСПРАВЛЕНО: за последние 24 часа"""
+        """Простая проверка негативных отзывов - ИСПРАВЛЕНО: с момента последней синхронизации"""
         try:
             from app.features.wb_api.models import WBReview
             
-            # Ищем негативные отзывы за последние 24 часа
-            from datetime import datetime, timedelta
-            now = datetime.now()
-            last_24h = now - timedelta(hours=24)
-            
+            # Ищем негативные отзывы с момента последней синхронизации
             negative_reviews = self.db.query(WBReview).filter(
                 WBReview.cabinet_id == cabinet_id,
-                WBReview.created_date > last_24h,  # За последние 24 часа
+                WBReview.created_date > last_sync_at,  # С момента последней синхронизации
                 WBReview.rating <= 3
             ).all()
             
