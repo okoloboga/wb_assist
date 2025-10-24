@@ -206,6 +206,11 @@ class NotificationService:
         try:
             logger.info(f"🔧 [process_sync_events_simple] Starting for user {user_id}, cabinet {cabinet_id}")
             
+            # 🚨 КРИТИЧЕСКАЯ ПРОВЕРКА: НЕ ОТПРАВЛЯЕМ УВЕДОМЛЕНИЯ ПРИ ПЕРВИЧНОЙ СИНХРОНИЗАЦИИ
+            if last_sync_at is None:
+                logger.info(f"🚫 [process_sync_events_simple] First sync detected - skipping notifications for user {user_id}")
+                return {"status": "first_sync", "notifications_sent": 0, "message": "First sync - no notifications sent"}
+            
             # Получаем настройки пользователя
             user_settings = await self._get_user_notification_settings(user_id)
             if not user_settings:

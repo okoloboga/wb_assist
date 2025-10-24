@@ -69,9 +69,9 @@ class WBSyncService:
             
             # КРИТИЧНО: Сохраняем время предыдущей синхронизации ДО начала новой
             if not cabinet.last_sync_at:
-                # Если это первая синхронизация, используем время 24 часа назад
-                previous_sync_at = TimezoneUtils.now_msk() - timedelta(hours=24)
-                logger.info(f"📅 First sync detected for cabinet {cabinet.id}, using 24h ago: {previous_sync_at}")
+                # Если это первая синхронизация, НЕ отправляем уведомления
+                previous_sync_at = None
+                logger.info(f"📅 First sync detected for cabinet {cabinet.id} - NO notifications will be sent")
             else:
                 previous_sync_at = cabinet.last_sync_at
                 logger.info(f"📅 Previous sync time for cabinet {cabinet.id}: {previous_sync_at}")
