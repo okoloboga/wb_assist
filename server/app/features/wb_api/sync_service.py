@@ -1495,6 +1495,14 @@ class WBSyncService:
             # Получаем данные продаж из WB API
             sales_data = await client.get_sales(date_from, flag=flag)
             
+            logger.info(f"🔍 [sync_sales] Received {len(sales_data) if sales_data else 0} sales records from WB API")
+            
+            # Логируем первые несколько записей для отладки
+            if sales_data:
+                logger.info(f"🔍 [sync_sales] First 3 sales records:")
+                for i, sale_item in enumerate(sales_data[:3]):
+                    logger.info(f"   {i+1}. Sale ID: {sale_item.get('srid', 'N/A')}, Date: {sale_item.get('date', 'N/A')}, Amount: {sale_item.get('totalPrice', 'N/A')}")
+            
             if not sales_data:
                 logger.warning(f"No sales data received for cabinet {cabinet.id}")
                 return {"status": "success", "records_processed": 0, "records_created": 0}
@@ -1549,9 +1557,12 @@ class WBSyncService:
                         # Создаем новую запись
                         sales_crud.create_sale(self.db, sale_data)
                         records_created += 1
+                        logger.info(f"🔍 [sync_sales] Created new sale: {sale_data['sale_id']} - {sale_data['product_name']} - {sale_data['amount']}₽")
                         
                         # Уведомления о продажах обрабатываются через NotificationService.process_sync_events
                         # после завершения всей синхронизации
+                    else:
+                        logger.debug(f"🔍 [sync_sales] Sale already exists: {sale_data['sale_id']}")
                     
                     records_processed += 1
                     

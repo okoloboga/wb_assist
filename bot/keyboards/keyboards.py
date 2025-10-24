@@ -111,7 +111,6 @@ def settings_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔑 Подключение WB-кабинета (API-ключ)", callback_data="settings_api_key")],
         [InlineKeyboardButton(text="👥 Доступы (добавить/удалить пользователя по TelegramID)", callback_data="settings_access")],
-        [InlineKeyboardButton(text="🔔 Уведомления (вкл/выкл, частота)", callback_data="settings_notifications")],
         [InlineKeyboardButton(text="🌐 Интеграции (Google Sheets, Docs)", callback_data="settings_integrations")],
         [InlineKeyboardButton(text="🔙 Назад", callback_data="main_menu")]
     ])
@@ -351,9 +350,11 @@ def create_notification_keyboard(settings: Dict[str, Any]) -> InlineKeyboardMark
         return "✅ Вкл" if enabled else "❌ Выкл"
 
     new_orders = settings.get("new_orders_enabled", True)
-    critical_stocks = settings.get("critical_stocks_enabled", True)
+    buyouts = settings.get("order_buyouts_enabled", True)
+    cancellations = settings.get("order_cancellations_enabled", True)
+    returns = settings.get("order_returns_enabled", True)
     negative_reviews = settings.get("negative_reviews_enabled", True)
-    grouping = settings.get("grouping_enabled", True)
+    critical_stocks = settings.get("critical_stocks_enabled", True)
 
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(
@@ -361,19 +362,27 @@ def create_notification_keyboard(settings: Dict[str, Any]) -> InlineKeyboardMark
             callback_data="toggle_notif_new_orders"
         )],
         [InlineKeyboardButton(
-            text=f"⚠️ Критичные остатки: {flag_text(critical_stocks)}",
-            callback_data="toggle_notif_critical_stocks"
+            text=f"💰 Выкупы: {flag_text(buyouts)}",
+            callback_data="toggle_notif_buyouts"
+        )],
+        [InlineKeyboardButton(
+            text=f"↩️ Отмены: {flag_text(cancellations)}",
+            callback_data="toggle_notif_cancellations"
+        )],
+        [InlineKeyboardButton(
+            text=f"🔴 Возвраты: {flag_text(returns)}",
+            callback_data="toggle_notif_returns"
         )],
         [InlineKeyboardButton(
             text=f"⭐ Негативные отзывы: {flag_text(negative_reviews)}",
             callback_data="toggle_notif_negative_reviews"
         )],
         [InlineKeyboardButton(
-            text=f"📦 Группировка: {flag_text(grouping)}",
-            callback_data="toggle_notif_grouping"
+            text=f"⚠️ Критичные остатки: {flag_text(critical_stocks)}",
+            callback_data="toggle_notif_critical_stocks"
         )],
         [InlineKeyboardButton(
-            text="🔙 Назад к настройкам",
-            callback_data="main_menu"
+            text="🔙 Назад к меню",
+            callback_data="wb_menu"
         )]
     ])

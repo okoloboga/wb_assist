@@ -24,42 +24,26 @@ router = Router()
 @router.callback_query(F.data == "notifications")
 async def show_notifications_menu(callback: CallbackQuery):
     """Показать меню уведомлений"""
-    await callback.message.edit_text(
-        "🔔 УВЕДОМЛЕНИЯ\n\n"
-        "📊 Статус уведомлений:\n"
-        "✅ Заказы: Включены\n"
-        "✅ Остатки: Включены\n"
-        "✅ Отзывы: Включены\n"
-        "✅ Синхронизация: Включены\n\n"
-        "🔧 Настройте уведомления в разделе 'Настройки' → 'Уведомления'",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(
-                text="⚙️ Настройки уведомлений",
-                callback_data="settings_notifications"
-            )],
-            [InlineKeyboardButton(
-                text="🔙 Назад",
-                callback_data="wb_menu"
-            )]
-        ])
-    )
-    await callback.answer()
-
-
-@router.callback_query(F.data == "settings_notifications")
-async def show_notification_settings(callback: CallbackQuery, state: FSMContext):
-    """Показать настройки уведомлений (с сервера)"""
-    await state.set_state(NotificationStates.settings_menu)
-
     user_id = callback.from_user.id
+    
+    # Загружаем реальные настройки с сервера
     response = await bot_api_client.get_notification_settings(user_id)
-
+    
     if response.success and response.data:
-        settings = response.data.get("data", response.data)  # APIResponse wraps data
+        settings = response.data.get("data", response.data)
+        
+        # Формируем статус на основе реальных настроек
+        status_text = "📊 Статус уведомлений:\n"
+        status_text += f"✅ Заказы: {'Включены' if settings.get('new_orders_enabled', True) else 'Выключены'}\n"
+        status_text += f"✅ Выкупы: {'Включены' if settings.get('order_buyouts_enabled', True) else 'Выключены'}\n"
+        status_text += f"✅ Отмены: {'Включены' if settings.get('order_cancellations_enabled', True) else 'Выключены'}\n"
+        status_text += f"✅ Возвраты: {'Включены' if settings.get('order_returns_enabled', True) else 'Выключены'}\n"
+        status_text += f"✅ Отзывы: {'Включены' if settings.get('negative_reviews_enabled', True) else 'Выключены'}\n"
+        status_text += f"✅ Остатки: {'Включены' if settings.get('critical_stocks_enabled', True) else 'Выключены'}\n"
+        
         await callback.message.edit_text(
-            "🔔 НАСТРОЙКИ УВЕДОМЛЕНИЙ\n\n"
-            "Нажмите на тип уведомления для переключения:\n\n"
-            "✅ Вкл | ❌ Выкл",
+            f"🔔 УВЕДОМЛЕНИЯ\n\n{status_text}\n"
+            "Нажмите на тип уведомления для переключения:",
             reply_markup=create_notification_keyboard(settings)
         )
     else:
@@ -67,6 +51,7 @@ async def show_notification_settings(callback: CallbackQuery, state: FSMContext)
             f"❌ Не удалось получить настройки уведомлений.\n\n{response.error or ''}",
             reply_markup=wb_menu_keyboard()
         )
+    
     await callback.answer()
 
 
@@ -86,11 +71,20 @@ async def _toggle_and_refresh(callback: CallbackQuery, key: str):
     # Получаем обновлённые
     refreshed = await bot_api_client.get_notification_settings(user_id)
     new_settings = refreshed.data.get("data", refreshed.data) if refreshed.success and refreshed.data else settings
+    
+    # Формируем статус на основе обновленных настроек
+    status_text = "📊 Статус уведомлений:\n"
+    status_text += f"✅ Заказы: {'Включены' if new_settings.get('new_orders_enabled', True) else 'Выключены'}\n"
+    status_text += f"✅ Выкупы: {'Включены' if new_settings.get('order_buyouts_enabled', True) else 'Выключены'}\n"
+    status_text += f"✅ Отмены: {'Включены' if new_settings.get('order_cancellations_enabled', True) else 'Выключены'}\n"
+    status_text += f"✅ Возвраты: {'Включены' if new_settings.get('order_returns_enabled', True) else 'Выключены'}\n"
+    status_text += f"✅ Отзывы: {'Включены' if new_settings.get('negative_reviews_enabled', True) else 'Выключены'}\n"
+    status_text += f"✅ Остатки: {'Включены' if new_settings.get('critical_stocks_enabled', True) else 'Выключены'}\n"
+    
     # Обновляем текст/клавиатуру
     await callback.message.edit_text(
-        "🔔 НАСТРОЙКИ УВЕДОМЛЕНИЙ\n\n"
-        "Нажмите на тип уведомления для переключения:\n\n"
-        "✅ Вкл | ❌ Выкл",
+        f"🔔 УВЕДОМЛЕНИЯ\n\n{status_text}\n"
+        "Нажмите на тип уведомления для переключения:",
         reply_markup=create_notification_keyboard(new_settings)
     )
     await callback.answer()
@@ -101,9 +95,19 @@ async def toggle_notif_new_orders(callback: CallbackQuery):
     await _toggle_and_refresh(callback, "new_orders_enabled")
 
 
-@router.callback_query(F.data == "toggle_notif_critical_stocks")
-async def toggle_notif_critical_stocks(callback: CallbackQuery):
-    await _toggle_and_refresh(callback, "critical_stocks_enabled")
+@router.callback_query(F.data == "toggle_notif_buyouts")
+async def toggle_notif_buyouts(callback: CallbackQuery):
+    await _toggle_and_refresh(callback, "order_buyouts_enabled")
+
+
+@router.callback_query(F.data == "toggle_notif_cancellations")
+async def toggle_notif_cancellations(callback: CallbackQuery):
+    await _toggle_and_refresh(callback, "order_cancellations_enabled")
+
+
+@router.callback_query(F.data == "toggle_notif_returns")
+async def toggle_notif_returns(callback: CallbackQuery):
+    await _toggle_and_refresh(callback, "order_returns_enabled")
 
 
 @router.callback_query(F.data == "toggle_notif_negative_reviews")
@@ -111,9 +115,9 @@ async def toggle_notif_negative_reviews(callback: CallbackQuery):
     await _toggle_and_refresh(callback, "negative_reviews_enabled")
 
 
-@router.callback_query(F.data == "toggle_notif_grouping")
-async def toggle_notif_grouping(callback: CallbackQuery):
-    await _toggle_and_refresh(callback, "grouping_enabled")
+@router.callback_query(F.data == "toggle_notif_critical_stocks")
+async def toggle_notif_critical_stocks(callback: CallbackQuery):
+    await _toggle_and_refresh(callback, "critical_stocks_enabled")
 
 
 @router.callback_query(F.data == "test_notification")
@@ -128,19 +132,6 @@ async def test_notification(callback: CallbackQuery):
     await callback.answer("✅ Тестовое уведомление отправлено")
 
 
-@router.message(Command("notifications"))
-async def cmd_notifications(message: Message, state: FSMContext):
-    """Команда /notifications"""
-    await state.set_state(NotificationStates.settings_menu)
-    
-    await message.answer(
-        "🔔 НАСТРОЙКИ УВЕДОМЛЕНИЙ\n\n"
-        "Выберите типы уведомлений, которые хотите получать:\n\n"
-        "✅ Включено\n"
-        "❌ Выключено\n\n"
-        "Нажмите на тип уведомления для переключения:",
-        reply_markup=create_notification_keyboard()
-    )
 
 
 # Polling обработчики для получения уведомлений от сервера

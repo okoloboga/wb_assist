@@ -278,16 +278,16 @@ class NotificationService:
                         "telegram_text": self._format_return_notification_simple(order)
                     })
             
-            # 5. КРИТИЧНЫЕ ОСТАТКИ (простая проверка) - ОТКЛЮЧЕНО
-            # if user_settings.critical_stocks_enabled:
-            #     critical_stocks = await self._check_critical_stocks_simple(cabinet_id, last_sync_at)
-            #     if critical_stocks:
-            #         notifications.append({
-            #             "type": "critical_stocks",
-            #             "user_id": user_id,
-            #             "data": self._format_critical_stocks_data_simple(critical_stocks),
-            #             "telegram_text": self._format_critical_stocks_notification_simple(critical_stocks)
-            #         })
+            # 5. КРИТИЧНЫЕ ОСТАТКИ (простая проверка) - ВКЛЮЧЕНО
+            if user_settings.critical_stocks_enabled:
+                critical_stocks = await self._check_critical_stocks_simple(cabinet_id, last_sync_at)
+                if critical_stocks:
+                    notifications.append({
+                        "type": "critical_stocks",
+                        "user_id": user_id,
+                        "data": self._format_critical_stocks_data_simple(critical_stocks),
+                        "telegram_text": self._format_critical_stocks_notification_simple(critical_stocks)
+                    })
             
             # 6. НЕГАТИВНЫЕ ОТЗЫВЫ (простая проверка)
             if user_settings.negative_reviews_enabled:
@@ -1649,8 +1649,8 @@ class NotificationService:
                 "telegram_text": telegram_text
             }
             
-            # Детальный лог webhook данных
-            logger.info(f"📢 Webhook notification data for user {user_id}: {webhook_data}")
+            # Детальный лог webhook данных (только ключи, без содержимого)
+            logger.info(f"📢 Webhook notification for user {user_id}, type: {notification.get('type', 'unknown')}")
             logger.info(f"📢 Notification data keys: {list(notification.keys())}")
             if "data" in notification:
                 logger.info(f"📢 Notification data.data keys: {list(notification['data'].keys())}")
@@ -2034,18 +2034,24 @@ class NotificationService:
             return []
     
     async def _check_buyouts_simple(self, cabinet_id: int, last_sync_at: datetime) -> List:
-        """Простая проверка выкупов - ИСПРАВЛЕНО: ищем в WBSales"""
+        """Простая проверка выкупов - ИСПРАВЛЕНО: ищем в WBSales за последние 24 часа"""
         try:
             from app.features.wb_api.models_sales import WBSales
             
+            # Ищем выкупы за последние 24 часа (независимо от last_sync_at)
+            from datetime import datetime, timedelta
+            now = datetime.now()
+            last_24h = now - timedelta(hours=24)
+            
             buyouts = self.db.query(WBSales).filter(
                 WBSales.cabinet_id == cabinet_id,
-                WBSales.created_at > last_sync_at,
+                WBSales.sale_date > last_24h,  # За последние 24 часа
                 WBSales.type == "buyout",
                 WBSales.is_cancel == False
             ).all()
             
-            logger.info(f"🔍 [Simple] Found {len(buyouts)} buyouts for cabinet {cabinet_id}")
+            if buyouts:  # Логируем только если есть выкупы
+                logger.info(f"🔍 [Simple] Found {len(buyouts)} buyouts for cabinet {cabinet_id}")
             return buyouts
             
         except Exception as e:
@@ -2071,18 +2077,24 @@ class NotificationService:
             return []
     
     async def _check_returns_simple(self, cabinet_id: int, last_sync_at: datetime) -> List:
-        """Простая проверка возвратов - ИСПРАВЛЕНО: ищем в WBSales"""
+        """Простая проверка возвратов - ИСПРАВЛЕНО: ищем за последние 24 часа"""
         try:
             from app.features.wb_api.models_sales import WBSales
             
+            # Ищем возвраты за последние 24 часа
+            from datetime import datetime, timedelta
+            now = datetime.now()
+            last_24h = now - timedelta(hours=24)
+            
             returns = self.db.query(WBSales).filter(
                 WBSales.cabinet_id == cabinet_id,
-                WBSales.created_at > last_sync_at,
+                WBSales.sale_date > last_24h,  # За последние 24 часа
                 WBSales.type == "return",
                 WBSales.is_cancel == False
             ).all()
             
-            logger.info(f"🔍 [Simple] Found {len(returns)} returns for cabinet {cabinet_id}")
+            if returns:  # Логируем только если есть возвраты
+                logger.info(f"🔍 [Simple] Found {len(returns)} returns for cabinet {cabinet_id}")
             return returns
             
         except Exception as e:
@@ -2111,7 +2123,8 @@ class NotificationService:
                     WBStock.nm_id.in_(critical_nm_ids)
                 ).all()
                 
-                logger.info(f"🔍 [Simple] Found {len(stocks)} critical stock entries for cabinet {cabinet_id}")
+                if stocks:  # Логируем только если есть критичные остатки
+                    logger.info(f"🔍 [Simple] Found {len(stocks)} critical stock entries for cabinet {cabinet_id}")
                 return stocks
             
             return []
@@ -2121,17 +2134,23 @@ class NotificationService:
             return []
     
     async def _check_negative_reviews_simple(self, cabinet_id: int, last_sync_at: datetime) -> List:
-        """Простая проверка негативных отзывов"""
+        """Простая проверка негативных отзывов - ИСПРАВЛЕНО: за последние 24 часа"""
         try:
             from app.features.wb_api.models import WBReview
             
+            # Ищем негативные отзывы за последние 24 часа
+            from datetime import datetime, timedelta
+            now = datetime.now()
+            last_24h = now - timedelta(hours=24)
+            
             negative_reviews = self.db.query(WBReview).filter(
                 WBReview.cabinet_id == cabinet_id,
-                WBReview.created_at > last_sync_at,
+                WBReview.created_date > last_24h,  # За последние 24 часа
                 WBReview.rating <= 3
             ).all()
             
-            logger.info(f"🔍 [Simple] Found {len(negative_reviews)} negative reviews for cabinet {cabinet_id}")
+            if negative_reviews:  # Логируем только если есть негативные отзывы
+                logger.info(f"🔍 [Simple] Found {len(negative_reviews)} negative reviews for cabinet {cabinet_id}")
             return negative_reviews
             
         except Exception as e:
@@ -2439,7 +2458,8 @@ class NotificationService:
         
         message = "⚠️ КРИТИЧНЫЕ ОСТАТКИ\n\n"
         for nm_id, product in products.items():
-            message += f"📦 {product['name']}\n"
+            product_name = product['name'] or f"Товар {nm_id}"
+            message += f"📦 {product_name}\n"
             message += f"📊 Остаток: {product['total_quantity']}\n"
             for warehouse in product['warehouses']:
                 message += f"   • {warehouse}\n"

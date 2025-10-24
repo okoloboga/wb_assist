@@ -725,15 +725,43 @@ class BotAPIService:
                 # Подключаем пользователя к существующему кабинету
                 cabinet_user_crud.add_user_to_cabinet(self.db, existing_cabinet.id, user["id"])
                 
-                return {
-                    "success": True,
-                    "message": "Подключен к существующему кабинету",
-                    "cabinet_id": str(existing_cabinet.id),
-                    "cabinet_name": existing_cabinet.name,
-                    "connected_at": existing_cabinet.created_at.isoformat() if existing_cabinet.created_at else None,
-                    "api_key_status": "valid",
-                    "telegram_text": f"✅ Подключен к существующему кабинету!\n\n🏢 Кабинет: {existing_cabinet.name}\n🔑 API ключ: {api_key[:8]}...\n📊 Статус: Активен\n\nТеперь вы можете получать уведомления о новых заказах и остатках!"
-                }
+                # Получаем Dashboard для второго пользователя (как для первого)
+                try:
+                    dashboard_result = await self.get_dashboard(user)
+                    if dashboard_result["success"]:
+                        return {
+                            "success": True,
+                            "message": "Подключен к существующему кабинету",
+                            "cabinet_id": str(existing_cabinet.id),
+                            "cabinet_name": existing_cabinet.name,
+                            "connected_at": existing_cabinet.created_at.isoformat() if existing_cabinet.created_at else None,
+                            "api_key_status": "valid",
+                            "telegram_text": dashboard_result["telegram_text"],
+                            "dashboard_data": dashboard_result["data"]
+                        }
+                    else:
+                        # Если Dashboard не загрузился, возвращаем простое сообщение
+                        return {
+                            "success": True,
+                            "message": "Подключен к существующему кабинету",
+                            "cabinet_id": str(existing_cabinet.id),
+                            "cabinet_name": existing_cabinet.name,
+                            "connected_at": existing_cabinet.created_at.isoformat() if existing_cabinet.created_at else None,
+                            "api_key_status": "valid",
+                            "telegram_text": f"✅ Подключен к существующему кабинету!\n\n🏢 Кабинет: {existing_cabinet.name}\n🔑 API ключ: {api_key[:8]}...\n📊 Статус: Активен\n\nТеперь вы можете получать уведомления о новых заказах и остатках!"
+                        }
+                except Exception as e:
+                    logger.error(f"Ошибка получения Dashboard для второго пользователя: {e}")
+                    # В случае ошибки возвращаем простое сообщение
+                    return {
+                        "success": True,
+                        "message": "Подключен к существующему кабинету",
+                        "cabinet_id": str(existing_cabinet.id),
+                        "cabinet_name": existing_cabinet.name,
+                        "connected_at": existing_cabinet.created_at.isoformat() if existing_cabinet.created_at else None,
+                        "api_key_status": "valid",
+                        "telegram_text": f"✅ Подключен к существующему кабинету!\n\n🏢 Кабинет: {existing_cabinet.name}\n🔑 API ключ: {api_key[:8]}...\n📊 Статус: Активен\n\nТеперь вы можете получать уведомления о новых заказах и остатках!"
+                    }
             
             # API ключ новый - создаем новый кабинет
             logger.info(f"Creating new cabinet for user {user['id']}")
