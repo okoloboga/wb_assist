@@ -849,7 +849,7 @@ class BotAPIService:
                     "api_key": cabinet.api_key,  # Добавляем API ключ
                     "api_key_status": "valid" if cabinet.is_active else "invalid",
                     "connected_at": cabinet.created_at.isoformat() if cabinet.created_at else None,
-                    "last_sync": cabinet.last_sync_at.isoformat() if cabinet.last_sync_at else None
+                    "last_sync": TimezoneUtils.from_utc(cabinet.last_sync_at).isoformat() if cabinet.last_sync_at else None
                 })
             
             # Форматируем Telegram сообщение

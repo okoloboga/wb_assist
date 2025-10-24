@@ -142,7 +142,11 @@ class WBSyncService:
                 logger.error(f"Failed to update product ratings: {e}")
                 results["product_ratings"] = {"status": "error", "error": str(e)}
             
-            # Обновляем время последней синхронизации
+            # ИСПРАВЛЕНИЕ: Сначала обрабатываем события, потом обновляем время
+            # Отправляем уведомления о новых событиях ДО обновления last_sync_at
+            await self._send_sync_completion_notification(cabinet.id, previous_sync_at)
+            
+            # Обновляем время последней синхронизации ПОСЛЕ обработки событий
             cabinet.last_sync_at = TimezoneUtils.now_msk()
             
             # Обновляем лог синхронизации
@@ -154,10 +158,6 @@ class WBSyncService:
             
             # Инвалидируем кэш после успешной синхронизации
             await self._invalidate_user_cache(cabinet.id)
-            
-            # Отправляем уведомление о завершении синхронизации
-            # Передаем previous_sync_at для корректного определения новых событий
-            await self._send_sync_completion_notification(cabinet.id, previous_sync_at)
             
             # Планируем автоматическую синхронизацию для нового кабинета
             if not cabinet.last_sync_at:
@@ -287,47 +287,27 @@ class WBSyncService:
                 # Если это первая синхронизация для пользователя, устанавливаем флаг
                 if is_first_sync and cabinet_user:
                     cabinet_user.first_sync_completed = True
+                    # НЕ КОММИТИМ ЗДЕСЬ - будет общий коммит в конце
                     logger.info(f"🏁 First sync completed for user {user_id} in cabinet {cabinet_id}")
                 
-                # Обрабатываем уведомления о новых событиях
+                # Обрабатываем уведомления о новых событиях (ПРОСТАЯ ЛОГИКА)
                 if previous_sync_at:
                     try:
-                        logger.info(f"🔍 Processing sync events for user {user_id} with previous_sync_at={previous_sync_at}")
+                        logger.info(f"🔍 [Simple] Processing sync events for user {user_id} with previous_sync_at={previous_sync_at}")
                         
-                        # Получаем данные для обработки уведомлений
-                        # Используем previous_sync_at для корректного определения новых событий
-                        current_orders = self._get_current_orders_for_notifications(cabinet_id, previous_sync_at)
-                        previous_orders = self._get_previous_orders_for_notifications(cabinet_id, previous_sync_at)
-                        current_reviews = self._get_current_reviews_for_notifications(cabinet_id, previous_sync_at)
-                        previous_reviews = self._get_previous_reviews_for_notifications(cabinet_id, previous_sync_at)
-                        current_stocks = self._get_current_stocks_for_notifications(cabinet_id, previous_sync_at)
-                        previous_stocks = self._get_previous_stocks_for_notifications(cabinet_id, previous_sync_at)
-                        current_sales = self._get_current_sales_for_notifications(cabinet_id, previous_sync_at)
-                        previous_sales = self._get_previous_sales_for_notifications(cabinet_id, previous_sync_at)
-                        
-                        logger.info(f"📊 Found {len(current_orders)} current orders, {len(previous_orders)} previous orders")
-                        logger.info(f"📊 Found {len(current_sales)} current sales, {len(previous_sales)} previous sales")
-                        
-                        # Обрабатываем события и отправляем уведомления
-                        events_result = await notification_service.process_sync_events(
+                        # Используем простую логику (как в старой версии)
+                        events_result = await notification_service.process_sync_events_simple(
                             user_id=user_id,
                             cabinet_id=cabinet_id,
-                            current_orders=current_orders,
-                            previous_orders=previous_orders,
-                            current_reviews=current_reviews,
-                            previous_reviews=previous_reviews,
-                            current_stocks=current_stocks,
-                            previous_stocks=previous_stocks,
-                            current_sales=current_sales,
-                            previous_sales=previous_sales
+                            last_sync_at=previous_sync_at
                         )
                         
-                        logger.info(f"📢 Processed sync events for user {user_id}: {events_result}")
+                        logger.info(f"📢 [Simple] Processed sync events for user {user_id}: {events_result}")
                         
                     except Exception as e:
-                        logger.error(f"❌ Failed to process sync events for user {user_id}: {e}")
+                        logger.error(f"❌ [Simple] Failed to process sync events for user {user_id}: {e}")
             
-            self.db.commit()
+            # УБИРАЕМ ДВОЙНОЙ КОММИТ - коммит будет в основной функции
             
         except Exception as e:
             logger.error(f"Error sending sync completion notification for cabinet {cabinet_id}: {e}")

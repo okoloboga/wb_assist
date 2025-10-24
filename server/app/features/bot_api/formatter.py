@@ -20,7 +20,7 @@ class BotMessageFormatter:
         """Форматирование dashboard сообщения"""
         try:
             cabinet_name = data.get("cabinet_name", "Неизвестный кабинет")
-            last_sync = data.get("last_sync", "Неизвестно")
+            last_sync = data.get("last_sync") or "Никогда"
             status = data.get("status", "Неизвестно")
             
             products = data.get("products", {})

@@ -5,7 +5,7 @@ Notification Service - единый сервис для всех типов ув
 import asyncio
 import json
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Any, Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import func
@@ -21,6 +21,7 @@ from app.features.bot_api.formatter import BotMessageFormatter
 from app.utils.timezone import TimezoneUtils
 from app.features.wb_api.models import WBOrder, WBCabinet, WBReview, WBProduct, WBStock
 from app.features.notifications.models import NotificationHistory
+from app.features.user.models import User
 from .webhook_sender import WebhookSender
 
 logger = logging.getLogger(__name__)
@@ -192,6 +193,126 @@ class NotificationService:
             logger.error(f"Error processing sync events for user {user_id}: {e}")
             # Отправляем уведомление об ошибке пользователю
             await self._send_error_notification(user_id, "sync_processing_error", str(e))
+            return {"status": "error", "error": str(e)}
+    
+    async def process_sync_events_simple(
+        self, 
+        user_id: int, 
+        cabinet_id: int,
+        last_sync_at: datetime,
+        bot_webhook_url: str = None
+    ) -> Dict[str, Any]:
+        """Простая обработка событий синхронизации (гибридный подход)"""
+        try:
+            logger.info(f"🔧 [process_sync_events_simple] Starting for user {user_id}, cabinet {cabinet_id}")
+            
+            # Получаем настройки пользователя
+            user_settings = await self._get_user_notification_settings(user_id)
+            if not user_settings:
+                logger.warning(f"User {user_id} not found")
+                return {"status": "error", "error": "User not found"}
+            
+            # Проверяем, включены ли уведомления
+            if not user_settings.notifications_enabled:
+                logger.info(f"Notifications disabled for user {user_id}")
+                return {"status": "disabled", "notifications_sent": 0}
+            
+            notifications = []
+            
+            # 1. НОВЫЕ ЗАКАЗЫ (простая проверка)
+            if user_settings.new_orders_enabled:
+                new_orders = await self._check_new_orders_simple(cabinet_id, last_sync_at)
+                for order in new_orders:
+                    notifications.append({
+                        "type": "new_order",
+                        "user_id": user_id,
+                        "order_id": order.order_id,
+                        "data": self._format_order_data_simple(order),
+                        "telegram_text": self._format_new_order_notification_simple(order)
+                    })
+            
+            # 2. ВЫКУПЫ (простая проверка)
+            if user_settings.order_buyouts_enabled:
+                buyouts = await self._check_buyouts_simple(cabinet_id, last_sync_at)
+                for order in buyouts:
+                    notifications.append({
+                        "type": "order_buyout",
+                        "user_id": user_id,
+                        "order_id": order.sale_id,
+                        "data": self._format_sale_data_simple(order),
+                        "telegram_text": self._format_buyout_notification_simple(order)
+                    })
+            
+            # 3. ОТМЕНЫ (простая проверка)
+            if user_settings.order_cancellations_enabled:
+                cancellations = await self._check_cancellations_simple(cabinet_id, last_sync_at)
+                for order in cancellations:
+                    notifications.append({
+                        "type": "order_cancellation",
+                        "user_id": user_id,
+                        "order_id": order.order_id,
+                        "data": self._format_order_data_simple(order),
+                        "telegram_text": self._format_cancellation_notification_simple(order)
+                    })
+            
+            # 4. ВОЗВРАТЫ (простая проверка)
+            if user_settings.order_returns_enabled:
+                returns = await self._check_returns_simple(cabinet_id, last_sync_at)
+                for order in returns:
+                    notifications.append({
+                        "type": "order_return",
+                        "user_id": user_id,
+                        "order_id": order.sale_id,
+                        "data": self._format_sale_data_simple(order),
+                        "telegram_text": self._format_return_notification_simple(order)
+                    })
+            
+            # 5. КРИТИЧНЫЕ ОСТАТКИ (простая проверка) - ОТКЛЮЧЕНО
+            # if user_settings.critical_stocks_enabled:
+            #     critical_stocks = await self._check_critical_stocks_simple(cabinet_id, last_sync_at)
+            #     if critical_stocks:
+            #         notifications.append({
+            #             "type": "critical_stocks",
+            #             "user_id": user_id,
+            #             "data": self._format_critical_stocks_data_simple(critical_stocks),
+            #             "telegram_text": self._format_critical_stocks_notification_simple(critical_stocks)
+            #         })
+            
+            # 6. НЕГАТИВНЫЕ ОТЗЫВЫ (простая проверка)
+            if user_settings.negative_reviews_enabled:
+                negative_reviews = await self._check_negative_reviews_simple(cabinet_id, last_sync_at)
+                for review in negative_reviews:
+                    notifications.append({
+                        "type": "negative_review",
+                        "user_id": user_id,
+                        "review_id": review.review_id,
+                        "data": self._format_review_data_simple(review),
+                        "telegram_text": self._format_negative_review_notification_simple(review)
+                    })
+            
+            # Отправляем все уведомления
+            notifications_sent = 0
+            for notification in notifications:
+                try:
+                    result = await self._send_simple_notification(user_id, notification, bot_webhook_url)
+                    if result.get("success", False):
+                        notifications_sent += 1
+                        # Сохраняем в историю
+                        self._save_notification_to_history(user_id, notification, result)
+                except Exception as e:
+                    logger.error(f"Error sending notification: {e}")
+            
+            logger.info(f"📢 Processed {len(notifications)} events, sent {notifications_sent} notifications")
+            
+            return {
+                "status": "success",
+                "events_processed": len(notifications),
+                "notifications_sent": notifications_sent,
+                "events": notifications
+            }
+            
+        except Exception as e:
+            logger.error(f"Error in process_sync_events_simple: {e}")
             return {"status": "error", "error": str(e)}
     
     def _clean_datetime_objects(self, data: Dict[str, Any]) -> Dict[str, Any]:
@@ -1867,4 +1988,694 @@ class NotificationService:
                 
         except Exception as e:
             logger.error(f"Error sending sync completion notification to user {user_id}: {e}")
+            return {"success": False, "error": str(e)}
+    
+    # ==================== ПРОСТЫЕ МЕТОДЫ ПРОВЕРКИ (ГИБРИДНЫЙ ПОДХОД) ====================
+    
+    async def _get_user_notification_settings(self, user_id: int):
+        """Получение настроек уведомлений пользователя"""
+        try:
+            settings = self.settings_crud.get_user_settings(self.db, user_id)
+            if not settings:
+                # Создаем настройки по умолчанию
+                settings = self.settings_crud.create_default_settings(self.db, user_id)
+            return settings
+        except Exception as e:
+            logger.error(f"Error getting user notification settings: {e}")
+            return None
+    
+    async def _check_new_orders_simple(self, cabinet_id: int, last_sync_at: datetime) -> List:
+        """Простая проверка новых заказов (как в старой версии)"""
+        try:
+            from app.features.wb_api.models import WBOrder
+            
+            new_orders = self.db.query(WBOrder).filter(
+                WBOrder.cabinet_id == cabinet_id,
+                WBOrder.created_at > last_sync_at,
+                WBOrder.status == "active"
+            ).all()
+            
+            logger.info(f"🔍 [Simple] Found {len(new_orders)} new orders for cabinet {cabinet_id}")
+            return new_orders
+            
+        except Exception as e:
+            logger.error(f"Error checking new orders: {e}")
+            return []
+    
+    async def _check_buyouts_simple(self, cabinet_id: int, last_sync_at: datetime) -> List:
+        """Простая проверка выкупов - ИСПРАВЛЕНО: ищем в WBSales"""
+        try:
+            from app.features.wb_api.models_sales import WBSales
+            
+            buyouts = self.db.query(WBSales).filter(
+                WBSales.cabinet_id == cabinet_id,
+                WBSales.created_at > last_sync_at,
+                WBSales.type == "buyout",
+                WBSales.is_cancel == False
+            ).all()
+            
+            logger.info(f"🔍 [Simple] Found {len(buyouts)} buyouts for cabinet {cabinet_id}")
+            return buyouts
+            
+        except Exception as e:
+            logger.error(f"Error checking buyouts: {e}")
+            return []
+    
+    async def _check_cancellations_simple(self, cabinet_id: int, last_sync_at: datetime) -> List:
+        """Простая проверка отмен"""
+        try:
+            from app.features.wb_api.models import WBOrder
+            
+            cancellations = self.db.query(WBOrder).filter(
+                WBOrder.cabinet_id == cabinet_id,
+                WBOrder.updated_at > last_sync_at,
+                WBOrder.status == "canceled"
+            ).all()
+            
+            logger.info(f"🔍 [Simple] Found {len(cancellations)} cancellations for cabinet {cabinet_id}")
+            return cancellations
+            
+        except Exception as e:
+            logger.error(f"Error checking cancellations: {e}")
+            return []
+    
+    async def _check_returns_simple(self, cabinet_id: int, last_sync_at: datetime) -> List:
+        """Простая проверка возвратов - ИСПРАВЛЕНО: ищем в WBSales"""
+        try:
+            from app.features.wb_api.models_sales import WBSales
+            
+            returns = self.db.query(WBSales).filter(
+                WBSales.cabinet_id == cabinet_id,
+                WBSales.created_at > last_sync_at,
+                WBSales.type == "return",
+                WBSales.is_cancel == False
+            ).all()
+            
+            logger.info(f"🔍 [Simple] Found {len(returns)} returns for cabinet {cabinet_id}")
+            return returns
+            
+        except Exception as e:
+            logger.error(f"Error checking returns: {e}")
+            return []
+    
+    async def _check_critical_stocks_simple(self, cabinet_id: int, last_sync_at: datetime) -> List:
+        """Простая проверка критичных остатков"""
+        try:
+            from app.features.wb_api.models import WBStock
+            from sqlalchemy import func
+            
+            # Получаем товары с критичными остатками (общая сумма <= 5)
+            critical_products = self.db.query(WBStock.nm_id).filter(
+                WBStock.cabinet_id == cabinet_id,
+                WBStock.updated_at > last_sync_at
+            ).group_by(WBStock.nm_id).having(
+                func.sum(WBStock.quantity) <= 5
+            ).all()
+            
+            if critical_products:
+                # Получаем детальную информацию по критичным товарам
+                critical_nm_ids = [row[0] for row in critical_products]
+                stocks = self.db.query(WBStock).filter(
+                    WBStock.cabinet_id == cabinet_id,
+                    WBStock.nm_id.in_(critical_nm_ids)
+                ).all()
+                
+                logger.info(f"🔍 [Simple] Found {len(stocks)} critical stock entries for cabinet {cabinet_id}")
+                return stocks
+            
+            return []
+            
+        except Exception as e:
+            logger.error(f"Error checking critical stocks: {e}")
+            return []
+    
+    async def _check_negative_reviews_simple(self, cabinet_id: int, last_sync_at: datetime) -> List:
+        """Простая проверка негативных отзывов"""
+        try:
+            from app.features.wb_api.models import WBReview
+            
+            negative_reviews = self.db.query(WBReview).filter(
+                WBReview.cabinet_id == cabinet_id,
+                WBReview.created_at > last_sync_at,
+                WBReview.rating <= 3
+            ).all()
+            
+            logger.info(f"🔍 [Simple] Found {len(negative_reviews)} negative reviews for cabinet {cabinet_id}")
+            return negative_reviews
+            
+        except Exception as e:
+            logger.error(f"Error checking negative reviews: {e}")
+            return []
+    
+    # ==================== ПРОСТЫЕ ФОРМАТТЕРЫ (КАК В СТАРОЙ ВЕРСИИ) ====================
+    
+    def _format_order_data_simple(self, order) -> Dict[str, Any]:
+        """Простое форматирование данных заказа"""
+        # Получаем полную информацию о товаре для image_url
+        product_info = self._get_full_product_info(order.cabinet_id, order.nm_id)
+        
+        return {
+            "id": order.id,
+            "order_id": order.order_id,
+            "nm_id": order.nm_id,
+            "product_name": order.name,  # Используем поле name вместо product_name
+            "article": order.article,
+            "size": order.size,
+            "barcode": order.barcode,
+            "quantity": order.quantity,
+            "price": order.price,
+            "total_price": order.total_price,
+            "status": order.status,
+            "order_date": order.order_date.isoformat() if order.order_date else None,
+            "created_at": order.created_at.isoformat() if order.created_at else None,
+            "updated_at": order.updated_at.isoformat() if order.updated_at else None,
+            "image_url": product_info.get("image_url")  # Добавляем URL изображения
+        }
+    
+    def _format_sale_data_simple(self, sale) -> Dict[str, Any]:
+        """Простое форматирование данных продажи/возврата"""
+        # Получаем полную информацию о товаре для image_url
+        product_info = self._get_full_product_info(sale.cabinet_id, sale.nm_id)
+        
+        return {
+            "id": sale.id,
+            "sale_id": sale.sale_id,
+            "order_id": sale.order_id,
+            "nm_id": sale.nm_id,
+            "product_name": sale.product_name,
+            "brand": sale.brand,
+            "size": sale.size,
+            "amount": sale.amount,
+            "type": sale.type,
+            "status": sale.status,
+            "sale_date": sale.sale_date.isoformat() if sale.sale_date else None,
+            "created_at": sale.created_at.isoformat() if sale.created_at else None,
+            "updated_at": sale.updated_at.isoformat() if sale.updated_at else None,
+            "image_url": product_info.get("image_url")  # Добавляем URL изображения
+        }
+    
+    def _format_new_order_notification_simple(self, order) -> str:
+        """Полное форматирование уведомления о новом заказе (как в ORDER.md)"""
+        from app.utils.timezone import TimezoneUtils
+        
+        # Конвертируем дату в МСК
+        order_date = order.order_date
+        if order_date:
+            if order_date.tzinfo is None:
+                order_date = order_date.replace(tzinfo=timezone.utc)
+            order_date_msk = TimezoneUtils.from_utc(order_date)
+            formatted_date = order_date_msk.strftime("%Y-%m-%d %H:%M")
+        else:
+            formatted_date = "N/A"
+        
+        # Получаем полную информацию о товаре
+        product_info = self._get_full_product_info(order.cabinet_id, order.nm_id)
+        
+        return f"""Заказ
+🆔 {order.order_id} от {formatted_date}
+
+👗 {order.nm_id} / {order.article} / ({order.size})
+🎹 {order.barcode}
+
+💰 Финансы:
+Цена заказа: {order.total_price:,.0f}₽
+СПП %: {order.spp_percent:.1f}%
+Цена для покупателя: {order.customer_price:,.0f}₽
+Скидка: {order.discount_percent:.1f}%
+
+🚛 {order.warehouse_from} → {order.warehouse_to}
+
+📈 Выкупы за периоды:
+7 | 14 | 30 дней:
+{product_info['sales_periods']['7_days']} | {product_info['sales_periods']['14_days']} | {product_info['sales_periods']['30_days']}
+
+🔍 Статистика по заказам:
+Всего: {product_info['orders_stats']['total_orders']} заказов
+Активные: {product_info['orders_stats']['active_orders']}
+Отмененные: {product_info['orders_stats']['canceled_orders']}
+Выкупы: {product_info['orders_stats']['buyout_orders']}
+Возвраты: {product_info['orders_stats']['return_orders']}
+
+⭐ Рейтинг и отзывы:
+Средний рейтинг: {product_info['avg_rating']:.2f}
+Всего отзывов: {product_info['reviews_count']}
+
+5⭐ - {product_info['rating_distribution'][5]:.1f}%
+4⭐ - {product_info['rating_distribution'][4]:.1f}%
+3⭐ - {product_info['rating_distribution'][3]:.1f}%
+2⭐ - {product_info['rating_distribution'][2]:.1f}%
+1⭐ - {product_info['rating_distribution'][1]:.1f}%
+
+📦 Остатки по размерам:
+{self._format_stocks_for_notification(product_info['stocks'])}"""
+    
+    def _format_buyout_notification_simple(self, sale) -> str:
+        """Полное форматирование уведомления о выкупе - ИСПРАВЛЕНО для WBSales"""
+        from app.utils.timezone import TimezoneUtils
+        
+        sale_date = sale.sale_date
+        if sale_date:
+            if sale_date.tzinfo is None:
+                sale_date = sale_date.replace(tzinfo=timezone.utc)
+            sale_date_msk = TimezoneUtils.from_utc(sale_date)
+            formatted_date = sale_date_msk.strftime("%Y-%m-%d %H:%M")
+        else:
+            formatted_date = "N/A"
+        
+        # Получаем полную информацию о товаре
+        product_info = self._get_full_product_info(sale.cabinet_id, sale.nm_id)
+        
+        return f"""Выкуп
+🆔 {sale.sale_id} от {formatted_date}
+
+👗 {sale.nm_id} / {sale.product_name} / ({sale.size})
+🎹 {sale.brand}
+
+💰 Финансы:
+Сумма: {sale.amount:,.0f}₽
+Тип: {sale.type}
+Статус: {sale.status or 'N/A'}
+
+📅 Дата продажи: {formatted_date}
+
+📈 Выкупы за периоды:
+7 | 14 | 30 дней:
+{product_info['sales_periods']['7_days']} | {product_info['sales_periods']['14_days']} | {product_info['sales_periods']['30_days']}
+
+🔍 Статистика по заказам:
+Всего: {product_info['orders_stats']['total_orders']} заказов
+Активные: {product_info['orders_stats']['active_orders']}
+Отмененные: {product_info['orders_stats']['canceled_orders']}
+Выкупы: {product_info['orders_stats']['buyout_orders']}
+Возвраты: {product_info['orders_stats']['return_orders']}
+
+⭐ Рейтинг и отзывы:
+Средний рейтинг: {product_info['avg_rating']:.2f}
+Всего отзывов: {product_info['reviews_count']}
+
+5⭐ - {product_info['rating_distribution'][5]:.1f}%
+4⭐ - {product_info['rating_distribution'][4]:.1f}%
+3⭐ - {product_info['rating_distribution'][3]:.1f}%
+2⭐ - {product_info['rating_distribution'][2]:.1f}%
+1⭐ - {product_info['rating_distribution'][1]:.1f}%
+
+📦 Остатки по размерам:
+{self._format_stocks_for_notification(product_info['stocks'])}"""
+    
+    def _format_cancellation_notification_simple(self, order) -> str:
+        """Полное форматирование уведомления об отмене (как в ORDER.md)"""
+        from app.utils.timezone import TimezoneUtils
+        
+        order_date = order.order_date
+        if order_date:
+            if order_date.tzinfo is None:
+                order_date = order_date.replace(tzinfo=timezone.utc)
+            order_date_msk = TimezoneUtils.from_utc(order_date)
+            formatted_date = order_date_msk.strftime("%Y-%m-%d %H:%M")
+        else:
+            formatted_date = "N/A"
+        
+        # Получаем полную информацию о товаре
+        product_info = self._get_full_product_info(order.cabinet_id, order.nm_id)
+        
+        return f"""Отмена
+🆔 {order.order_id} от {formatted_date}
+
+👗 {order.nm_id} / {order.article} / ({order.size})
+🎹 {order.barcode}
+
+💰 Финансы:
+Цена заказа: {order.total_price:,.0f}₽
+СПП %: {order.spp_percent:.1f}%
+Цена для покупателя: {order.customer_price:,.0f}₽
+Скидка: {order.discount_percent:.1f}%
+
+🚛 {order.warehouse_from} → {order.warehouse_to}
+
+📈 Выкупы за периоды:
+7 | 14 | 30 дней:
+{product_info['sales_periods']['7_days']} | {product_info['sales_periods']['14_days']} | {product_info['sales_periods']['30_days']}
+
+🔍 Статистика по заказам:
+Всего: {product_info['orders_stats']['total_orders']} заказов
+Активные: {product_info['orders_stats']['active_orders']}
+Отмененные: {product_info['orders_stats']['canceled_orders']}
+Выкупы: {product_info['orders_stats']['buyout_orders']}
+Возвраты: {product_info['orders_stats']['return_orders']}
+
+⭐ Рейтинг и отзывы:
+Средний рейтинг: {product_info['avg_rating']:.2f}
+Всего отзывов: {product_info['reviews_count']}
+
+5⭐ - {product_info['rating_distribution'][5]:.1f}%
+4⭐ - {product_info['rating_distribution'][4]:.1f}%
+3⭐ - {product_info['rating_distribution'][3]:.1f}%
+2⭐ - {product_info['rating_distribution'][2]:.1f}%
+1⭐ - {product_info['rating_distribution'][1]:.1f}%
+
+📦 Остатки по размерам:
+{self._format_stocks_for_notification(product_info['stocks'])}"""
+    
+    def _format_return_notification_simple(self, sale) -> str:
+        """Полное форматирование уведомления о возврате - ИСПРАВЛЕНО для WBSales"""
+        from app.utils.timezone import TimezoneUtils
+        
+        sale_date = sale.sale_date
+        if sale_date:
+            if sale_date.tzinfo is None:
+                sale_date = sale_date.replace(tzinfo=timezone.utc)
+            sale_date_msk = TimezoneUtils.from_utc(sale_date)
+            formatted_date = sale_date_msk.strftime("%Y-%m-%d %H:%M")
+        else:
+            formatted_date = "N/A"
+        
+        # Получаем полную информацию о товаре
+        product_info = self._get_full_product_info(sale.cabinet_id, sale.nm_id)
+        
+        return f"""Возврат
+🆔 {sale.sale_id} от {formatted_date}
+
+👗 {sale.nm_id} / {sale.product_name} / ({sale.size})
+🎹 {sale.brand}
+
+💰 Финансы:
+Сумма: {sale.amount:,.0f}₽
+Тип: {sale.type}
+Статус: {sale.status or 'N/A'}
+
+📅 Дата возврата: {formatted_date}
+
+📈 Выкупы за периоды:
+7 | 14 | 30 дней:
+{product_info['sales_periods']['7_days']} | {product_info['sales_periods']['14_days']} | {product_info['sales_periods']['30_days']}
+
+🔍 Статистика по заказам:
+Всего: {product_info['orders_stats']['total_orders']} заказов
+Активные: {product_info['orders_stats']['active_orders']}
+Отмененные: {product_info['orders_stats']['canceled_orders']}
+Выкупы: {product_info['orders_stats']['buyout_orders']}
+Возвраты: {product_info['orders_stats']['return_orders']}
+
+⭐ Рейтинг и отзывы:
+Средний рейтинг: {product_info['avg_rating']:.2f}
+Всего отзывов: {product_info['reviews_count']}
+
+5⭐ - {product_info['rating_distribution'][5]:.1f}%
+4⭐ - {product_info['rating_distribution'][4]:.1f}%
+3⭐ - {product_info['rating_distribution'][3]:.1f}%
+2⭐ - {product_info['rating_distribution'][2]:.1f}%
+1⭐ - {product_info['rating_distribution'][1]:.1f}%
+
+📦 Остатки по размерам:
+{self._format_stocks_for_notification(product_info['stocks'])}"""
+    
+    def _format_stock_data_simple(self, stock) -> Dict[str, Any]:
+        """Простое форматирование данных остатка"""
+        return {
+            "id": stock.id,
+            "nm_id": stock.nm_id,
+            "product_name": stock.name,
+            "article": stock.article,
+            "size": stock.size,
+            "barcode": stock.barcode,
+            "quantity": stock.quantity,
+            "warehouse_name": stock.warehouse_name,
+            "last_updated": stock.last_updated.isoformat() if stock.last_updated else None
+        }
+    
+    def _format_critical_stocks_data_simple(self, stocks: List) -> Dict[str, Any]:
+        """Простое форматирование данных критичных остатков"""
+        return {
+            "stocks": [self._format_stock_data_simple(stock) for stock in stocks],
+            "count": len(stocks)
+        }
+    
+    def _format_critical_stocks_notification_simple(self, stocks: List) -> str:
+        """Простое форматирование уведомления о критичных остатках"""
+        if not stocks:
+            return ""
+        
+        # Группируем по товарам
+        products = {}
+        for stock in stocks:
+            nm_id = stock.nm_id
+            if nm_id not in products:
+                products[nm_id] = {
+                    "name": stock.name,  # Используем поле name
+                    "total_quantity": 0,
+                    "warehouses": []
+                }
+            products[nm_id]["total_quantity"] += stock.quantity
+            products[nm_id]["warehouses"].append(f"{stock.warehouse_name}: {stock.quantity}")
+        
+        message = "⚠️ КРИТИЧНЫЕ ОСТАТКИ\n\n"
+        for nm_id, product in products.items():
+            message += f"📦 {product['name']}\n"
+            message += f"📊 Остаток: {product['total_quantity']}\n"
+            for warehouse in product['warehouses']:
+                message += f"   • {warehouse}\n"
+            message += "\n"
+        
+        return message.strip()
+    
+    def _format_review_data_simple(self, review) -> Dict[str, Any]:
+        """Простое форматирование данных отзыва"""
+        return {
+            "review_id": review.review_id,
+            "nm_id": review.nm_id,
+            "product_name": f"Товар {review.nm_id}",  # Используем nm_id, так как product_name нет
+            "rating": review.rating,
+            "text": review.text,
+            "created_at": review.created_at.isoformat() if review.created_at else None
+        }
+    
+    def _format_negative_review_notification_simple(self, review) -> str:
+        """Простое форматирование уведомления о негативном отзыве"""
+        from app.utils.timezone import TimezoneUtils
+        
+        review_date = review.created_at
+        if review_date:
+            if review_date.tzinfo is None:
+                review_date = review_date.replace(tzinfo=timezone.utc)
+            review_date_msk = TimezoneUtils.from_utc(review_date)
+            formatted_date = review_date_msk.strftime("%d.%m.%Y %H:%M")
+        else:
+            formatted_date = "N/A"
+        
+        stars = "⭐" * review.rating
+        return f"""😞 НЕГАТИВНЫЙ ОТЗЫВ
+📦 Товар {review.nm_id}
+⭐ {stars} ({review.rating}/5)
+📅 {formatted_date}
+
+💬 {review.text[:200]}{'...' if len(review.text) > 200 else ''}"""
+    
+    def _get_full_product_info(self, cabinet_id: int, nm_id: int) -> Dict[str, Any]:
+        """Получение полной информации о товаре для уведомлений"""
+        try:
+            from app.features.wb_api.models import WBProduct, WBStock, WBReview
+            from app.features.wb_api.models_sales import WBSales
+            from sqlalchemy import func, and_
+            from datetime import datetime, timedelta, timezone
+            
+            # Получаем информацию о товаре
+            product = self.db.query(WBProduct).filter(
+                and_(
+                    WBProduct.cabinet_id == cabinet_id,
+                    WBProduct.nm_id == nm_id
+                )
+            ).first()
+            
+            # Получаем остатки по размерам
+            stocks = self.db.query(WBStock).filter(
+                and_(
+                    WBStock.cabinet_id == cabinet_id,
+                    WBStock.nm_id == nm_id
+                )
+            ).all()
+            
+            # Формируем остатки по размерам (суммируем по всем складам)
+            stocks_dict = {}
+            for stock in stocks:
+                size = stock.size or "ONE SIZE"
+                quantity = stock.quantity or 0
+                if size in stocks_dict:
+                    stocks_dict[size] += quantity
+                else:
+                    stocks_dict[size] = quantity
+            
+            # Получаем количество отзывов
+            reviews_count = self.db.query(WBReview).filter(
+                and_(
+                    WBReview.cabinet_id == cabinet_id,
+                    WBReview.nm_id == nm_id
+                )
+            ).count()
+            
+            # Получаем средний рейтинг
+            avg_rating_result = self.db.query(func.avg(WBReview.rating)).filter(
+                and_(
+                    WBReview.cabinet_id == cabinet_id,
+                    WBReview.nm_id == nm_id,
+                    WBReview.rating.isnot(None)
+                )
+            ).scalar()
+            avg_rating = float(avg_rating_result) if avg_rating_result else 0.0
+            
+            # Получаем распределение рейтингов
+            rating_distribution = {1: 0, 2: 0, 3: 0, 4: 0, 5: 0}
+            if reviews_count > 0:
+                for rating in [1, 2, 3, 4, 5]:
+                    count = self.db.query(WBReview).filter(
+                        and_(
+                            WBReview.cabinet_id == cabinet_id,
+                            WBReview.nm_id == nm_id,
+                            WBReview.rating == rating
+                        )
+                    ).count()
+                    rating_distribution[rating] = (count / reviews_count) * 100
+            
+            # Получаем статистику заказов
+            from app.features.wb_api.models import WBOrder
+            orders_stats = {
+                "total_orders": 0,
+                "active_orders": 0,
+                "canceled_orders": 0,
+                "buyout_orders": 0,
+                "return_orders": 0
+            }
+            
+            # Статистика заказов
+            total_orders = self.db.query(WBOrder).filter(
+                and_(
+                    WBOrder.cabinet_id == cabinet_id,
+                    WBOrder.nm_id == nm_id
+                )
+            ).count()
+            
+            active_orders = self.db.query(WBOrder).filter(
+                and_(
+                    WBOrder.cabinet_id == cabinet_id,
+                    WBOrder.nm_id == nm_id,
+                    WBOrder.status == 'active'
+                )
+            ).count()
+            
+            canceled_orders = self.db.query(WBOrder).filter(
+                and_(
+                    WBOrder.cabinet_id == cabinet_id,
+                    WBOrder.nm_id == nm_id,
+                    WBOrder.status == 'canceled'
+                )
+            ).count()
+            
+            # Статистика продаж
+            buyout_orders = self.db.query(WBSales).filter(
+                and_(
+                    WBSales.cabinet_id == cabinet_id,
+                    WBSales.nm_id == nm_id,
+                    WBSales.type == 'buyout',
+                    WBSales.is_cancel == False
+                )
+            ).count()
+            
+            return_orders = self.db.query(WBSales).filter(
+                and_(
+                    WBSales.cabinet_id == cabinet_id,
+                    WBSales.nm_id == nm_id,
+                    WBSales.type == 'return',
+                    WBSales.is_cancel == False
+                )
+            ).count()
+            
+            orders_stats = {
+                "total_orders": total_orders,
+                "active_orders": active_orders,
+                "canceled_orders": canceled_orders,
+                "buyout_orders": buyout_orders,
+                "return_orders": return_orders
+            }
+            
+            # Получаем выкупы за периоды
+            now = datetime.now(timezone.utc)
+            periods = {
+                "7_days": now - timedelta(days=7),
+                "14_days": now - timedelta(days=14),
+                "30_days": now - timedelta(days=30)
+            }
+            
+            sales_periods = {}
+            for period_name, start_date in periods.items():
+                buyouts = self.db.query(WBSales).filter(
+                    and_(
+                        WBSales.cabinet_id == cabinet_id,
+                        WBSales.nm_id == nm_id,
+                        WBSales.sale_date >= start_date,
+                        WBSales.type == 'buyout',
+                        WBSales.is_cancel == False
+                    )
+                ).count()
+                sales_periods[period_name] = buyouts
+            
+            return {
+                "stocks": stocks_dict,
+                "reviews_count": reviews_count,
+                "avg_rating": avg_rating,
+                "rating_distribution": rating_distribution,
+                "orders_stats": orders_stats,
+                "sales_periods": sales_periods,
+                "image_url": product.image_url if product and hasattr(product, 'image_url') else None
+            }
+            
+        except Exception as e:
+            logger.error(f"Ошибка получения полной информации о товаре: {e}")
+            return {
+                "stocks": {},
+                "reviews_count": 0,
+                "avg_rating": 0.0,
+                "rating_distribution": {1: 0, 2: 0, 3: 0, 4: 0, 5: 0},
+                "orders_stats": {"total_orders": 0, "active_orders": 0, "canceled_orders": 0, "buyout_orders": 0, "return_orders": 0},
+                "sales_periods": {"7_days": 0, "14_days": 0, "30_days": 0},
+                "image_url": None
+            }
+    
+    def _format_stocks_for_notification(self, stocks_dict: Dict[str, int]) -> str:
+        """Форматирование остатков для уведомлений"""
+        if not stocks_dict:
+            return "Нет данных"
+        
+        # Сортируем размеры
+        sorted_sizes = sorted(stocks_dict.keys())
+        result = []
+        
+        for size in sorted_sizes:
+            quantity = stocks_dict[size]
+            result.append(f"{size}: {quantity} шт.")
+        
+        return "\n".join(result)
+    
+    async def _send_simple_notification(self, user_id: int, notification: Dict[str, Any], bot_webhook_url: str = None) -> Dict[str, Any]:
+        """Простая отправка уведомления (как в старой версии)"""
+        try:
+            # Получаем webhook URL пользователя
+            if not bot_webhook_url:
+                user = self.db.query(User).filter(User.id == user_id).first()
+                if user and user.bot_webhook_url:
+                    bot_webhook_url = user.bot_webhook_url
+                else:
+                    logger.error(f"No webhook URL found for user {user_id}")
+                    return {"success": False, "error": "No webhook URL"}
+            
+            # Отправляем webhook
+            webhook_result = await self._send_webhook_notification(
+                user_id=user_id,
+                notification=notification,
+                telegram_text=notification.get("telegram_text", ""),
+                bot_webhook_url=bot_webhook_url
+            )
+            
+            return webhook_result
+            
+        except Exception as e:
+            logger.error(f"Error sending simple notification: {e}")
             return {"success": False, "error": str(e)}

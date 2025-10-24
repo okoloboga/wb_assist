@@ -5,6 +5,9 @@ from sqlalchemy import Column, Integer, String, Float, DateTime, Boolean, Foreig
 from sqlalchemy.orm import relationship
 from ...core.database import Base
 
+# Импортируем func для работы с БД
+from sqlalchemy import func
+
 
 class WBSales(Base):
     """Модель продаж и возвратов Wildberries"""

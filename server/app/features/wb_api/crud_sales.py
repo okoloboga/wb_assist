@@ -185,7 +185,8 @@ class WBSalesCRUD:
             if hasattr(sale, key):
                 setattr(sale, key, value)
         
-        sale.updated_at = datetime.now(timezone.utc)
+        from app.utils.timezone import TimezoneUtils
+        sale.updated_at = TimezoneUtils.now_msk()
         db.commit()
         db.refresh(sale)
         return sale
