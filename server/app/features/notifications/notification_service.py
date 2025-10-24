@@ -222,14 +222,25 @@ class NotificationService:
             # 1. НОВЫЕ ЗАКАЗЫ (простая проверка)
             if user_settings.new_orders_enabled:
                 new_orders = await self._check_new_orders_simple(cabinet_id, last_sync_at)
-                for order in new_orders:
-                    notifications.append({
-                        "type": "new_order",
-                        "user_id": user_id,
-                        "order_id": order.order_id,
-                        "data": self._format_order_data_simple(order),
-                        "telegram_text": self._format_new_order_notification_simple(order)
-                    })
+                logger.info(f"🔧 [process_sync_events_simple] Processing {len(new_orders)} new orders")
+                for i, order in enumerate(new_orders):
+                    logger.info(f"🔧 [process_sync_events_simple] Processing order {i+1}/{len(new_orders)}: {order.order_id}")
+                    try:
+                        order_data = self._format_order_data_simple(order)
+                        logger.info(f"🔧 [process_sync_events_simple] Order data formatted successfully")
+                        telegram_text = self._format_new_order_notification_simple(order)
+                        logger.info(f"🔧 [process_sync_events_simple] Telegram text formatted successfully")
+                        notifications.append({
+                            "type": "new_order",
+                            "user_id": user_id,
+                            "order_id": order.order_id,
+                            "data": order_data,
+                            "telegram_text": telegram_text
+                        })
+                        logger.info(f"🔧 [process_sync_events_simple] Notification added successfully")
+                    except Exception as e:
+                        logger.error(f"🔧 [process_sync_events_simple] Error processing order {order.order_id}: {e}")
+                        raise
             
             # 2. ВЫКУПЫ (простая проверка)
             if user_settings.order_buyouts_enabled:
@@ -2131,6 +2142,10 @@ class NotificationService:
     
     def _format_order_data_simple(self, order) -> Dict[str, Any]:
         """Простое форматирование данных заказа"""
+        # Логируем тип объекта для отладки
+        logger.info(f"🔧 [format_order_data_simple] order type: {type(order)}")
+        logger.info(f"🔧 [format_order_data_simple] order: {order}")
+        
         # Получаем полную информацию о товаре для image_url
         product_info = self._get_full_product_info(order.cabinet_id, order.nm_id)
         
@@ -2178,6 +2193,10 @@ class NotificationService:
         """Полное форматирование уведомления о новом заказе (как в ORDER.md)"""
         from app.utils.timezone import TimezoneUtils
         
+        logger.info(f"🔧 [_format_new_order_notification_simple] Starting for order {order.order_id}")
+        logger.info(f"🔧 [_format_new_order_notification_simple] Order type: {type(order)}")
+        logger.info(f"🔧 [_format_new_order_notification_simple] Order nm_id: {order.nm_id}")
+        
         # Конвертируем дату в МСК
         order_date = order.order_date
         if order_date:
@@ -2188,11 +2207,23 @@ class NotificationService:
         else:
             formatted_date = "N/A"
         
-        # Получаем полную информацию о товаре
-        product_info = self._get_full_product_info(order.cabinet_id, order.nm_id)
+        logger.info(f"🔧 [_format_new_order_notification_simple] Date formatted: {formatted_date}")
         
-        return f"""Заказ
-🆔 {order.order_id} от {formatted_date}
+        # Получаем полную информацию о товаре
+        logger.info(f"🔧 [_format_new_order_notification_simple] Getting product info for nm_id {order.nm_id}")
+        product_info = self._get_full_product_info(order.cabinet_id, order.nm_id)
+        logger.info(f"🔧 [_format_new_order_notification_simple] Product info keys: {list(product_info.keys())}")
+        logger.info(f"🔧 [_format_new_order_notification_simple] Product info: {product_info}")
+        
+        # Вычисляем процент выкупов с проверкой на деление на ноль
+        total_orders = product_info['orders_stats']['total_orders']
+        buyout_orders = product_info['orders_stats']['buyout_orders']
+        buyout_percent = (buyout_orders / total_orders * 100) if total_orders > 0 else 0
+        logger.info(f"🔧 [_format_new_order_notification_simple] Calculated buyout_percent: {buyout_percent}")
+        
+        return f"""🧾ЗАКАЗ🧾
+🆔 {order.order_id}
+{formatted_date}
 
 👗 {order.nm_id} / {order.article} / ({order.size})
 🎹 {order.barcode}
@@ -2210,24 +2241,14 @@ class NotificationService:
 {product_info['sales_periods']['7_days']} | {product_info['sales_periods']['14_days']} | {product_info['sales_periods']['30_days']}
 
 🔍 Статистика по заказам:
-Всего: {product_info['orders_stats']['total_orders']} заказов
-Активные: {product_info['orders_stats']['active_orders']}
-Отмененные: {product_info['orders_stats']['canceled_orders']}
-Выкупы: {product_info['orders_stats']['buyout_orders']}
-Возвраты: {product_info['orders_stats']['return_orders']}
+Всего: {total_orders} заказов
+Выкупы: {buyout_percent:.0f}%
 
 ⭐ Рейтинг и отзывы:
 Средний рейтинг: {product_info['avg_rating']:.2f}
 Всего отзывов: {product_info['reviews_count']}
 
-5⭐ - {product_info['rating_distribution'][5]:.1f}%
-4⭐ - {product_info['rating_distribution'][4]:.1f}%
-3⭐ - {product_info['rating_distribution'][3]:.1f}%
-2⭐ - {product_info['rating_distribution'][2]:.1f}%
-1⭐ - {product_info['rating_distribution'][1]:.1f}%
-
-📦 Остатки по размерам:
-{self._format_stocks_for_notification(product_info['stocks'])}"""
+📦 Остатки: {sum(product_info['stocks'].values()) if isinstance(product_info['stocks'], dict) else 0} шт."""
     
     def _format_buyout_notification_simple(self, sale) -> str:
         """Полное форматирование уведомления о выкупе - ИСПРАВЛЕНО для WBSales"""
@@ -2245,8 +2266,14 @@ class NotificationService:
         # Получаем полную информацию о товаре
         product_info = self._get_full_product_info(sale.cabinet_id, sale.nm_id)
         
-        return f"""Выкуп
-🆔 {sale.sale_id} от {formatted_date}
+        # Вычисляем процент выкупов с проверкой на деление на ноль
+        total_orders = product_info['orders_stats']['total_orders']
+        buyout_orders = product_info['orders_stats']['buyout_orders']
+        buyout_percent = (buyout_orders / total_orders * 100) if total_orders > 0 else 0
+        
+        return f"""💰ВЫКУП💰
+🆔 {sale.sale_id}
+{formatted_date}
 
 👗 {sale.nm_id} / {sale.product_name} / ({sale.size})
 🎹 {sale.brand}
@@ -2263,24 +2290,14 @@ class NotificationService:
 {product_info['sales_periods']['7_days']} | {product_info['sales_periods']['14_days']} | {product_info['sales_periods']['30_days']}
 
 🔍 Статистика по заказам:
-Всего: {product_info['orders_stats']['total_orders']} заказов
-Активные: {product_info['orders_stats']['active_orders']}
-Отмененные: {product_info['orders_stats']['canceled_orders']}
-Выкупы: {product_info['orders_stats']['buyout_orders']}
-Возвраты: {product_info['orders_stats']['return_orders']}
+Всего: {total_orders} заказов
+Выкупы: {buyout_percent:.0f}%
 
 ⭐ Рейтинг и отзывы:
 Средний рейтинг: {product_info['avg_rating']:.2f}
 Всего отзывов: {product_info['reviews_count']}
 
-5⭐ - {product_info['rating_distribution'][5]:.1f}%
-4⭐ - {product_info['rating_distribution'][4]:.1f}%
-3⭐ - {product_info['rating_distribution'][3]:.1f}%
-2⭐ - {product_info['rating_distribution'][2]:.1f}%
-1⭐ - {product_info['rating_distribution'][1]:.1f}%
-
-📦 Остатки по размерам:
-{self._format_stocks_for_notification(product_info['stocks'])}"""
+📦 Остатки: {sum(product_info['stocks'].values()) if isinstance(product_info['stocks'], dict) else 0} шт."""
     
     def _format_cancellation_notification_simple(self, order) -> str:
         """Полное форматирование уведомления об отмене (как в ORDER.md)"""
@@ -2298,8 +2315,14 @@ class NotificationService:
         # Получаем полную информацию о товаре
         product_info = self._get_full_product_info(order.cabinet_id, order.nm_id)
         
-        return f"""Отмена
-🆔 {order.order_id} от {formatted_date}
+        # Вычисляем процент выкупов с проверкой на деление на ноль
+        total_orders = product_info['orders_stats']['total_orders']
+        buyout_orders = product_info['orders_stats']['buyout_orders']
+        buyout_percent = (buyout_orders / total_orders * 100) if total_orders > 0 else 0
+        
+        return f"""↩️ОТМЕНА↩️
+🆔 {order.order_id}
+{formatted_date}
 
 👗 {order.nm_id} / {order.article} / ({order.size})
 🎹 {order.barcode}
@@ -2317,24 +2340,14 @@ class NotificationService:
 {product_info['sales_periods']['7_days']} | {product_info['sales_periods']['14_days']} | {product_info['sales_periods']['30_days']}
 
 🔍 Статистика по заказам:
-Всего: {product_info['orders_stats']['total_orders']} заказов
-Активные: {product_info['orders_stats']['active_orders']}
-Отмененные: {product_info['orders_stats']['canceled_orders']}
-Выкупы: {product_info['orders_stats']['buyout_orders']}
-Возвраты: {product_info['orders_stats']['return_orders']}
+Всего: {total_orders} заказов
+Выкупы: {buyout_percent:.0f}%
 
 ⭐ Рейтинг и отзывы:
 Средний рейтинг: {product_info['avg_rating']:.2f}
 Всего отзывов: {product_info['reviews_count']}
 
-5⭐ - {product_info['rating_distribution'][5]:.1f}%
-4⭐ - {product_info['rating_distribution'][4]:.1f}%
-3⭐ - {product_info['rating_distribution'][3]:.1f}%
-2⭐ - {product_info['rating_distribution'][2]:.1f}%
-1⭐ - {product_info['rating_distribution'][1]:.1f}%
-
-📦 Остатки по размерам:
-{self._format_stocks_for_notification(product_info['stocks'])}"""
+📦 Остатки: {sum(product_info['stocks'].values()) if isinstance(product_info['stocks'], dict) else 0} шт."""
     
     def _format_return_notification_simple(self, sale) -> str:
         """Полное форматирование уведомления о возврате - ИСПРАВЛЕНО для WBSales"""
@@ -2352,8 +2365,14 @@ class NotificationService:
         # Получаем полную информацию о товаре
         product_info = self._get_full_product_info(sale.cabinet_id, sale.nm_id)
         
-        return f"""Возврат
-🆔 {sale.sale_id} от {formatted_date}
+        # Вычисляем процент выкупов с проверкой на деление на ноль
+        total_orders = product_info['orders_stats']['total_orders']
+        buyout_orders = product_info['orders_stats']['buyout_orders']
+        buyout_percent = (buyout_orders / total_orders * 100) if total_orders > 0 else 0
+        
+        return f"""🔴ВОЗВРАТ🔴
+🆔 {sale.sale_id}
+{formatted_date}
 
 👗 {sale.nm_id} / {sale.product_name} / ({sale.size})
 🎹 {sale.brand}
@@ -2370,24 +2389,14 @@ class NotificationService:
 {product_info['sales_periods']['7_days']} | {product_info['sales_periods']['14_days']} | {product_info['sales_periods']['30_days']}
 
 🔍 Статистика по заказам:
-Всего: {product_info['orders_stats']['total_orders']} заказов
-Активные: {product_info['orders_stats']['active_orders']}
-Отмененные: {product_info['orders_stats']['canceled_orders']}
-Выкупы: {product_info['orders_stats']['buyout_orders']}
-Возвраты: {product_info['orders_stats']['return_orders']}
+Всего: {total_orders} заказов
+Выкупы: {buyout_percent:.0f}%
 
 ⭐ Рейтинг и отзывы:
 Средний рейтинг: {product_info['avg_rating']:.2f}
 Всего отзывов: {product_info['reviews_count']}
 
-5⭐ - {product_info['rating_distribution'][5]:.1f}%
-4⭐ - {product_info['rating_distribution'][4]:.1f}%
-3⭐ - {product_info['rating_distribution'][3]:.1f}%
-2⭐ - {product_info['rating_distribution'][2]:.1f}%
-1⭐ - {product_info['rating_distribution'][1]:.1f}%
-
-📦 Остатки по размерам:
-{self._format_stocks_for_notification(product_info['stocks'])}"""
+📦 Остатки: {sum(product_info['stocks'].values()) if isinstance(product_info['stocks'], dict) else 0} шт."""
     
     def _format_stock_data_simple(self, stock) -> Dict[str, Any]:
         """Простое форматирование данных остатка"""
@@ -2452,6 +2461,7 @@ class NotificationService:
     def _format_negative_review_notification_simple(self, review) -> str:
         """Простое форматирование уведомления о негативном отзыве"""
         from app.utils.timezone import TimezoneUtils
+        from app.features.wb_api.models import WBOrder, WBProduct
         
         review_date = review.created_at
         if review_date:
@@ -2462,11 +2472,50 @@ class NotificationService:
         else:
             formatted_date = "N/A"
         
-        stars = "⭐" * review.rating
-        return f"""😞 НЕГАТИВНЫЙ ОТЗЫВ
-📦 Товар {review.nm_id}
-⭐ {stars} ({review.rating}/5)
-📅 {formatted_date}
+        # Показываем звезды: заполненные до рейтинга, пустые после
+        filled_stars = "⭐" * review.rating
+        empty_stars = "☆" * (5 - review.rating)
+        stars_display = filled_stars + empty_stars
+        
+        # Получаем информацию о товаре
+        product = self.db.query(WBProduct).filter(
+            WBProduct.cabinet_id == review.cabinet_id,
+            WBProduct.nm_id == review.nm_id
+        ).first()
+        
+        # Получаем последний заказ по этому товару
+        last_order = self.db.query(WBOrder).filter(
+            WBOrder.cabinet_id == review.cabinet_id,
+            WBOrder.nm_id == review.nm_id
+        ).order_by(WBOrder.created_at.desc()).first()
+        
+        # Формируем информацию о товаре
+        if product:
+            product_info = f"{product.nm_id} / {product.article} / ({product.size})"
+        else:
+            product_info = f"{review.nm_id} / Неизвестный товар"
+        
+        # Формируем информацию о заказе
+        order_info = ""
+        if last_order:
+            order_date = last_order.order_date
+            if order_date:
+                if order_date.tzinfo is None:
+                    order_date = order_date.replace(tzinfo=timezone.utc)
+                order_date_msk = TimezoneUtils.from_utc(order_date)
+                order_formatted_date = order_date_msk.strftime("%d.%m.%Y %H:%M")
+            else:
+                order_formatted_date = "N/A"
+            
+            order_info = f"""
+🆔 {last_order.order_id}
+{order_formatted_date}"""
+        
+        return f"""😞 НЕГАТИВНЫЙ ОТЗЫВ{order_info}
+
+👗 {product_info}
+
+{stars_display} ({review.rating}/5)
 
 💬 {review.text[:200]}{'...' if len(review.text) > 200 else ''}"""
     
@@ -2485,6 +2534,17 @@ class NotificationService:
                     WBProduct.nm_id == nm_id
                 )
             ).first()
+            
+            if not product:
+                logger.warning(f"🔧 [_get_full_product_info] Product not found: cabinet_id={cabinet_id}, nm_id={nm_id}")
+                return {
+                    "stocks": {},
+                    "sales_periods": {"7_days": 0, "14_days": 0, "30_days": 0},
+                    "orders_stats": {"total_orders": 0, "active_orders": 0, "canceled_orders": 0, "buyout_orders": 0, "return_orders": 0},
+                    "avg_rating": 0.0,
+                    "reviews_count": 0,
+                    "rating_distribution": {5: 0, 4: 0, 3: 0, 2: 0, 1: 0}
+                }
             
             # Получаем остатки по размерам
             stocks = self.db.query(WBStock).filter(

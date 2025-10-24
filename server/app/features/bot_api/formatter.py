@@ -28,17 +28,7 @@ class BotMessageFormatter:
             stocks = data.get("stocks", {})
             reviews = data.get("reviews", {})
             
-            message = f"""📊 ВАШ КАБИНЕТ WB
-
-🏢 {cabinet_name}
-🔄 Последняя синхронизация: {last_sync}
-📈 Статус: ✅ {status}
-
-📦 ТОВАРЫ
-• Всего товаров: {products.get('total', 0)}
-• Активных: {products.get('active', 0)}
-• На модерации: {products.get('moderation', 0)}
-• Критичных остатков: {products.get('critical_stocks', 0)}
+            message = f"""🔄 Обновление: {last_sync}
 
 🛒 ЗАКАЗЫ (сегодня)
 • Новых заказов: {orders_today.get('count', 0)}
@@ -52,10 +42,13 @@ class BotMessageFormatter:
 • Требуют внимания: {stocks.get('attention_needed', 0)}
 
 ⭐ ОТЗЫВЫ
-• Новых отзывов: {reviews.get('new_count', 0)}
 • Средний рейтинг: {reviews.get('average_rating', 0):.1f}/5
 • Неотвеченных: {reviews.get('unanswered', 0)}
-• Всего отзывов: {reviews.get('total', 0)}"""
+• Всего отзывов: {reviews.get('total', 0)}
+
+📦 ТОВАРЫ
+• Всего товаров: {products.get('total', 0)}
+• Активных: {products.get('active', 0)}"""
             
             return self._truncate_message(message)
             
@@ -539,19 +532,20 @@ class BotMessageFormatter:
             
             # Определяем тип заказа по статусу
             status_map = {
-                "active": "Заказ",
-                "buyout": "Выкуп", 
-                "canceled": "Отмена",
-                "return": "Возврат"
+                "active": "🧾ЗАКАЗ🧾",
+                "buyout": "💰ВЫКУП💰", 
+                "canceled": "↩️ОТМЕНА↩️",
+                "return": "🔴ВОЗВРАТ🔴"
             }
-            order_type = status_map.get(status, "Заказ")
+            order_type = status_map.get(status, "🧾ЗАКАЗ🧾")
             
             # Форматируем дату и время (с конвертацией в МСК)
             formatted_datetime = self._format_datetime_simple(order_date)
             
             # Формируем сообщение в новом формате
             message = f"""{order_type}
-🆔 {wb_order_id} от {formatted_datetime}
+🆔 {wb_order_id}
+{formatted_datetime}
 
 👗 {nm_id} / {article} / ({size})
 🎹 {barcode}"""
