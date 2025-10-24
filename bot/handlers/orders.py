@@ -29,16 +29,11 @@ async def show_orders_menu(callback: CallbackQuery):
         offset=0
     )
     
-    logger.info(f"📡 [show_orders_menu] API response: success={response.success}, error={response.error}")
     
     if response.success:
         # Новая структура ответа: данные в корне response
         orders = response.orders or []
         pagination = response.pagination or {}
-        
-        logger.info(f"📋 [show_orders_menu] Received {len(orders)} orders from API")
-        for i, order in enumerate(orders[:3]):  # Показываем первые 3 заказа
-            logger.info(f"   Order {i+1}: ID={order.get('id')}, WB_ID={order.get('order_id')}, Date={order.get('date')}, Amount={order.get('amount')}")
         
         if orders:
             keyboard = create_orders_keyboard(

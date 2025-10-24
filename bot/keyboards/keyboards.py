@@ -124,8 +124,21 @@ def create_orders_keyboard(orders: list, offset: int = 0, has_more: bool = False
     buttons = []
     
     # Кнопки для каждого заказа
-    for order in orders[:5]:  # Показываем максимум 5 заказов
-        order_text = f"#{order.get('id', 'N/A')} | {order.get('amount', 0):,}₽"
+    for order in orders:  # Показываем все заказы (до 10)
+        # Форматируем дату и время
+        order_date = order.get('date', '')
+        if order_date:
+            # Простое форматирование: 2025-10-24T11:41:25+03:00 -> 2025-10-24 11:41
+            if 'T' in order_date and '+03:00' in order_date:
+                # МСК время: простое обрезание
+                formatted_date = order_date.replace('T', ' ').split('+')[0][:16]  # 2025-10-24 11:41
+            else:
+                # UTC время или другой формат: используем как есть
+                formatted_date = order_date[:16] if len(order_date) > 16 else order_date
+        else:
+            formatted_date = "N/A"
+        
+        order_text = f"{formatted_date} | {order.get('amount', 0):,.0f}₽"
         callback_data = f"order_details_{order.get('id', 'N/A')}"
         buttons.append([InlineKeyboardButton(
             text=order_text,

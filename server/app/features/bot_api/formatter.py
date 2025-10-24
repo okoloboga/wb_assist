@@ -90,13 +90,7 @@ class BotMessageFormatter:
 
 """
             
-            message += f"""📊 СТАТИСТИКА ЗА СЕГОДНЯ
-• Всего заказов: {statistics.get('today_count', 0)}
-• Общая сумма: {statistics.get('today_amount', 0):,.0f}₽
-• Средний чек: {statistics.get('average_check', 0):,.0f}₽
-• Рост к вчера: {statistics.get('growth_percent', 0):+.0f}% по количеству, {statistics.get('amount_growth_percent', 0):+.0f}% по сумме
-
-💡 Нажмите номер заказа для детального отчета"""
+            message += "💡 Нажмите номер заказа для детального отчета"
             
             return self._truncate_message(message)
             

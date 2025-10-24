@@ -30,7 +30,6 @@ class BotAPIService:
     async def get_user_by_telegram_id(self, telegram_id: int) -> Optional[Dict[str, Any]]:
         """Получение пользователя по telegram_id с автоматическим созданием"""
         try:
-            logger.info(f"🔍 Ищем пользователя {telegram_id} в базе данных")
             
             # Используем прямой SQL запрос вместо ORM
             result = self.db.execute(
@@ -70,9 +69,7 @@ class BotAPIService:
                     "created_at": user.created_at
                 }
             else:
-                logger.info(f"✅ Пользователь {telegram_id} найден в базе данных (ID: {result[0]})")
-            
-            return {
+                return {
                 "id": result[0],
                 "telegram_id": result[1],
                 "username": result[2],
@@ -154,7 +151,6 @@ class BotAPIService:
     async def get_recent_orders(self, user: Dict[str, Any], limit: int = 10, offset: int = 0, status: Optional[str] = None) -> Dict[str, Any]:
         """Получение последних заказов пользователя с кэшированием"""
         try:
-            logger.info(f"🔍 [get_recent_orders] Starting for telegram_id={user['telegram_id']}, limit={limit}, offset={offset}, status={status}")
             
             cabinet = await self.get_user_cabinet(user["telegram_id"])
             if not cabinet:
@@ -164,11 +160,9 @@ class BotAPIService:
                     "error": "Кабинет WB не найден"
                 }
             
-            logger.info(f"✅ [get_recent_orders] Cabinet found: id={cabinet.id}, name={cabinet.name}")
             
             # Временно отключаем кэширование для заказов, чтобы новые заказы сразу появлялись
             # TODO: Добавить инвалидацию кэша при создании новых заказов
-            logger.info(f"🔄 [get_recent_orders] Fetching fresh orders data (cache disabled for real-time updates)")
             
             # Получаем данные из БД
             orders_data = await self._fetch_orders_from_db(cabinet, limit, offset, status)
@@ -176,11 +170,6 @@ class BotAPIService:
             # Форматируем Telegram сообщение
             telegram_text = self.formatter.format_orders(orders_data)
             
-            # Логируем результат
-            orders_list = orders_data.get("orders", [])
-            logger.info(f"📋 [get_recent_orders] Fetched {len(orders_list)} orders from DB")
-            for i, order in enumerate(orders_list[:3]):  # Показываем первые 3 заказа
-                logger.info(f"   Order {i+1}: ID={order.get('id')}, WB_ID={order.get('order_id')}, Date={order.get('order_date')}, Status={order.get('status')}")
             
             result = {
                 "success": True,
@@ -197,7 +186,6 @@ class BotAPIService:
             }
             
             # Кэширование отключено для заказов (см. комментарий выше)
-            logger.info(f"📋 [get_recent_orders] Orders data fetched successfully (no caching)")
             
             return result
             
@@ -918,12 +906,9 @@ class BotAPIService:
                 )
             ).distinct().count()
             
-            critical_stocks = self.db.query(WBStock).filter(
-                and_(
-                    WBStock.cabinet_id == cabinet.id,
-                    WBStock.quantity <= 5
-                )
-            ).count()
+            # Используем правильную логику подсчета критичных остатков
+            stocks_summary = self._get_stocks_summary(cabinet.id)
+            critical_stocks = stocks_summary["critical_count"]
             
             # Заказы за сегодня
             orders_today = self.db.query(WBOrder).filter(
@@ -980,14 +965,9 @@ class BotAPIService:
                     "growth_percent": growth_percent
                 },
                 "stocks": {
-                    "critical_count": critical_stocks,
-                    "zero_count": self.db.query(WBStock).filter(
-                        and_(
-                            WBStock.cabinet_id == cabinet.id,
-                            WBStock.quantity == 0
-                        )
-                    ).count(),
-                    "attention_needed": critical_stocks,
+                    "critical_count": stocks_summary["critical_count"],
+                    "zero_count": stocks_summary["zero_count"],
+                    "attention_needed": stocks_summary["attention_needed"],
                     "top_product": "Нет данных"  # TODO: Добавить расчет топ товара
                 },
                 "reviews": {
@@ -1015,14 +995,12 @@ class BotAPIService:
     async def _fetch_orders_from_db(self, cabinet: WBCabinet, limit: int, offset: int, status: Optional[str] = None) -> Dict[str, Any]:
         """Получение заказов из БД"""
         try:
-            logger.info(f"🔍 [_fetch_orders_from_db] Starting for cabinet_id={cabinet.id}, limit={limit}, offset={offset}, status={status}")
             
             # Начало дня в МСК
             now_msk = TimezoneUtils.now_msk()
             today_start_msk = TimezoneUtils.get_today_start_msk()
             yesterday_start_msk = TimezoneUtils.get_yesterday_start_msk()
             
-            logger.info(f"📅 [_fetch_orders_from_db] Time ranges - now_msk={now_msk}, today_start={today_start_msk}")
             
             # Конвертируем в UTC для фильтров БД
             today_start = TimezoneUtils.to_utc(today_start_msk)
@@ -1035,7 +1013,6 @@ class BotAPIService:
                 WBOrder.cabinet_id == cabinet.id
             )
             
-            logger.info(f"🔍 [_fetch_orders_from_db] Base query created for cabinet_id={cabinet.id}")
             
             # Применяем фильтр по статусу если указан
             if status:
@@ -1044,33 +1021,10 @@ class BotAPIService:
             orders_query = orders_query.order_by(WBOrder.created_at.desc())
             
             total_orders = orders_query.count()
-            logger.info(f"📊 [_fetch_orders_from_db] Total orders in DB: {total_orders}")
             
             orders = orders_query.offset(offset).limit(limit).all()
-            logger.info(f"📋 [_fetch_orders_from_db] Fetched {len(orders)} orders from DB (offset={offset}, limit={limit})")
             
-            # Логируем первые несколько заказов для отладки
-            for i, order in enumerate(orders[:5]):
-                logger.info(f"   Order {i+1}: ID={order.id}, WB_ID={order.order_id}, Date={order.order_date}, Status={order.status}, Name={order.name}")
             
-            # Специальная проверка для заказа 3989767063804279912
-            specific_order = self.db.query(WBOrder).filter(
-                WBOrder.cabinet_id == cabinet.id,
-                WBOrder.order_id == "3989767063804279912"
-            ).first()
-            
-            if specific_order:
-                logger.info(f"✅ [SPECIFIC ORDER FOUND] Order 3989767063804279912: ID={specific_order.id}, Date={specific_order.order_date}, Status={specific_order.status}")
-            else:
-                logger.warning(f"❌ [SPECIFIC ORDER NOT FOUND] Order 3989767063804279912 not found in cabinet {cabinet.id}")
-                
-                # Проверим, есть ли этот заказ в других кабинетах
-                all_orders_with_id = self.db.query(WBOrder).filter(
-                    WBOrder.order_id == "3989767063804279912"
-                ).all()
-                logger.info(f"🔍 [SPECIFIC ORDER SEARCH] Found {len(all_orders_with_id)} orders with this ID in all cabinets")
-                for order in all_orders_with_id:
-                    logger.info(f"   Order in cabinet {order.cabinet_id}: ID={order.id}, Date={order.order_date}, Status={order.status}")
             
             # Получаем все nm_id для batch загрузки продуктов
             nm_ids = [order.nm_id for order in orders]
@@ -1180,13 +1134,36 @@ class BotAPIService:
     async def _fetch_critical_stocks_from_db(self, cabinet: WBCabinet, limit: int, offset: int) -> Dict[str, Any]:
         """Получение критичных остатков из БД"""
         try:
-            # Получаем товары с критичными остатками (включая нулевые)
+            # Получаем товары с критичными остатками (общая сумма <= 5)
+            critical_products_query = self.db.query(WBStock.nm_id).filter(
+                WBStock.cabinet_id == cabinet.id
+            ).group_by(WBStock.nm_id).having(
+                func.sum(WBStock.quantity) <= 5
+            )
+            
+            # Получаем nm_id критичных товаров
+            critical_nm_ids = [row[0] for row in critical_products_query.all()]
+            
+            if not critical_nm_ids:
+                return {
+                    "critical_products": [],
+                    "zero_products": [],
+                    "summary": {
+                        "critical_count": 0,
+                        "zero_count": 0,
+                        "attention_needed": 0,
+                        "potential_losses": 0.0
+                    },
+                    "recommendations": ["✅ Все товары в норме!"]
+                }
+            
+            # Получаем детальную информацию по критичным товарам
             stocks_query = self.db.query(WBStock).filter(
                 and_(
                     WBStock.cabinet_id == cabinet.id,
-                    WBStock.quantity <= 5
+                    WBStock.nm_id.in_(critical_nm_ids)
                 )
-            ).order_by(WBStock.quantity.asc())
+            ).order_by(WBStock.nm_id, WBStock.quantity.asc())
             
             total_stocks = stocks_query.count()
             stocks = stocks_query.offset(offset).limit(limit).all()
@@ -1568,21 +1545,19 @@ class BotAPIService:
 
     def _get_stocks_summary(self, cabinet_id: int) -> Dict[str, int]:
         """Получение сводки остатков"""
-        # Критичные товары (уникальные nm_id с остатками <= 5)
+        # Критичные товары: товары с общей суммой остатков <= 5 по всем размерам и складам
         critical_products = self.db.query(WBStock.nm_id).filter(
-            and_(
-                WBStock.cabinet_id == cabinet_id,
-                WBStock.quantity <= 5
-            )
-        ).distinct().count()
+            WBStock.cabinet_id == cabinet_id
+        ).group_by(WBStock.nm_id).having(
+            func.sum(WBStock.quantity) <= 5
+        ).count()
         
-        # Товары с нулевыми остатками (уникальные nm_id с остатками = 0)
+        # Товары с нулевыми остатками: товары с общей суммой остатков = 0
         zero_products = self.db.query(WBStock.nm_id).filter(
-            and_(
-                WBStock.cabinet_id == cabinet_id,
-                WBStock.quantity == 0
-            )
-        ).distinct().count()
+            WBStock.cabinet_id == cabinet_id
+        ).group_by(WBStock.nm_id).having(
+            func.sum(WBStock.quantity) == 0
+        ).count()
         
         # Общее количество товаров
         total_products = self.db.query(WBStock.nm_id).filter(

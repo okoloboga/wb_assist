@@ -398,11 +398,21 @@ class NotificationService:
         nm_id = notification.get("nm_id")
         order_id = notification.get("order_id")
         
+        # Получаем правильное время заказа (конвертируем UTC в МСК если нужно)
+        order_date = notification.get("order_date")
+        if order_date:
+            # Если order_date в UTC, конвертируем в МСК
+            if isinstance(order_date, str) and '+00:00' in order_date:
+                from datetime import datetime
+                dt = datetime.fromisoformat(order_date.replace('Z', '+00:00'))
+                msk_dt = TimezoneUtils.to_msk(dt)
+                order_date = msk_dt.isoformat()
+        
         # Базовые поля из события
         order_data = {
             "id": order_id or notification.get("sale_id", "N/A"),
             "order_id": order_id or "N/A",
-            "date": notification.get("sale_date", notification.get("detected_at", "")),
+            "date": order_date or notification.get("sale_date", notification.get("detected_at", "")),
             "status": self._get_status_from_notification_type(notification_type),
             "nm_id": nm_id or "N/A",
             "product_name": notification.get("product_name", "Неизвестно"),

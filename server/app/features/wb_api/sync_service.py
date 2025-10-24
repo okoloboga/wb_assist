@@ -68,8 +68,13 @@ class WBSyncService:
             logger.info(f"API key validation successful for cabinet {cabinet.id}")
             
             # КРИТИЧНО: Сохраняем время предыдущей синхронизации ДО начала новой
-            previous_sync_at = cabinet.last_sync_at
-            logger.info(f"📅 Previous sync time for cabinet {cabinet.id}: {previous_sync_at}")
+            if not cabinet.last_sync_at:
+                # Если это первая синхронизация, используем время 24 часа назад
+                previous_sync_at = TimezoneUtils.now_msk() - timedelta(hours=24)
+                logger.info(f"📅 First sync detected for cabinet {cabinet.id}, using 24h ago: {previous_sync_at}")
+            else:
+                previous_sync_at = cabinet.last_sync_at
+                logger.info(f"📅 Previous sync time for cabinet {cabinet.id}: {previous_sync_at}")
             
             # Создаем лог начала синхронизации
             sync_log = WBSyncLog(
@@ -284,8 +289,8 @@ class WBSyncService:
                     cabinet_user.first_sync_completed = True
                     logger.info(f"🏁 First sync completed for user {user_id} in cabinet {cabinet_id}")
                 
-                # Обрабатываем уведомления о новых событиях (только для последующих синхронизаций)
-                if not is_first_sync and previous_sync_at:
+                # Обрабатываем уведомления о новых событиях
+                if previous_sync_at:
                     try:
                         logger.info(f"🔍 Processing sync events for user {user_id} with previous_sync_at={previous_sync_at}")
                         
@@ -1702,10 +1707,10 @@ class WBSyncService:
             previous_sync_at: Время предыдущей синхронизации (для фильтрации новых заказов)
         """
         try:
-            # Если нет предыдущей синхронизации, возвращаем пустой список
+            # Если нет предыдущей синхронизации, используем время 24 часа назад
             if not previous_sync_at:
-                logger.warning(f"No previous sync time provided for cabinet {cabinet_id}")
-                return []
+                previous_sync_at = TimezoneUtils.now_msk() - timedelta(hours=24)
+                logger.info(f"📅 No previous sync time for cabinet {cabinet_id}, using 24h ago: {previous_sync_at}")
             
             # Получаем заказы, которые были созданы/обновлены после предыдущей синхронизации
             recent_orders = self.db.query(WBOrder).filter(
@@ -1772,10 +1777,10 @@ class WBSyncService:
             previous_sync_at: Время предыдущей синхронизации (для фильтрации)
         """
         try:
-            # Если нет предыдущей синхронизации, возвращаем пустой список
+            # Если нет предыдущей синхронизации, используем время 24 часа назад
             if not previous_sync_at:
-                logger.warning(f"No previous sync time provided for cabinet {cabinet_id}")
-                return []
+                previous_sync_at = TimezoneUtils.now_msk() - timedelta(hours=24)
+                logger.info(f"📅 No previous sync time for cabinet {cabinet_id}, using 24h ago: {previous_sync_at}")
             
             # Получаем заказы, которые были обновлены до предыдущей синхронизации
             old_orders = self.db.query(WBOrder).filter(
@@ -1839,10 +1844,10 @@ class WBSyncService:
             previous_sync_at: Время предыдущей синхронизации
         """
         try:
-            # Если нет предыдущей синхронизации, возвращаем пустой список
+            # Если нет предыдущей синхронизации, используем время 24 часа назад
             if not previous_sync_at:
-                logger.warning(f"No previous sync time provided for cabinet {cabinet_id}")
-                return []
+                previous_sync_at = TimezoneUtils.now_msk() - timedelta(hours=24)
+                logger.info(f"📅 No previous sync time for cabinet {cabinet_id}, using 24h ago: {previous_sync_at}")
             
             # Получаем отзывы, которые были созданы после предыдущей синхронизации
             recent_reviews = self.db.query(WBReview).filter(
@@ -1870,10 +1875,10 @@ class WBSyncService:
             previous_sync_at: Время предыдущей синхронизации
         """
         try:
-            # Если нет предыдущей синхронизации, возвращаем пустой список
+            # Если нет предыдущей синхронизации, используем время 24 часа назад
             if not previous_sync_at:
-                logger.warning(f"No previous sync time provided for cabinet {cabinet_id}")
-                return []
+                previous_sync_at = TimezoneUtils.now_msk() - timedelta(hours=24)
+                logger.info(f"📅 No previous sync time for cabinet {cabinet_id}, using 24h ago: {previous_sync_at}")
             
             # Получаем отзывы, которые были созданы до предыдущей синхронизации
             old_reviews = self.db.query(WBReview).filter(
@@ -1901,10 +1906,10 @@ class WBSyncService:
             previous_sync_at: Время предыдущей синхронизации
         """
         try:
-            # Если нет предыдущей синхронизации, возвращаем пустой список
+            # Если нет предыдущей синхронизации, используем время 24 часа назад
             if not previous_sync_at:
-                logger.warning(f"No previous sync time provided for cabinet {cabinet_id}")
-                return []
+                previous_sync_at = TimezoneUtils.now_msk() - timedelta(hours=24)
+                logger.info(f"📅 No previous sync time for cabinet {cabinet_id}, using 24h ago: {previous_sync_at}")
             
             # Получаем остатки, которые были обновлены после предыдущей синхронизации
             recent_stocks = self.db.query(WBStock).filter(
@@ -1933,10 +1938,10 @@ class WBSyncService:
             previous_sync_at: Время предыдущей синхронизации
         """
         try:
-            # Если нет предыдущей синхронизации, возвращаем пустой список
+            # Если нет предыдущей синхронизации, используем время 24 часа назад
             if not previous_sync_at:
-                logger.warning(f"No previous sync time provided for cabinet {cabinet_id}")
-                return []
+                previous_sync_at = TimezoneUtils.now_msk() - timedelta(hours=24)
+                logger.info(f"📅 No previous sync time for cabinet {cabinet_id}, using 24h ago: {previous_sync_at}")
             
             # Получаем остатки, которые были обновлены до предыдущей синхронизации
             old_stocks = self.db.query(WBStock).filter(
@@ -1967,10 +1972,10 @@ class WBSyncService:
         try:
             from ..wb_api.models_sales import WBSales
             
-            # Если нет предыдущей синхронизации, возвращаем пустой список
+            # Если нет предыдущей синхронизации, используем время 24 часа назад
             if not previous_sync_at:
-                logger.warning(f"No previous sync time provided for cabinet {cabinet_id}")
-                return []
+                previous_sync_at = TimezoneUtils.now_msk() - timedelta(hours=24)
+                logger.info(f"📅 No previous sync time for cabinet {cabinet_id}, using 24h ago: {previous_sync_at}")
             
             # Получаем продажи, которые были созданы после предыдущей синхронизации
             recent_sales = self.db.query(WBSales).filter(
@@ -2005,10 +2010,10 @@ class WBSyncService:
         try:
             from ..wb_api.models_sales import WBSales
             
-            # Если нет предыдущей синхронизации, возвращаем пустой список
+            # Если нет предыдущей синхронизации, используем время 24 часа назад
             if not previous_sync_at:
-                logger.warning(f"No previous sync time provided for cabinet {cabinet_id}")
-                return []
+                previous_sync_at = TimezoneUtils.now_msk() - timedelta(hours=24)
+                logger.info(f"📅 No previous sync time for cabinet {cabinet_id}, using 24h ago: {previous_sync_at}")
             
             # Получаем продажи, которые были созданы до предыдущей синхронизации
             old_sales = self.db.query(WBSales).filter(
