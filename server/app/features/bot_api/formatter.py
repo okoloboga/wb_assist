@@ -76,10 +76,17 @@ class BotMessageFormatter:
                 message += "Заказов не найдено"
             else:
                 for order in orders[:10]:  # Ограничиваем количество заказов
-                    order_date = self._format_datetime(order.get("date", ""))
-                    message += f"""🧾 #{order.get('id', 'N/A')} | {order_date} | {order.get('amount', 0):,.0f}₽
-   {order.get('product_name', 'N/A')} | {order.get('brand', 'N/A')}
-   {order.get('warehouse_from', 'N/A')} → {order.get('warehouse_to', 'N/A')}
+                    # Используем WB Order ID вместо внутреннего ID
+                    wb_order_id = order.get('order_id', order.get('id', 'N/A'))
+                    # Простое форматирование даты
+                    order_date = self._format_datetime_simple(order.get("date", ""))
+                    amount = order.get('amount', 0)
+                    warehouse_from = order.get('warehouse_from', 'N/A')
+                    warehouse_to = order.get('warehouse_to', 'N/A')
+                    
+                    message += f"""🧾 {wb_order_id}
+   {order_date} | {amount:,.0f}₽
+   {warehouse_from} → {warehouse_to}
 
 """
             
@@ -411,7 +418,38 @@ class BotMessageFormatter:
             if not datetime_str:
                 return "N/A"
             dt = datetime.fromisoformat(datetime_str.replace('Z', '+00:00'))
-            return TimezoneUtils.format_time_only(dt)
+            # Конвертируем в МСК
+            msk_dt = TimezoneUtils.to_msk(dt)
+            # Форматируем как ДД.ММ.ГГГГ ЧЧ:ММ
+            return msk_dt.strftime("%d.%m.%Y %H:%M")
+        except:
+            return datetime_str
+    
+    def _format_datetime_simple(self, datetime_str: str) -> str:
+        """Форматирование даты/времени с конвертацией в МСК."""
+        try:
+            if not datetime_str:
+                return "N/A"
+            
+            # Если время уже в МСК формате (содержит +03:00), просто форматируем
+            if '+03:00' in datetime_str:
+                # Заменяем T на пробел и убираем секунды и timezone
+                # 2025-10-24T11:02:25+03:00 -> 2025-10-24 11:02
+                formatted = datetime_str.replace('T', ' ')
+                # Убираем секунды и timezone (все после :MM)
+                if ':' in formatted:
+                    # Находим позицию второго двоеточия (секунды)
+                    parts = formatted.split(':')
+                    if len(parts) >= 2:
+                        # Берем только дату и часы:минуты
+                        date_part = parts[0]  # 2025-10-24 11
+                        time_part = parts[1]  # 02
+                        return f"{date_part}:{time_part}"
+            
+            # Fallback: полная конвертация для других форматов
+            dt = datetime.fromisoformat(datetime_str.replace('Z', '+00:00'))
+            msk_dt = TimezoneUtils.to_msk(dt)
+            return msk_dt.strftime("%Y-%m-%d %H:%M")
         except:
             return datetime_str
 
@@ -471,7 +509,7 @@ class BotMessageFormatter:
             # Основная информация
             order_id = order.get("id", "N/A")
             wb_order_id = order.get("order_id", "N/A")
-            order_date = self._format_datetime(order.get("date", ""))
+            order_date = self._format_datetime_simple(order.get("date", ""))
             status = order.get("status", "unknown")
             
             # Товар
@@ -514,19 +552,14 @@ class BotMessageFormatter:
             }
             order_type = status_map.get(status, "Заказ")
             
-            # Форматируем дату и время из ISO формата
-            formatted_datetime = order_date
-            if 'T' in order_date:
-                date_part = order_date.split('T')[0]  # 2025-10-23
-                time_part = order_date.split('T')[1][:5]  # 14:13
-                # Преобразуем дату в формат ДД.ММ.ГГГГ
-                year, month, day = date_part.split('-')
-                formatted_datetime = f"{day}.{month}.{year} {time_part}"
+            # Форматируем дату и время (с конвертацией в МСК)
+            formatted_datetime = self._format_datetime_simple(order_date)
             
             # Формируем сообщение в новом формате
-            message = f"""{order_type} ID: {order_id} от {formatted_datetime}
+            message = f"""{order_type}
+🆔 {wb_order_id} от {formatted_datetime}
 
-🆔 {nm_id} / {article} / ({size})
+👗 {nm_id} / {article} / ({size})
 🎹 {barcode}"""
             
             message += f"""

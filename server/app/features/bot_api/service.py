@@ -381,7 +381,7 @@ class BotAPIService:
             
             order_data = {
                 "id": order.id,
-                "date": order.order_date.isoformat() if order.order_date else None,
+                "date": self._convert_to_msk_iso(order.order_date) if order.order_date else None,
                 "amount": order.total_price or 0,
                 "product_name": order.name or "Неизвестно",
                 "brand": order.brand or "Неизвестно",
@@ -406,7 +406,7 @@ class BotAPIService:
                 "quantity": order.quantity,
                 "price": order.price,
                 "total_price": order.total_price,
-                "order_date": order.order_date.isoformat() if order.order_date else None,
+                "order_date": self._convert_to_msk_iso(order.order_date) if order.order_date else None,
                 "status": order.status,
                 "created_at": order.created_at.isoformat(),
                 # Остатки товара
@@ -1088,12 +1088,23 @@ class BotAPIService:
                 # Получаем продукт из предзагруженного словаря
                 product = products_dict.get(order.nm_id)
                 
+                # Конвертируем дату в МСК для отображения
+                order_date_msk = None
+                if order.order_date:
+                    # Если дата без timezone, считаем что это UTC
+                    if order.order_date.tzinfo is None:
+                        order_date_utc = order.order_date.replace(tzinfo=timezone.utc)
+                    else:
+                        order_date_utc = order.order_date
+                    # Конвертируем в МСК
+                    order_date_msk = TimezoneUtils.from_utc(order_date_utc)
+                
                 orders_list.append({
                     "id": order.id,
                     "order_id": order.order_id,  # ← ДОБАВЛЕНО!
-                    "order_date": order.order_date.isoformat() if order.order_date else None,  # ← ИСПРАВЛЕНО!
+                    "order_date": order_date_msk.isoformat() if order_date_msk else None,  # ← МСК!
                     "status": order.status,  # ← ДОБАВЛЕНО!
-                    "date": order.order_date.isoformat() if order.order_date else None,
+                    "date": order_date_msk.isoformat() if order_date_msk else None,  # ← МСК!
                     "amount": order.total_price or 0,
                     "product_name": order.name or "Неизвестно",
                     "brand": order.brand or "Неизвестно",
@@ -1666,3 +1677,23 @@ class BotAPIService:
                 "order_speed": {"7_days": 0.0, "14_days": 0.0, "30_days": 0.0},
                 "sales_periods": {"7_days": 0, "14_days": 0, "30_days": 0}
             }
+    
+    def _convert_to_msk_iso(self, dt: datetime) -> str:
+        """Конвертация datetime в МСК и возврат ISO строки"""
+        try:
+            if dt is None:
+                return None
+            
+            # Если дата без timezone, считаем что это UTC
+            if dt.tzinfo is None:
+                dt_utc = dt.replace(tzinfo=timezone.utc)
+            else:
+                dt_utc = dt
+            
+            # Конвертируем в МСК
+            dt_msk = TimezoneUtils.from_utc(dt_utc)
+            return dt_msk.isoformat()
+            
+        except Exception as e:
+            logger.error(f"Ошибка конвертации даты в МСК: {e}")
+            return dt.isoformat() if dt else None

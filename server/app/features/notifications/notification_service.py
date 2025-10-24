@@ -135,33 +135,51 @@ class NotificationService:
                 )
                 events_processed.extend(sales_events)
             
-            # 5. Отправляем уведомления через webhook
-            for event in events_processed:
-                try:
-                    # Очищаем datetime объекты для JSON сериализации
-                    clean_event = self._clean_datetime_objects(event)
-                    
-                    # Формируем текст уведомления
+            # 5. ОПТИМИЗИРОВАННАЯ отправка уведомлений с батчевой обработкой
+            if events_processed:
+                # Очищаем datetime объекты для JSON сериализации
+                clean_events = [self._clean_datetime_objects(event) for event in events_processed]
+                
+                # Формируем тексты уведомлений
+                for clean_event in clean_events:
                     telegram_text = self._format_notification_for_telegram(clean_event)
+                    clean_event["telegram_text"] = telegram_text
+                
+                # Батчевая проверка дублирования в Redis
+                non_duplicate_events = await self._batch_check_duplicates_in_redis(user_id, clean_events)
+                
+                if non_duplicate_events:
+                    logger.info(f"📦 Processing {len(non_duplicate_events)} non-duplicate events for user {user_id}")
                     
-                    # Отправляем webhook уведомление
-                    webhook_result = await self._send_webhook_notification(
-                        user_id=user_id,
-                        notification=clean_event,
-                        telegram_text=telegram_text
-                    )
+                    # Отправляем уведомления
+                    successful_notifications = []
+                    for clean_event in non_duplicate_events:
+                        try:
+                            # АТОМАРНАЯ отправка с защитой от дублирования
+                            webhook_result = await self._send_notification_atomically(
+                                user_id=user_id,
+                                notification=clean_event
+                            )
+                            
+                            if webhook_result.get("success"):
+                                notifications_sent += 1
+                                successful_notifications.append(clean_event)
+                                logger.info(f"📢 Notification sent atomically for user {user_id}: {clean_event.get('type')}")
+                            elif webhook_result.get("error") == "Duplicate notification (Redis)":
+                                logger.info(f"🚫 Duplicate prevented (Redis) for user {user_id}: {clean_event.get('type')}")
+                            elif webhook_result.get("error") == "Duplicate notification (DB)":
+                                logger.info(f"🚫 Duplicate prevented (DB) for user {user_id}: {clean_event.get('type')}")
+                            else:
+                                logger.warning(f"❌ Failed to send notification for user {user_id}: {webhook_result.get('error')}")
+                                
+                        except Exception as e:
+                            logger.error(f"❌ Error sending notification for user {user_id}: {e}")
                     
-                    if webhook_result.get("success"):
-                        notifications_sent += 1
-                        logger.info(f"📢 Notification sent for user {user_id}: {event.get('type')}")
-                        
-                        # КРИТИЧНО: Сохраняем уведомление в историю для защиты от дублирования
-                        self._save_notification_to_history(user_id, clean_event, webhook_result)
-                    else:
-                        logger.warning(f"❌ Failed to send notification for user {user_id}: {webhook_result.get('error')}")
-                        
-                except Exception as e:
-                    logger.error(f"❌ Error sending notification for user {user_id}: {e}")
+                    # Батчевое отметка успешных уведомлений в Redis
+                    if successful_notifications:
+                        await self._batch_mark_as_sent_in_redis(user_id, successful_notifications)
+                else:
+                    logger.info(f"🚫 All {len(clean_events)} events were duplicates for user {user_id}")
             
             return {
                 "status": "success",
@@ -433,7 +451,7 @@ class NotificationService:
                     order_data.update({
                         "nm_id": nm_id_from_db,
                         "product_name": product.name or order_data["product_name"],
-                        "article": product.article or order_data["article"],
+                        "article": order_data.get("article", ""),
                         "avg_rating": product.rating or 0,
                         "image_url": product.image_url,  # ← ДОБАВЛЕНО!
                         "total_price": order_in_db.total_price or order_data["total_price"],
@@ -806,33 +824,11 @@ class NotificationService:
                     logger.info(f"Skipping order notifications for cabinet {cabinet.id} - first sync")
                     return []
 
-            # Получаем уже отправленные уведомления за последние 24 часа
-            sent_notifications = self.db.query(NotificationHistory).filter(
-                and_(
-                    NotificationHistory.user_id == user_id,
-                    NotificationHistory.notification_type == "new_order",
-                    NotificationHistory.sent_at > last_check - timedelta(hours=24)
-                )
-            ).all()
-            
-            # Извлекаем order_id из content (JSON строка)
-            sent_order_ids = set()
-            for n in sent_notifications:
-                try:
-                    import json
-                    content_data = json.loads(n.content)
-                    if "order_id" in content_data:
-                        sent_order_ids.add(content_data["order_id"])
-                except (json.JSONDecodeError, KeyError):
-                    continue
-
-            # Получаем новые заказы по created_at (время добавления в БД)
-            # КРИТИЧНО: Используем created_at вместо order_date, чтобы ловить именно НОВЫЕ записи в БД
+            # УПРОЩЕННАЯ ЛОГИКА: Получаем все новые заказы, дублирование проверяется в атомарной отправке
             orders = self.db.query(WBOrder).filter(
                 and_(
                     WBOrder.cabinet_id.in_(cabinet_ids),
-                    WBOrder.created_at > last_check,  # Используем created_at - время добавления в БД
-                    ~WBOrder.order_id.in_(sent_order_ids)  # Исключаем уже отправленные
+                    WBOrder.created_at > last_check  # Используем created_at - время добавления в БД
                 )
             ).all()
             
@@ -999,25 +995,7 @@ class NotificationService:
                     logger.info(f"Skipping critical stocks notifications for cabinet {cabinet.id} - first sync")
                     return []
             
-            # Получаем уже отправленные уведомления о критических остатках за последние 24 часа
-            sent_notifications = self.db.query(NotificationHistory).filter(
-                and_(
-                    NotificationHistory.user_id == user_id,
-                    NotificationHistory.notification_type == 'critical_stocks',
-                    NotificationHistory.sent_at > last_check - timedelta(hours=24)
-                )
-            ).all()
-            
-            # Извлекаем nm_id из content (JSON строка)
-            sent_nm_ids = set()
-            for n in sent_notifications:
-                try:
-                    import json
-                    content_data = json.loads(n.content)
-                    if "nm_id" in content_data:
-                        sent_nm_ids.add(content_data["nm_id"])
-                except (json.JSONDecodeError, KeyError):
-                    continue
+            # УПРОЩЕННАЯ ЛОГИКА: Дублирование проверяется в атомарной отправке
             
             critical_threshold = 2
             
@@ -1063,11 +1041,10 @@ class NotificationService:
                 prev_stock_list = prev_grouped.get((nm_id, size), [])
                 previous_total = sum(stock.quantity or 0 for stock in prev_stock_list)
                 
-                # Проверяем реальное уменьшение остатков и исключаем уже отправленные
+                # Проверяем реальное уменьшение остатков (дублирование проверяется в атомарной отправке)
                 if (previous_total > critical_threshold and 
                     current_total <= critical_threshold and 
-                    current_total < previous_total and
-                    nm_id not in sent_nm_ids):  # Исключаем уже отправленные
+                    current_total < previous_total):
                     
                     # Получаем информацию о товаре
                     product = self.db.query(WBProduct).filter(
@@ -1102,32 +1079,13 @@ class NotificationService:
             from sqlalchemy import and_
             from datetime import timedelta
             
-            # Получаем уже отправленные уведомления об изменениях статусов за последние 24 часа
-            sent_notifications = self.db.query(NotificationHistory).filter(
-                and_(
-                    NotificationHistory.user_id == user_id,
-                    NotificationHistory.notification_type.in_(['order_buyout', 'order_cancellation', 'order_return']),
-                    NotificationHistory.sent_at > last_check - timedelta(hours=24)
-                )
-            ).all()
+            # УПРОЩЕННАЯ ЛОГИКА: Дублирование проверяется в атомарной отправке
             
-            # Извлекаем order_id из content (JSON строка)
-            sent_order_ids = set()
-            for n in sent_notifications:
-                try:
-                    import json
-                    content_data = json.loads(n.content)
-                    if "order_id" in content_data:
-                        sent_order_ids.add(content_data["order_id"])
-                except (json.JSONDecodeError, KeyError):
-                    continue
-            
-            # Получаем заказы с изменениями статуса
+            # Получаем заказы с изменениями статуса (дублирование проверяется в атомарной отправке)
             orders = self.db.query(WBOrder).filter(
                 WBOrder.cabinet_id.in_(cabinet_ids),
                 WBOrder.updated_at > last_check,
-                WBOrder.status.in_(['buyout', 'canceled', 'return']),
-                ~WBOrder.order_id.in_(sent_order_ids)  # Исключаем уже отправленные
+                WBOrder.status.in_(['buyout', 'canceled', 'return'])
             ).all()
             
             events = []
@@ -1603,6 +1561,237 @@ class NotificationService:
         except Exception as e:
             logger.error(f"Failed to save to retry queue: {e}")
             raise
+    
+    async def _send_notification_atomically(self, user_id: int, notification: Dict[str, Any]) -> Dict[str, Any]:
+        """Атомарная отправка уведомления с защитой от дублирования"""
+        try:
+            # 1. Быстрая проверка в Redis
+            if self._is_duplicate_in_redis(user_id, notification):
+                logger.info(f"🚫 Duplicate detected in Redis for user {user_id}, type {notification.get('type')}")
+                return {"success": False, "error": "Duplicate notification (Redis)"}
+            
+            # 2. Проверяем дублирование в БД
+            if await self._is_duplicate_in_db(user_id, notification):
+                logger.info(f"🚫 Duplicate detected in DB for user {user_id}, type {notification.get('type')}")
+                return {"success": False, "error": "Duplicate notification (DB)"}
+            
+            # 3. Отправляем уведомление
+            result = await self._send_webhook_notification(
+                user_id=user_id,
+                notification=notification,
+                telegram_text=notification.get("telegram_text", "")
+            )
+            
+            # 4. Сохраняем в историю и отмечаем в Redis
+            if result.get("success", False):
+                self._save_notification_to_history(user_id, notification, result)
+                await self._mark_as_sent_in_redis(user_id, notification)
+                logger.info(f"✅ Notification sent atomically for user {user_id}, type {notification.get('type')}")
+            
+            return result
+                
+        except Exception as e:
+            logger.error(f"Error in atomic notification send: {e}")
+            return {"success": False, "error": str(e)}
+    
+    def _is_duplicate_in_redis(self, user_id: int, notification: Dict[str, Any]) -> bool:
+        """Быстрая проверка дублирования через Redis"""
+        try:
+            notification_type = notification.get("type")
+            unique_key = self._extract_unique_key(notification)
+            
+            redis_key = f"sent_notifications:{user_id}:{notification_type}"
+            return self.redis_client.sismember(redis_key, unique_key)
+            
+        except Exception as e:
+            logger.error(f"Error checking duplicate in Redis: {e}")
+            return False  # В случае ошибки считаем что не дубликат
+    
+    async def _is_duplicate_in_db(self, user_id: int, notification: Dict[str, Any]) -> bool:
+        """Проверка дублирования в БД"""
+        try:
+            notification_type = notification.get("type")
+            unique_key = self._extract_unique_key(notification)
+            
+            # Проверяем за последние 24 часа
+            from datetime import timedelta
+            cutoff_time = TimezoneUtils.now_msk() - timedelta(hours=24)
+            
+            from sqlalchemy import and_
+            existing = self.db.query(NotificationHistory).filter(
+                and_(
+                    NotificationHistory.user_id == user_id,
+                    NotificationHistory.notification_type == notification_type,
+                    NotificationHistory.sent_at > cutoff_time
+                )
+            ).first()
+            
+            if not existing:
+                return False
+            
+            # Проверяем содержимое
+            try:
+                content_data = json.loads(existing.content)
+                existing_key = self._extract_unique_key_from_content(content_data, notification_type)
+                return existing_key == unique_key
+            except (json.JSONDecodeError, KeyError):
+                return False
+                
+        except Exception as e:
+            logger.error(f"Error checking duplicate in DB: {e}")
+            return False
+    
+    def _extract_unique_key(self, notification: Dict[str, Any]) -> str:
+        """Извлечение уникального ключа из уведомления"""
+        notification_type = notification.get("type")
+        data = notification.get("data", {})
+        
+        if notification_type in ["new_order", "order_buyout", "order_cancellation", "order_return"]:
+            return str(data.get("order_id", notification.get("order_id", "unknown")))
+        elif notification_type == "negative_review":
+            return str(data.get("review_id", notification.get("review_id", "unknown")))
+        elif notification_type == "critical_stocks":
+            return str(data.get("nm_id", notification.get("nm_id", "unknown")))
+        else:
+            return f"{notification_type}_{notification.get('user_id', 'unknown')}"
+    
+    def _extract_unique_key_from_content(self, content_data: Dict[str, Any], notification_type: str) -> str:
+        """Извлечение уникального ключа из содержимого БД"""
+        if notification_type in ["new_order", "order_buyout", "order_cancellation", "order_return"]:
+            return str(content_data.get("order_id", "unknown"))
+        elif notification_type == "negative_review":
+            return str(content_data.get("review_id", "unknown"))
+        elif notification_type == "critical_stocks":
+            return str(content_data.get("nm_id", "unknown"))
+        else:
+            return f"{notification_type}_unknown"
+    
+    async def _mark_as_sent_in_redis(self, user_id: int, notification: Dict[str, Any]):
+        """Отметить уведомление как отправленное в Redis"""
+        try:
+            notification_type = notification.get("type")
+            unique_key = self._extract_unique_key(notification)
+            
+            redis_key = f"sent_notifications:{user_id}:{notification_type}"
+            self.redis_client.sadd(redis_key, unique_key)
+            self.redis_client.expire(redis_key, 86400)  # TTL 24 часа
+            
+        except Exception as e:
+            logger.error(f"Error marking as sent in Redis: {e}")
+    
+    async def _batch_mark_as_sent_in_redis(self, user_id: int, notifications: List[Dict[str, Any]]):
+        """Батчевое отметка уведомлений как отправленных в Redis"""
+        try:
+            # Группируем по типам для оптимизации
+            by_type = {}
+            for notification in notifications:
+                notification_type = notification.get("type")
+                unique_key = self._extract_unique_key(notification)
+                
+                if notification_type not in by_type:
+                    by_type[notification_type] = []
+                by_type[notification_type].append(unique_key)
+            
+            # Отправляем батчевые команды
+            for notification_type, keys in by_type.items():
+                redis_key = f"sent_notifications:{user_id}:{notification_type}"
+                self.redis_client.sadd(redis_key, *keys)
+                self.redis_client.expire(redis_key, 86400)  # TTL 24 часа
+                
+            logger.info(f"📦 Batch marked {len(notifications)} notifications in Redis for user {user_id}")
+            
+        except Exception as e:
+            logger.error(f"Error batch marking as sent in Redis: {e}")
+    
+    async def _batch_check_duplicates_in_redis(self, user_id: int, notifications: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Батчевая проверка дублирования в Redis"""
+        try:
+            # Группируем по типам
+            by_type = {}
+            for notification in notifications:
+                notification_type = notification.get("type")
+                unique_key = self._extract_unique_key(notification)
+                
+                if notification_type not in by_type:
+                    by_type[notification_type] = []
+                by_type[notification_type].append((unique_key, notification))
+            
+            # Проверяем дубликаты батчами
+            non_duplicates = []
+            total_duplicates = 0
+            
+            for notification_type, items in by_type.items():
+                redis_key = f"sent_notifications:{user_id}:{notification_type}"
+                
+                # Получаем все ключи для проверки
+                keys_to_check = [item[0] for item in items]
+                
+                # Проверяем существование в Redis
+                existing_keys = self.redis_client.smismember(redis_key, *keys_to_check)
+                
+                # Фильтруем недубликаты
+                for i, (unique_key, notification) in enumerate(items):
+                    if not existing_keys[i]:  # Если ключ не найден в Redis
+                        non_duplicates.append(notification)
+                    else:
+                        total_duplicates += 1
+                        logger.info(f"🚫 Duplicate detected in Redis batch for user {user_id}, type {notification_type}, key {unique_key}")
+                        
+                        # Отправляем метрику дублирования
+                        await self._track_duplicate_attempt(user_id, notification_type)
+            
+            # Логируем статистику
+            logger.info(f"📊 Duplicate check stats for user {user_id}: {len(non_duplicates)} unique, {total_duplicates} duplicates")
+            
+            return non_duplicates
+            
+        except Exception as e:
+            logger.error(f"Error batch checking duplicates in Redis: {e}")
+            return notifications  # В случае ошибки возвращаем все
+    
+    async def _track_duplicate_attempt(self, user_id: int, notification_type: str):
+        """Отслеживание попыток дублирования для мониторинга"""
+        try:
+            # Увеличиваем счетчик дублирования
+            await self.redis_client.incr(f"duplicate_attempts:{user_id}:{notification_type}")
+            await self.redis_client.expire(f"duplicate_attempts:{user_id}:{notification_type}", 86400)  # TTL 24 часа
+            
+            # Общий счетчик дублирования
+            await self.redis_client.incr("duplicate_attempts:total")
+            await self.redis_client.expire("duplicate_attempts:total", 86400)
+            
+        except Exception as e:
+            logger.error(f"Error tracking duplicate attempt: {e}")
+    
+    async def get_duplicate_stats(self, user_id: int = None) -> Dict[str, Any]:
+        """Получение статистики дублирования"""
+        try:
+            stats = {}
+            
+            if user_id:
+                # Статистика для конкретного пользователя
+                user_keys = await self.redis_client.keys(f"duplicate_attempts:{user_id}:*")
+                for key in user_keys:
+                    notification_type = key.split(":")[-1]
+                    count = await self.redis_client.get(key)
+                    stats[f"user_{user_id}_{notification_type}"] = int(count or 0)
+            else:
+                # Общая статистика
+                total_duplicates = await self.redis_client.get("duplicate_attempts:total")
+                stats["total_duplicates"] = int(total_duplicates or 0)
+                
+                # Статистика по типам
+                all_keys = await self.redis_client.keys("duplicate_attempts:*")
+                for key in all_keys:
+                    if "total" not in key:
+                        count = await self.redis_client.get(key)
+                        stats[key.replace("duplicate_attempts:", "")] = int(count or 0)
+            
+            return stats
+            
+        except Exception as e:
+            logger.error(f"Error getting duplicate stats: {e}")
+            return {}
     
     async def send_sync_completion_notification(
         self,
