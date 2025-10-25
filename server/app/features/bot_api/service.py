@@ -1046,7 +1046,7 @@ class BotAPIService:
             if status:
                 orders_query = orders_query.filter(WBOrder.status == status)
             
-            orders_query = orders_query.order_by(WBOrder.created_at.desc())
+            orders_query = orders_query.order_by(WBOrder.order_date.desc())
             
             total_orders = orders_query.count()
             

@@ -1563,7 +1563,6 @@ class WBSyncService:
                         # Создаем новую запись
                         sales_crud.create_sale(self.db, sale_data)
                         records_created += 1
-                        logger.info(f"🔍 [sync_sales] Created new sale: {sale_data['sale_id']} - {sale_data['product_name']} - {sale_data['amount']}₽")
                         
                         # Уведомления о продажах обрабатываются через NotificationService.process_sync_events
                         # после завершения всей синхронизации
