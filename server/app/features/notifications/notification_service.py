@@ -283,16 +283,16 @@ class NotificationService:
                         "telegram_text": self._format_return_notification_simple(order)
                     })
             
-            # 5. КРИТИЧНЫЕ ОСТАТКИ (простая проверка) - ВКЛЮЧЕНО
-            if user_settings.critical_stocks_enabled:
-                critical_stocks = await self._check_critical_stocks_simple(cabinet_id, last_sync_at)
-                if critical_stocks:
-                    notifications.append({
-                        "type": "critical_stocks",
-                        "user_id": user_id,
-                        "data": self._format_critical_stocks_data_simple(critical_stocks),
-                        "telegram_text": self._format_critical_stocks_notification_simple(critical_stocks)
-                    })
+            # 5. КРИТИЧНЫЕ ОСТАТКИ (простая проверка) - ОТКЛЮЧЕНО (слишком много записей)
+            # if user_settings.critical_stocks_enabled:
+            #     critical_stocks = await self._check_critical_stocks_simple(cabinet_id, last_sync_at)
+            #     if critical_stocks:
+            #         notifications.append({
+            #             "type": "critical_stocks",
+            #             "user_id": user_id,
+            #             "data": self._format_critical_stocks_data_simple(critical_stocks),
+            #             "telegram_text": self._format_critical_stocks_notification_simple(critical_stocks)
+            #         })
             
             # 6. НЕГАТИВНЫЕ ОТЗЫВЫ (простая проверка)
             if user_settings.negative_reviews_enabled:
@@ -445,11 +445,12 @@ class NotificationService:
         """Обработка событий остатков"""
         events = []
         
-        if user_settings.critical_stocks_enabled:
-            critical_stocks_events = self.event_detector.detect_critical_stocks(
-                user_id, current_stocks, previous_stocks
-            )
-            events.extend(critical_stocks_events)
+        # ОТКЛЮЧЕНО: Критические остатки (слишком много записей)
+        # if user_settings.critical_stocks_enabled:
+        #     critical_stocks_events = self.event_detector.detect_critical_stocks(
+        #         user_id, current_stocks, previous_stocks
+        #     )
+        #     events.extend(critical_stocks_events)
         
         return events
     
@@ -878,9 +879,9 @@ class NotificationService:
             new_reviews = await self._get_new_reviews(user_id, cabinet_ids, last_check)
             events.extend(new_reviews)
             
-            # Получаем критические остатки
-            critical_stocks = await self._get_critical_stocks(user_id, cabinet_ids, last_check)
-            events.extend(critical_stocks)
+            # ОТКЛЮЧЕНО: Критические остатки (слишком много записей)
+            # critical_stocks = await self._get_critical_stocks(user_id, cabinet_ids, last_check)
+            # events.extend(critical_stocks)
             
             # Получаем изменения статусов заказов
             status_changes = await self._get_status_changes(user_id, cabinet_ids, last_check)
