@@ -2270,7 +2270,8 @@ class NotificationService:
         if sale_date:
             if sale_date.tzinfo is None:
                 sale_date = sale_date.replace(tzinfo=timezone.utc)
-            sale_date_msk = TimezoneUtils.from_utc(sale_date)
+            # ИСПРАВЛЕНО: Правильная конвертация UTC в MSK (+3 часа)
+            sale_date_msk = sale_date.astimezone(timezone.utc).replace(tzinfo=None) + datetime.timedelta(hours=3)
             formatted_date = sale_date_msk.strftime("%Y-%m-%d %H:%M")
         else:
             formatted_date = "N/A"
@@ -2369,7 +2370,8 @@ class NotificationService:
         if sale_date:
             if sale_date.tzinfo is None:
                 sale_date = sale_date.replace(tzinfo=timezone.utc)
-            sale_date_msk = TimezoneUtils.from_utc(sale_date)
+            # ИСПРАВЛЕНО: Правильная конвертация UTC в MSK (+3 часа)
+            sale_date_msk = sale_date.astimezone(timezone.utc).replace(tzinfo=None) + datetime.timedelta(hours=3)
             formatted_date = sale_date_msk.strftime("%Y-%m-%d %H:%M")
         else:
             formatted_date = "N/A"

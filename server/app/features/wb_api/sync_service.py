@@ -302,7 +302,13 @@ class WBSyncService:
                             last_sync_at=previous_sync_at
                         )
                         
-                        logger.info(f"📢 [Simple] Processed sync events for user {user_id}: {events_result}")
+                        # Создаем краткий отчет о результатах
+                        events_summary = {
+                            "status": events_result.get("status", "unknown"),
+                            "notifications_sent": events_result.get("notifications_sent", 0),
+                            "events_processed": len(events_result.get("events", [])) if isinstance(events_result.get("events"), list) else 0
+                        }
+                        logger.info(f"📢 [Simple] Processed sync events for user {user_id}: {events_summary}")
                         
                     except Exception as e:
                         logger.error(f"❌ [Simple] Failed to process sync events for user {user_id}: {e}")
