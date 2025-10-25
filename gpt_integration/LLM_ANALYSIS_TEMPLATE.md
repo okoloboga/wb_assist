@@ -242,7 +242,7 @@
     ```
 - GPT → Server: сбор данных
   - Базовый URL: `SERVER_HOST` (например, `http://server:8000`)
-  - Заголовок: `X-API-KEY: {API_SECRET_KEY}`
+  - Заголовок: `X-API-SECRET-KEY: {API_SECRET_KEY}`
   - Эндпоинты (минимально необходимы; расширяемы при наличии данных):
     - `GET /api/v1/bot/analytics/sales?telegram_id={id}&period={period}`
     - Опционально:
@@ -369,3 +369,19 @@
 - GPT‑сервис собирает данные, выполняет LLM по шаблону, валидирует результат.
 - Пользователь получает структурированный отчёт (MarkdownV2), ошибки сообщаются корректно.
 - Конфигурации работают локально и в Docker; логи достаточны для диагностики.
+
+
+Архитектура 
+gpt_integration/
+├── main.py                      # FastAPI приложение
+├── config.py                    # Конфигурация
+├── service.py                   # Эндпоинты API
+├── aggregator.py               # Сбор и агрегация данных
+├── pipeline.py                 # LLM пайплайн
+├── schemas.py                  # Pydantic схемы
+├── llm_client.py               # Клиент для LLM API
+├── templates/
+│   └── LLM_ANALYSIS_TEMPLATE.md
+└── utils/
+    ├── http_client.py          # Async HTTP клиент
+    └── validation.py           # Валидация JSON

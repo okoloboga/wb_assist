@@ -3,7 +3,7 @@
 """
 import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
-from aiogram.types import Message, User, Chat
+from aiogram.types import Message, User, Chat, CallbackQuery
 from aiogram.fsm.context import FSMContext
 
 from middleware.api_key_check import APIKeyCheckMiddleware

@@ -124,6 +124,9 @@ services:
       - SERVER_HOST=http://server:8000
       - API_SECRET_KEY=${API_SECRET_KEY}
       - BOT_WEBHOOK_BASE=http://bot:8001
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL}
+      - OPENAI_MODEL=${OPENAI_MODEL}
     volumes:
       - ./gpt_integration:/app/gpt_integration
       - ./bot/utils:/app/utils

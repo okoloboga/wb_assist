@@ -80,8 +80,8 @@ class APIKeyCheckMiddleware(BaseMiddleware):
         has_api_key = await self._check_api_key(user_id)
         
         if not has_api_key:
-            # Не блокируем доступ, а предлагаем подключить кабинет
-            await self._suggest_cabinet_connection(event, user_id)
+            # Блокируем доступ и требуем ввод API ключа
+            await self._block_user_access(event, user_id)
             return
         
         # Добавляем пользователя в кэш проверенных

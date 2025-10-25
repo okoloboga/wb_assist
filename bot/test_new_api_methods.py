@@ -5,7 +5,18 @@
 
 import asyncio
 import logging
-from api.client import bot_api_client
+import os
+import pytest
+
+# Устанавливаем тестовый секрет до импорта клиента
+os.environ.setdefault("API_SECRET_KEY", "test_secret")
+
+from api.client import BotAPIClient
+
+# Инициализируем клиент
+bot_api_client = BotAPIClient()
+
+pytestmark = pytest.mark.asyncio
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
