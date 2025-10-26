@@ -615,12 +615,32 @@ class BotMessageFormatter:
 2⭐ - {pct_2:.1f}%
 1⭐ - {pct_1:.1f}%"""
             
-            # Остатки
+            # Остатки по складам и размерам
             if stocks:
-                message += "\n\n📦 Остатки по размерам:"
-                for size_key in sorted(stocks.keys()):
-                    quantity = stocks[size_key]
-                    message += f"\n{size_key}: {quantity} шт."
+                # Получаем детализацию по складам
+                stocks_by_warehouse = order.get("stocks_by_warehouse", {})
+                
+                # Считаем общую сумму остатков
+                total_stocks = sum(
+                    sum(sizes.values()) 
+                    for sizes in stocks_by_warehouse.values()
+                )
+                
+                message += f"\n\n📦 Остатки по складам - {total_stocks}:"
+                
+                # Показываем только склады с остатками > 0
+                for warehouse_name, sizes in stocks_by_warehouse.items():
+                    warehouse_total = sum(sizes.values())
+                    if warehouse_total > 0:
+                        # Формируем строку размеров
+                        size_items = []
+                        for size in sorted(sizes.keys()):
+                            quantity = sizes[size]
+                            if quantity > 0:  # Показываем только размеры с остатками
+                                size_items.append(f"{size}: {quantity}")
+                        
+                        if size_items:
+                            message += f"\n{warehouse_name} - {warehouse_total} - [{' | '.join(size_items)}]"
             
             return self._truncate_message(message)
             

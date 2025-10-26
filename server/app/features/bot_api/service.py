@@ -286,14 +286,28 @@ class BotAPIService:
             
             # Формируем остатки по размерам (суммируем по всем складам)
             stocks_dict = {}
+            # НОВОЕ: Детализация по складам и размерам
+            stocks_by_warehouse_and_size = {}
+            
             for stock in stocks:
                 size = stock.size or "ONE SIZE"
                 quantity = stock.quantity or 0
+                warehouse_name = stock.warehouse_name or "Неизвестный склад"
+                
                 # Суммируем остатки по всем складам для одного размера
                 if size in stocks_dict:
                     stocks_dict[size] += quantity
                 else:
                     stocks_dict[size] = quantity
+                
+                # НОВОЕ: Детализация по складам и размерам
+                if warehouse_name not in stocks_by_warehouse_and_size:
+                    stocks_by_warehouse_and_size[warehouse_name] = {}
+                
+                if size in stocks_by_warehouse_and_size[warehouse_name]:
+                    stocks_by_warehouse_and_size[warehouse_name][size] += quantity
+                else:
+                    stocks_by_warehouse_and_size[warehouse_name][size] = quantity
             
             # Получаем статистику отзывов для товара
             reviews_count = self.db.query(WBReview).filter(
@@ -399,6 +413,8 @@ class BotAPIService:
                 "created_at": order.created_at.isoformat(),
                 # Остатки товара
                 "stocks": stocks_dict,
+                # НОВОЕ: Детализация по складам и размерам
+                "stocks_by_warehouse": stocks_by_warehouse_and_size,
                 # Реальная статистика
                 "buyout_rates": product_stats["buyout_rates"],
                 "order_speed": product_stats["order_speed"],
