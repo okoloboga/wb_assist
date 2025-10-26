@@ -2096,32 +2096,37 @@ class NotificationService:
             return []
     
     async def _check_buyouts_simple(self, cabinet_id: int, last_sync_at: datetime) -> List:
-        """Простая проверка выкупов - ИСПРАВЛЕНО: ищем в WBSales с момента последней синхронизации"""
+        """Простая проверка выкупов - КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: используем created_at вместо sale_date"""
         try:
             from app.features.wb_api.models_sales import WBSales
             from app.utils.timezone import TimezoneUtils
             
-            # ИСПРАВЛЕНИЕ: last_sync_at уже приходит в UTC из БД!
-            # sale_date в БД хранится в UTC, last_sync_at тоже в UTC
-            # Поэтому НЕ нужна конвертация!
+            # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Используем created_at вместо sale_date!
+            # Проблема: WB API с flag=0 и dateFrom=30 дней возвращает ВСЕ старые данные
+            # sale_date - это время выкупа по WB (может быть в прошлом, например, 3 часа назад)
+            # created_at - это время добавления записи в нашу БД (всегда новое)
+            # 
+            # Пример проблемы:
+            # - Выкуп произошел в 10:00 (sale_date=10:00)
+            # - Синхронизация в 10:03 добавила его в БД (created_at=10:03)
+            # - Следующая синхронизация в 10:06 (last_sync_at=10:03)
+            # - Если ищем sale_date > 10:03, то выкуп НЕ найден (10:00 < 10:03)
+            # - Если ищем created_at > 10:03, то выкуп найден (10:03 новая запись)
+            
             logger.info(f"🔍 [_check_buyouts_simple] Checking buyouts for cabinet {cabinet_id}")
             logger.info(f"🔍 [_check_buyouts_simple] last_sync_at (UTC): {last_sync_at}")
-            logger.info(f"🔍 [_check_buyouts_simple] last_sync_at type: {type(last_sync_at)}")
-            logger.info(f"🔍 [_check_buyouts_simple] last_sync_at tzinfo: {last_sync_at.tzinfo if last_sync_at else 'None'}")
             
-            # Ищем выкупы с момента последней синхронизации (оба в UTC)
+            # Ищем выкупы, которые были ДОБАВЛЕНЫ в БД после последней синхронизации
             buyouts = self.db.query(WBSales).filter(
                 WBSales.cabinet_id == cabinet_id,
-                WBSales.sale_date > last_sync_at,  # Сравниваем UTC с UTC напрямую
+                WBSales.created_at > last_sync_at,  # ИСПРАВЛЕНО: created_at вместо sale_date
                 WBSales.type == "buyout",
                 WBSales.is_cancel == False
             ).all()
             
             logger.info(f"🔍 [_check_buyouts_simple] Found {len(buyouts)} buyouts for cabinet {cabinet_id}")
             if buyouts and len(buyouts) > 0:
-                logger.info(f"🔍 [_check_buyouts_simple] First buyout: sale_id={buyouts[0].sale_id}, sale_date={buyouts[0].sale_date}, nm_id={buyouts[0].nm_id}")
-                logger.info(f"🔍 [_check_buyouts_simple] First buyout sale_date type: {type(buyouts[0].sale_date)}")
-                logger.info(f"🔍 [_check_buyouts_simple] First buyout sale_date tzinfo: {buyouts[0].sale_date.tzinfo if buyouts[0].sale_date else 'None'}")
+                logger.info(f"🔍 [_check_buyouts_simple] First buyout: sale_id={buyouts[0].sale_id}, created_at={buyouts[0].created_at}, sale_date={buyouts[0].sale_date}, nm_id={buyouts[0].nm_id}")
             
             return buyouts
             
@@ -2150,28 +2155,29 @@ class NotificationService:
             return []
     
     async def _check_returns_simple(self, cabinet_id: int, last_sync_at: datetime) -> List:
-        """Простая проверка возвратов - ИСПРАВЛЕНО: ищем с момента последней синхронизации"""
+        """Простая проверка возвратов - КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: используем created_at вместо sale_date"""
         try:
             from app.features.wb_api.models_sales import WBSales
             from app.utils.timezone import TimezoneUtils
             
-            # ИСПРАВЛЕНИЕ: last_sync_at уже приходит в UTC из БД!
-            # sale_date в БД хранится в UTC, last_sync_at тоже в UTC
-            # Поэтому НЕ нужна конвертация!
+            # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Используем created_at вместо sale_date!
+            # Аналогично выкупам - sale_date может быть в прошлом,
+            # а created_at показывает, когда запись была добавлена в БД
+            
             logger.info(f"🔍 [_check_returns_simple] Checking returns for cabinet {cabinet_id}")
             logger.info(f"🔍 [_check_returns_simple] last_sync_at (UTC): {last_sync_at}")
             
-            # Ищем возвраты с момента последней синхронизации (оба в UTC)
+            # Ищем возвраты, которые были ДОБАВЛЕНЫ в БД после последней синхронизации
             returns = self.db.query(WBSales).filter(
                 WBSales.cabinet_id == cabinet_id,
-                WBSales.sale_date > last_sync_at,  # Сравниваем UTC с UTC напрямую
+                WBSales.created_at > last_sync_at,  # ИСПРАВЛЕНО: created_at вместо sale_date
                 WBSales.type == "return",
                 WBSales.is_cancel == False
             ).all()
             
             logger.info(f"🔍 [_check_returns_simple] Found {len(returns)} returns for cabinet {cabinet_id}")
             if returns and len(returns) > 0:
-                logger.info(f"🔍 [_check_returns_simple] First return: sale_id={returns[0].sale_id}, sale_date={returns[0].sale_date}, nm_id={returns[0].nm_id}")
+                logger.info(f"🔍 [_check_returns_simple] First return: sale_id={returns[0].sale_id}, created_at={returns[0].created_at}, sale_date={returns[0].sale_date}, nm_id={returns[0].nm_id}")
             
             return returns
             
