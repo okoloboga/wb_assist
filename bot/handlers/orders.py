@@ -187,11 +187,6 @@ async def show_order_details(callback: CallbackQuery):
         order = response.order or {}
         image_url = order.get("image_url")
         
-        # Детальные логи для отладки
-        logger.info(f"📢 Order detail response: {response}")
-        logger.info(f"📢 Order data: {order}")
-        logger.info(f"📢 Order image_url: {image_url}")
-        logger.info(f"📢 Telegram text: {response.telegram_text}")
         
         # Создаем клавиатуру для детального просмотра
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
@@ -208,14 +203,12 @@ async def show_order_details(callback: CallbackQuery):
         # Если есть изображение, отправляем фото с подписью, иначе обычное сообщение
         if image_url:
             try:
-                logger.info(f"📢 Sending photo for order detail: {image_url}")
                 await callback.message.delete()
                 await callback.message.answer_photo(
                     photo=image_url,
                     caption=response.telegram_text or "🧾 Детали заказа",
                     reply_markup=keyboard
                 )
-                logger.info(f"📢 Photo sent successfully for order {order_id}")
             except Exception as e:
                 logger.error(f"Ошибка отправки фото: {e}")
                 await callback.message.edit_text(
@@ -223,7 +216,6 @@ async def show_order_details(callback: CallbackQuery):
                     reply_markup=keyboard
                 )
         else:
-            logger.info(f"📢 No image_url for order {order_id}, sending text only")
             await callback.message.edit_text(
                 response.telegram_text or "🧾 Детали заказа",
                 reply_markup=keyboard

@@ -11,6 +11,11 @@ from app.utils.timezone import TimezoneUtils
 class NotificationGenerator:
     """Генератор уведомлений на основе событий"""
     
+    @staticmethod
+    def format_currency(amount: float) -> str:
+        """Форматировать валюту с пробелами вместо запятых"""
+        return f"{amount:,.0f}₽".replace(",", " ")
+    
     def generate_notification(self, event_data: Dict[str, Any], user_settings: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Генерация уведомления на основе события и настроек пользователя"""
         # Проверяем, включены ли уведомления вообще
@@ -72,7 +77,7 @@ class NotificationGenerator:
             "grouping_enabled": user_settings.get("grouping_enabled", True),
             "max_group_size": user_settings.get("max_group_size", 5),
             "group_timeout": user_settings.get("group_timeout", 300),
-            "generated_at": TimezoneUtils.now_msk()
+            "generated_at": TimezoneUtils.format_for_user(TimezoneUtils.now_msk())
         }
     
     def _generate_critical_stocks_notification(self, event_data: Dict[str, Any], user_settings: Dict[str, Any]) -> Dict[str, Any]:
@@ -101,7 +106,7 @@ class NotificationGenerator:
             "grouping_enabled": user_settings.get("grouping_enabled", True),
             "max_group_size": user_settings.get("max_group_size", 5),
             "group_timeout": user_settings.get("group_timeout", 300),
-            "generated_at": TimezoneUtils.now_msk()
+            "generated_at": TimezoneUtils.format_for_user(TimezoneUtils.now_msk())
         }
     
     
@@ -224,7 +229,7 @@ class NotificationGenerator:
         """Форматирование контента уведомления о новом выкупе"""
         return f"""💰 Новый выкуп #{order_id}
 
-💵 Сумма: {amount:,.2f} ₽
+💵 Сумма: {self.format_currency(amount)}
 📦 Товар: {product_name}
 🏷️ Бренд: {brand}
 📏 Размер: {size}
@@ -235,7 +240,7 @@ class NotificationGenerator:
         """Форматирование контента уведомления о новом возврате"""
         return f"""🔄 Новый возврат #{order_id}
 
-💵 Сумма: {amount:,.2f} ₽
+💵 Сумма: {self.format_currency(amount)}
 📦 Товар: {product_name}
 🏷️ Бренд: {brand}
 📏 Размер: {size}
@@ -247,8 +252,8 @@ class NotificationGenerator:
         return f"""📊 Статус изменен #{order_id}
 
 📦 Товар: {product_name}
-💵 Сумма: {amount:,.2f} ₽
-🔄 {previous_status} → {current_status}
+💵 Сумма: {self.format_currency(amount)}
+🔄 {previous_status} -> {current_status}
 
 Время: {TimezoneUtils.format_time_only(TimezoneUtils.now_msk())}"""
     
@@ -258,7 +263,7 @@ class NotificationGenerator:
         return f"""❌ Продажа {status_change} #{order_id}
 
 📦 Товар: {product_name}
-💵 Сумма: {amount:,.2f} ₽
+💵 Сумма: {self.format_currency(amount)}
 🔄 Статус: {'Отменена' if is_cancelled else 'Активна'}
 
 Время: {TimezoneUtils.format_time_only(TimezoneUtils.now_msk())}"""

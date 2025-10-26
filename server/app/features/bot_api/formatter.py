@@ -16,6 +16,11 @@ class BotMessageFormatter:
     def __init__(self, max_length: int = 4096):
         self.max_length = max_length
     
+    @staticmethod
+    def format_currency(amount: float) -> str:
+        """Форматировать валюту с пробелами вместо запятых"""
+        return f"{amount:,.0f}₽".replace(",", " ")
+    
     def format_dashboard(self, data: Dict[str, Any]) -> str:
         """Форматирование dashboard сообщения"""
         try:
@@ -32,8 +37,8 @@ class BotMessageFormatter:
 
 🛒 ЗАКАЗЫ (сегодня)
 • Новых заказов: {orders_today.get('count', 0)}
-• На сумму: {orders_today.get('amount', 0):,.0f}₽
-• Вчера: {orders_today.get('yesterday_count', 0)} заказов на {orders_today.get('yesterday_amount', 0):,.0f}₽
+• На сумму: {self.format_currency(orders_today.get('amount', 0))}
+• Вчера: {orders_today.get('yesterday_count', 0)} заказов на {self.format_currency(orders_today.get('yesterday_amount', 0))}
 • Рост к вчера: {orders_today.get('growth_percent', 0):+.0f}% по количеству
 
 📦 ОСТАТКИ
@@ -78,8 +83,8 @@ class BotMessageFormatter:
                     warehouse_to = order.get('warehouse_to', 'N/A')
                     
                     message += f"""🧾 {wb_order_id}
-   {order_date} | {amount:,.0f}₽
-   {warehouse_from} → {warehouse_to}
+   {order_date} | {self.format_currency(amount)}
+   {warehouse_from} -> {warehouse_to}
 
 """
             
@@ -118,8 +123,8 @@ class BotMessageFormatter:
                     
                     message += f"""📦 {product.get('name', 'N/A')} ({product.get('brand', 'N/A')})
    🆔 {product.get('nm_id', 'N/A')}
-   🏷️ Категория: {category} → {subject}
-   💰 Цена: {price:,.0f}₽ {f"(-{discount:,.0f}₽ = {final_price:,.0f}₽)" if discount > 0 else ""}
+   🏷️ Категория: {category} -> {subject}
+   💰 Цена: {self.format_currency(price)} {f"(-{self.format_currency(discount)} = {self.format_currency(final_price)})" if discount > 0 else ""}
    📊 Остатки: {stocks_str}
 """
                     if critical_sizes:
@@ -130,7 +135,7 @@ class BotMessageFormatter:
                         message += f"   ⚠️ {' '.join(critical_info)}\n"
                     
                     message += f"""   📈 Продажи: {product.get('sales_per_day', 0):.1f} шт/день (7дн)
-   💰 Цена: {product.get('price', 0):,.0f}₽ | Комиссия: {product.get('commission_percent', 0):.1f}%
+   💰 Цена: {self.format_currency(product.get('price', 0))} | Комиссия: {product.get('commission_percent', 0):.1f}%
 
 """
             
@@ -143,7 +148,7 @@ class BotMessageFormatter:
    📊 Остатки: {stocks_str}
    🔴 Все размеры = 0!
    📈 Продажи: {product.get('sales_per_day', 0):.1f} шт/день (7дн)
-   💰 Цена: {product.get('price', 0):,.0f}₽ | Комиссия: {product.get('commission_percent', 0):.1f}%
+   💰 Цена: {self.format_currency(product.get('price', 0))} | Комиссия: {product.get('commission_percent', 0):.1f}%
 
 """
             
@@ -239,20 +244,20 @@ class BotMessageFormatter:
                 period_data = sales_periods.get(period_key, {})
                 count = period_data.get("count", 0)
                 amount = period_data.get("amount", 0)
-                message += f"• {period_name}: {count} заказов на {amount:,.0f}₽\n"
+                message += f"• {period_name}: {count} заказов на {self.format_currency(amount)}\n"
             
             # Динамика
             message += f"""\n📈 ДИНАМИКА
 • Рост к вчера: {dynamics.get('yesterday_growth_percent', 0):+.0f}% по заказам, {dynamics.get('yesterday_growth_percent', 0):+.0f}% по сумме
 • Рост к прошлой неделе: {dynamics.get('week_growth_percent', 0):+.0f}% по заказам
-• Средний чек: {dynamics.get('average_check', 0):,.0f}₽ (стабильно)
+• Средний чек: {self.format_currency(dynamics.get('average_check', 0))} (стабильно)
 • Конверсия: {dynamics.get('conversion_percent', 0):.1f}% (норма)
 
 🏆 ТОП ТОВАРОВ (7 дней)"""
             
             for i, product in enumerate(top_products[:3], 1):  # Ограничиваем количество
                 stocks_str = self._format_stocks(product.get("stocks", {}))
-                message += f"""\n{i}. {product.get('name', 'N/A')} - {product.get('sales_count', 0)} шт. ({product.get('sales_amount', 0):,.0f}₽)
+                message += f"""\n{i}. {product.get('name', 'N/A')} - {product.get('sales_count', 0)} шт. ({self.format_currency(product.get('sales_amount', 0))})
    Рейтинг: {product.get('rating', 0):.1f}⭐ | Остаток: {stocks_str}"""
             
             # Остатки
@@ -336,40 +341,30 @@ class BotMessageFormatter:
             return "❌ Ошибка форматирования уведомления о заказе"
 
     def format_critical_stocks_notification(self, data: Dict[str, Any]) -> str:
-        """Форматирование уведомления о критичных остатках"""
+        """Форматирование уведомления о критичных остатках - НОВАЯ ЛОГИКА: детализация по складам"""
         try:
-            products = data.get("products", [])
+            nm_id = data.get("nm_id", "N/A")
+            name = data.get("name", f"Товар {nm_id}")
+            brand = data.get("brand", "")
+            total_quantity = data.get("total_quantity", 0)
+            stocks_by_warehouse = data.get("stocks_by_warehouse", {})
             
-            message = "⚠️ КРИТИЧНЫЕ ОСТАТКИ\n\n"
-            
-            for product in products[:3]:  # Ограничиваем количество
-                nm_id = product.get("nm_id", "N/A")
-                # Надежный fallback для названия товара
-                name = product.get("name") or product.get("product_name") or product.get("title") or f"Товар {nm_id}"
-                stocks = product.get("stocks", {})
-                critical_sizes = product.get("critical_sizes", [])
-                zero_sizes = product.get("zero_sizes", [])
-                days_left = product.get("days_left", {})
-                
-                stocks_str = self._format_stocks(stocks)
-                
-                message += f"""📦 {name}
-🆔 {nm_id}
-📊 Остатки: {stocks_str}
+            message = f"""⚠️ КРИТИЧНЫЕ ОСТАТКИ
 
-"""
-                
-                if critical_sizes:
-                    critical_info = []
-                    for size in critical_sizes:
-                        days = days_left.get(size, 0)
-                        critical_info.append(f"{size}({stocks.get(size, 0)}) - на {days} дней!")
-                    message += f"⚠️ Критично: {' '.join(critical_info)}\n"
-                
-                if zero_sizes:
-                    message += f"🔴 Нулевые: {', '.join(zero_sizes)} на всех складах\n"
-                
-                message += "\n"
+👗 {name} ({brand})
+🆔 {nm_id}
+
+📊 Остатки:"""
+            
+            # Показываем только склады с остатками > 0 (без размеров)
+            for warehouse_name, sizes in stocks_by_warehouse.items():
+                warehouse_total = sum(sizes.values())
+                if warehouse_total > 0:
+                    message += f"\n📦 {warehouse_name}: {warehouse_total} шт."
+            
+            message += f"""
+
+⚠️ Общий остаток: {total_quantity} шт. (критично ≤ 10)"""
             
             return self._truncate_message(message)
             
@@ -553,9 +548,9 @@ class BotMessageFormatter:
             message += f"""
 
 💰 Финансы:
-Цена заказа: {total_price:,.1f}₽
+Цена заказа: {self.format_currency(total_price)}
 СПП %: {spp_percent}%
-Цена для покупателя: {customer_price:,.1f}₽
+Цена для покупателя: {self.format_currency(customer_price)}
 Скидка: {discount_percent}%"""
             
             if warehouse_from or warehouse_to:
@@ -825,9 +820,9 @@ class BotMessageFormatter:
             message += f"• Всего продаж: {sales.get('total_sales', 0)}\n"
             message += f"• Выкупы: {sales.get('buyouts', 0)} ({sales.get('buyout_rate', 0):.1f}%)\n"
             message += f"• Возвраты: {sales.get('returns', 0)}\n"
-            message += f"• Общая сумма: {sales.get('total_amount', 0):,.0f}₽\n"
-            message += f"• Сумма выкупов: {sales.get('buyouts_amount', 0):,.0f}₽\n"
-            message += f"• Сумма возвратов: {sales.get('returns_amount', 0):,.0f}₽\n\n"
+            message += f"• Общая сумма: {self.format_currency(sales.get('total_amount', 0))}\n"
+            message += f"• Сумма выкупов: {self.format_currency(sales.get('buyouts_amount', 0))}\n"
+            message += f"• Сумма возвратов: {self.format_currency(sales.get('returns_amount', 0))}\n\n"
             
             # Сводка
             message += "📈 СВОДКА:\n"

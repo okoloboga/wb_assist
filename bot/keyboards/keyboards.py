@@ -1,5 +1,6 @@
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from typing import Dict, Any
+from utils.formatters import format_currency
 
 
 def main_keyboard() -> InlineKeyboardMarkup:
@@ -137,7 +138,7 @@ def create_orders_keyboard(orders: list, offset: int = 0, has_more: bool = False
         else:
             formatted_date = "N/A"
         
-        order_text = f"{formatted_date} | {order.get('amount', 0):,.0f}₽"
+        order_text = f"{formatted_date} | {format_currency(order.get('amount', 0))}"
         callback_data = f"order_details_{order.get('id', 'N/A')}"
         buttons.append([InlineKeyboardButton(
             text=order_text,

@@ -45,7 +45,7 @@ class EventDetector:
                     "customer_price": order.get("customer_price", 0),  # ← ДОБАВЛЕНО!
                     "discount_percent": order.get("discount_percent", 0),  # ← ДОБАВЛЕНО!
                     "order_date": order.get("order_date"),  # ← ДОБАВЛЕНО!
-                    "detected_at": TimezoneUtils.now_msk()
+                    "detected_at": TimezoneUtils.format_for_user(TimezoneUtils.now_msk())
                 }
                 events.append(event)
         
@@ -82,7 +82,7 @@ class EventDetector:
             if previous_status and previous_status != current_status:
                 event_type = self._get_status_change_event_type(previous_status, current_status)
                 
-                logger.info(f"🔍 [detect_status_changes] Status change detected: {previous_status} → {current_status}, event_type={event_type}")
+                logger.info(f"🔍 [detect_status_changes] Status change detected: {previous_status} -> {current_status}, event_type={event_type}")
                 
                 if event_type:  # Только для значимых изменений
                     event = {
@@ -94,7 +94,7 @@ class EventDetector:
                         "amount": order.get("amount", 0),
                         "product_name": order.get("product_name", ""),
                         "brand": order.get("brand", ""),
-                        "detected_at": TimezoneUtils.now_msk()
+                        "detected_at": TimezoneUtils.format_for_user(TimezoneUtils.now_msk())
                     }
                     events.append(event)
                     logger.info(f"🔍 [detect_status_changes] Event created: {event}")
@@ -135,7 +135,7 @@ class EventDetector:
                     "stocks": current_stocks_data,
                     "critical_sizes": self._get_critical_sizes(current_stocks_data),
                     "zero_sizes": self._get_zero_sizes(current_stocks_data),
-                    "detected_at": TimezoneUtils.now_msk()
+                    "detected_at": TimezoneUtils.format_for_user(TimezoneUtils.now_msk())
                 }
                 events.append(event)
         
@@ -202,7 +202,7 @@ class EventDetector:
                     "nm_id": sale.get("nm_id"),
                     "brand": sale.get("brand"),
                     "size": sale.get("size"),
-                    "detected_at": TimezoneUtils.now_msk().isoformat()
+                    "detected_at": TimezoneUtils.format_for_user(TimezoneUtils.now_msk())
                 }
                 events.append(event)
         
@@ -227,7 +227,7 @@ class EventDetector:
                         "current_status": current_sale.get("status"),
                         "amount": current_sale.get("amount"),
                         "sale_date": current_sale.get("sale_date"),
-                        "detected_at": TimezoneUtils.now_msk().isoformat()
+                        "detected_at": TimezoneUtils.format_for_user(TimezoneUtils.now_msk())
                     }
                     events.append(event)
                 
@@ -243,7 +243,7 @@ class EventDetector:
                         "is_cancelled": current_sale.get("is_cancel"),
                         "amount": current_sale.get("amount"),
                         "sale_date": current_sale.get("sale_date"),
-                        "detected_at": TimezoneUtils.now_msk().isoformat()
+                        "detected_at": TimezoneUtils.format_for_user(TimezoneUtils.now_msk())
                     }
                     events.append(event)
         

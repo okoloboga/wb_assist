@@ -30,6 +30,11 @@ logger = logging.getLogger(__name__)
 class NotificationService:
     """Единый сервис для управления всеми уведомлениями"""
     
+    @staticmethod
+    def format_currency(amount: float) -> str:
+        """Форматировать валюту с пробелами вместо запятых"""
+        return f"{amount:,.0f}₽".replace(",", " ")
+    
     def __init__(self, db: Session):
         self.db = db
         self._sync_locks = {}  # {cabinet_id: asyncio.Lock} - блокировки синхронизации
@@ -205,6 +210,9 @@ class NotificationService:
         """Простая обработка событий синхронизации (гибридный подход)"""
         try:
             logger.info(f"🔧 [process_sync_events_simple] Starting for user {user_id}, cabinet {cabinet_id}")
+            logger.info(f"🔧 [process_sync_events_simple] last_sync_at parameter: {last_sync_at}")
+            logger.info(f"🔧 [process_sync_events_simple] last_sync_at type: {type(last_sync_at)}")
+            logger.info(f"🔧 [process_sync_events_simple] last_sync_at tzinfo: {last_sync_at.tzinfo if last_sync_at else 'None'}")
             
             # 🚨 КРИТИЧЕСКАЯ ПРОВЕРКА: НЕ ОТПРАВЛЯЕМ УВЕДОМЛЕНИЯ ПРИ ПЕРВИЧНОЙ СИНХРОНИЗАЦИИ
             if last_sync_at is None:
@@ -249,15 +257,24 @@ class NotificationService:
             
             # 2. ВЫКУПЫ (простая проверка)
             if user_settings.order_buyouts_enabled:
+                logger.info(f"🔧 [process_sync_events_simple] Checking buyouts (enabled={user_settings.order_buyouts_enabled})")
                 buyouts = await self._check_buyouts_simple(cabinet_id, last_sync_at)
-                for order in buyouts:
-                    notifications.append({
-                        "type": "order_buyout",
-                        "user_id": user_id,
-                        "order_id": order.sale_id,
-                        "data": self._format_sale_data_simple(order),
-                        "telegram_text": self._format_buyout_notification_simple(order)
-                    })
+                logger.info(f"🔧 [process_sync_events_simple] Processing {len(buyouts)} buyouts")
+                for i, order in enumerate(buyouts):
+                    try:
+                        logger.info(f"🔧 [process_sync_events_simple] Processing buyout {i+1}/{len(buyouts)}: {order.sale_id}")
+                        notifications.append({
+                            "type": "order_buyout",
+                            "user_id": user_id,
+                            "order_id": order.sale_id,
+                            "data": self._format_sale_data_simple(order),
+                            "telegram_text": self._format_buyout_notification_simple(order)
+                        })
+                        logger.info(f"🔧 [process_sync_events_simple] Buyout notification added successfully")
+                    except Exception as e:
+                        logger.error(f"🔧 [process_sync_events_simple] Error processing buyout {order.sale_id}: {e}")
+            else:
+                logger.info(f"🔧 [process_sync_events_simple] Buyouts disabled for user {user_id}")
             
             # 3. ОТМЕНЫ (простая проверка)
             if user_settings.order_cancellations_enabled:
@@ -273,26 +290,30 @@ class NotificationService:
             
             # 4. ВОЗВРАТЫ (простая проверка)
             if user_settings.order_returns_enabled:
+                logger.info(f"🔧 [process_sync_events_simple] Checking returns (enabled={user_settings.order_returns_enabled})")
                 returns = await self._check_returns_simple(cabinet_id, last_sync_at)
-                for order in returns:
-                    notifications.append({
-                        "type": "order_return",
-                        "user_id": user_id,
-                        "order_id": order.sale_id,
-                        "data": self._format_sale_data_simple(order),
-                        "telegram_text": self._format_return_notification_simple(order)
-                    })
+                logger.info(f"🔧 [process_sync_events_simple] Processing {len(returns)} returns")
+                for i, order in enumerate(returns):
+                    try:
+                        logger.info(f"🔧 [process_sync_events_simple] Processing return {i+1}/{len(returns)}: {order.sale_id}")
+                        notifications.append({
+                            "type": "order_return",
+                            "user_id": user_id,
+                            "order_id": order.sale_id,
+                            "data": self._format_sale_data_simple(order),
+                            "telegram_text": self._format_return_notification_simple(order)
+                        })
+                        logger.info(f"🔧 [process_sync_events_simple] Return notification added successfully")
+                    except Exception as e:
+                        logger.error(f"🔧 [process_sync_events_simple] Error processing return {order.sale_id}: {e}")
+            else:
+                logger.info(f"🔧 [process_sync_events_simple] Returns disabled for user {user_id}")
             
-            # 5. КРИТИЧНЫЕ ОСТАТКИ (простая проверка) - ОТКЛЮЧЕНО (слишком много записей)
-            # if user_settings.critical_stocks_enabled:
-            #     critical_stocks = await self._check_critical_stocks_simple(cabinet_id, last_sync_at)
-            #     if critical_stocks:
-            #         notifications.append({
-            #             "type": "critical_stocks",
-            #             "user_id": user_id,
-            #             "data": self._format_critical_stocks_data_simple(critical_stocks),
-            #             "telegram_text": self._format_critical_stocks_notification_simple(critical_stocks)
-            #         })
+            # 5. КРИТИЧНЫЕ ОСТАТКИ (новая логика) - ВКЛЮЧЕНО
+            if user_settings.critical_stocks_enabled:
+                critical_stocks = await self._get_critical_stocks(user_id, [cabinet_id], last_sync_at)
+                if critical_stocks:
+                    notifications.extend(critical_stocks)
             
             # 6. НЕГАТИВНЫЕ ОТЗЫВЫ (простая проверка)
             if user_settings.negative_reviews_enabled:
@@ -429,7 +450,7 @@ class NotificationService:
                         "nm_id": review.get("nm_id"),
                         "user_name": review.get("user_name", ""),
                         "created_date": review.get("created_date"),
-                        "detected_at": TimezoneUtils.now_msk()
+                        "detected_at": TimezoneUtils.format_for_user(TimezoneUtils.now_msk())
                     }
                     events.append(event)
         
@@ -488,7 +509,7 @@ class NotificationService:
                             "size": sale.get("size", ""),
                             "nm_id": sale.get("nm_id"),
                             "sale_date": sale.get("sale_date"),
-                            "detected_at": TimezoneUtils.now_msk()
+                            "detected_at": TimezoneUtils.format_for_user(TimezoneUtils.now_msk())
                         }
                         events.append(event)
                     
@@ -505,7 +526,7 @@ class NotificationService:
                             "size": sale.get("size", ""),
                             "nm_id": sale.get("nm_id"),
                             "sale_date": sale.get("sale_date"),
-                            "detected_at": TimezoneUtils.now_msk()
+                            "detected_at": TimezoneUtils.format_for_user(TimezoneUtils.now_msk())
                         }
                         events.append(event)
         
@@ -764,16 +785,16 @@ class NotificationService:
         if barcode:
             message += f"🎹 {barcode}\n"
         message += f"🚛 {warehouse_from} ⟶ {warehouse_to}\n"
-        message += f"💰 Цена заказа: {order_amount:,.0f}₽\n"
+        message += f"💰 Цена заказа: {self.format_currency(order_amount)}\n"
         
         # Условное отображение полей
         if spp_percent or customer_price:
-            message += f"🛍 СПП: {spp_percent}% (Цена для покупателя: {customer_price:,.0f}₽)\n"
+            message += f"🛍 СПП: {spp_percent}% (Цена для покупателя: {self.format_currency(customer_price)})\n"
         # Логистика исключена из системы
         if dimensions or volume_liters:
             message += f"        Габариты: {dimensions}. ({volume_liters}л.)\n"
         if warehouse_rate_per_liter or warehouse_rate_extra:
-            message += f"        Тариф склада: {warehouse_rate_per_liter:,.1f}₽ за 1л. | {warehouse_rate_extra:,.1f}₽ за л. свыше)\n"
+            message += f"        Тариф склада: {self.format_currency(warehouse_rate_per_liter)} за 1л. | {self.format_currency(warehouse_rate_extra)} за л. свыше)\n"
         if rating or reviews_count:
             message += f"🌟 Оценка: {rating}\n"
         message += f"💬 Отзывы: {reviews_count}\n"
@@ -833,7 +854,7 @@ class NotificationService:
                 "priority": "HIGH",
                 "title": "Ошибка системы",
                 "content": error_message,
-                "sent_at": TimezoneUtils.now_msk(),
+                "sent_at": TimezoneUtils.format_for_user(TimezoneUtils.now_msk()),
                 "status": "pending"
             })
             
@@ -1046,7 +1067,7 @@ class NotificationService:
                     "user_id": user_id,
                     "data": order_data,
                     "telegram_text": telegram_text,
-                    "created_at": order.created_at or TimezoneUtils.now_msk(),
+                    "created_at": TimezoneUtils.format_for_user(order.created_at or TimezoneUtils.now_msk()),
                     "priority": "MEDIUM"
                 })
             
@@ -1119,7 +1140,7 @@ class NotificationService:
                             "user_name": review.user_name,
                             "created_at": review.created_date.isoformat() if review.created_date else None
                         },
-                        "created_at": review.created_date or TimezoneUtils.now_msk(),
+                        "created_at": TimezoneUtils.format_for_user(review.created_date or TimezoneUtils.now_msk()),
                         "priority": "HIGH"
                     })
                 # Положительные отзывы (4-5 звезд) игнорируем - уведомления не нужны
@@ -1131,7 +1152,7 @@ class NotificationService:
             return []
     
     async def _get_critical_stocks(self, user_id: int, cabinet_ids: List[int], last_check: datetime) -> List[Dict[str, Any]]:
-        """Получение критических остатков с защитой от межскладских переводов и дублирования"""
+        """Получение критических остатков - НОВАЯ ЛОГИКА: группировка по товару, порог 10, детализация по складам"""
         try:
             from sqlalchemy import and_
             from datetime import timedelta
@@ -1143,9 +1164,8 @@ class NotificationService:
                     logger.info(f"Skipping critical stocks notifications for cabinet {cabinet.id} - first sync")
                     return []
             
-            # УПРОЩЕННАЯ ЛОГИКА: Дублирование проверяется в атомарной отправке
-            
-            critical_threshold = 2
+            # НОВАЯ ЛОГИКА: Проверяем общий остаток товара по всем складам и размерам
+            critical_threshold = 10  # ПОВЫШЕН ПОРОГ
             
             # Получаем предыдущее состояние остатков (до last_check)
             previous_stocks = self.db.query(WBStock).filter(
@@ -1166,53 +1186,89 @@ class NotificationService:
             if not current_stocks:
                 return []
             
-            # Группируем остатки по товарам и размерам
+            # НОВАЯ ГРУППИРОВКА: только по nm_id (весь товар)
             def group_stocks_by_product(stocks):
                 grouped = {}
                 for stock in stocks:
-                    key = (stock.nm_id, stock.size or "")
-                    if key not in grouped:
-                        grouped[key] = []
-                    grouped[key].append(stock)
+                    nm_id = stock.nm_id
+                    if nm_id not in grouped:
+                        grouped[nm_id] = []
+                    grouped[nm_id].append(stock)
                 return grouped
             
             prev_grouped = group_stocks_by_product(previous_stocks)
             curr_grouped = group_stocks_by_product(current_stocks)
             
-            # Находим товары с реальным уменьшением остатков
             critical_events = []
-            for (nm_id, size), current_stock_list in curr_grouped.items():
-                # Суммируем остатки по всем складам для текущего состояния
-                current_total = sum(stock.quantity or 0 for stock in current_stock_list)
+            for nm_id, current_stock_list in curr_grouped.items():
+                # Получаем все текущие остатки товара (не только обновленные)
+                all_current_stocks = self.db.query(WBStock).filter(
+                    and_(
+                        WBStock.cabinet_id.in_(cabinet_ids),
+                        WBStock.nm_id == nm_id
+                    )
+                ).all()
                 
-                # Получаем предыдущее состояние
-                prev_stock_list = prev_grouped.get((nm_id, size), [])
+                # Суммируем ВСЕ размеры и ВСЕ склады по всем записям товара
+                current_total = sum(stock.quantity or 0 for stock in all_current_stocks)
+                
+                prev_stock_list = prev_grouped.get(nm_id, [])
                 previous_total = sum(stock.quantity or 0 for stock in prev_stock_list)
                 
-                # Проверяем реальное уменьшение остатков (дублирование проверяется в атомарной отправке)
+                # Проверяем общий остаток товара
                 if (previous_total > critical_threshold and 
                     current_total <= critical_threshold and 
                     current_total < previous_total):
                     
-                    # Получаем информацию о товаре
+                    # Получаем информацию о товаре (включая изображение)
                     product = self.db.query(WBProduct).filter(
                         WBProduct.nm_id == nm_id
                     ).first()
                     
-                    critical_events.append({
-                    "type": "critical_stocks",
-                    "user_id": user_id,
-                        "created_at": TimezoneUtils.now_msk(),
-                    "data": {
+                    # Формируем детализацию по складам - ПОКАЗЫВАЕМ ВСЕ СКЛАДЫ ТОВАРА
+                    stocks_by_warehouse = {}
+                    for stock in all_current_stocks:
+                        warehouse_name = stock.warehouse_name or "Неизвестный склад"
+                        size = stock.size or "ONE SIZE"
+                        quantity = stock.quantity or 0
+                        
+                        if warehouse_name not in stocks_by_warehouse:
+                            stocks_by_warehouse[warehouse_name] = {}
+                        
+                        if size in stocks_by_warehouse[warehouse_name]:
+                            stocks_by_warehouse[warehouse_name][size] += quantity
+                        else:
+                            stocks_by_warehouse[warehouse_name][size] = quantity
+                    
+                    # Генерируем текст уведомления
+                    telegram_text = self.message_formatter.format_critical_stocks_notification({
                         "nm_id": nm_id,
+                        "name": product.name if product else f"Товар {nm_id}",
+                        "brand": product.brand if product else "",
+                        "image_url": product.image_url if product else None,
+                        "total_quantity": current_total,
+                        "previous_quantity": previous_total,
+                        "decreased_by": previous_total - current_total,
+                        "stocks_by_warehouse": stocks_by_warehouse,
+                        "detected_at": TimezoneUtils.format_for_user(TimezoneUtils.now_msk())
+                    })
+                    
+                    critical_events.append({
+                        "type": "critical_stocks",
+                        "user_id": user_id,
+                        "created_at": TimezoneUtils.format_for_user(TimezoneUtils.now_msk()),
+                        "data": {
+                            "nm_id": nm_id,
                             "name": product.name if product else f"Товар {nm_id}",
                             "brand": product.brand if product else "",
-                            "size": size,
+                            "image_url": product.image_url if product else None,  # ИЗОБРАЖЕНИЕ!
+                            "total_quantity": current_total,
                             "previous_quantity": previous_total,
-                            "current_quantity": current_total,
                             "decreased_by": previous_total - current_total,
-                            "detected_at": TimezoneUtils.now_msk()
-                        }
+                            "stocks_by_warehouse": stocks_by_warehouse,  # ПО СКЛАДАМ!
+                            "detected_at": TimezoneUtils.format_for_user(TimezoneUtils.now_msk())
+                        },
+                        "telegram_text": telegram_text
                     })
             
             return critical_events
@@ -1294,7 +1350,7 @@ class NotificationService:
                         "stocks": {},  # Получать из остатков
                         "stock_days": {}  # Получать из остатков
                     },
-                    "created_at": order.updated_at or TimezoneUtils.now_msk(),
+                    "created_at": TimezoneUtils.format_for_user(order.updated_at or TimezoneUtils.now_msk()),
                     "priority": priority
                 })
             
@@ -2043,21 +2099,36 @@ class NotificationService:
         """Простая проверка выкупов - ИСПРАВЛЕНО: ищем в WBSales с момента последней синхронизации"""
         try:
             from app.features.wb_api.models_sales import WBSales
+            from app.utils.timezone import TimezoneUtils
             
-            # Ищем выкупы с момента последней синхронизации
+            # ИСПРАВЛЕНИЕ: last_sync_at уже приходит в UTC из БД!
+            # sale_date в БД хранится в UTC, last_sync_at тоже в UTC
+            # Поэтому НЕ нужна конвертация!
+            logger.info(f"🔍 [_check_buyouts_simple] Checking buyouts for cabinet {cabinet_id}")
+            logger.info(f"🔍 [_check_buyouts_simple] last_sync_at (UTC): {last_sync_at}")
+            logger.info(f"🔍 [_check_buyouts_simple] last_sync_at type: {type(last_sync_at)}")
+            logger.info(f"🔍 [_check_buyouts_simple] last_sync_at tzinfo: {last_sync_at.tzinfo if last_sync_at else 'None'}")
+            
+            # Ищем выкупы с момента последней синхронизации (оба в UTC)
             buyouts = self.db.query(WBSales).filter(
                 WBSales.cabinet_id == cabinet_id,
-                WBSales.sale_date > last_sync_at,  # С момента последней синхронизации
+                WBSales.sale_date > last_sync_at,  # Сравниваем UTC с UTC напрямую
                 WBSales.type == "buyout",
                 WBSales.is_cancel == False
             ).all()
             
-            if buyouts:  # Логируем только если есть выкупы
-                logger.info(f"🔍 [Simple] Found {len(buyouts)} buyouts for cabinet {cabinet_id}")
+            logger.info(f"🔍 [_check_buyouts_simple] Found {len(buyouts)} buyouts for cabinet {cabinet_id}")
+            if buyouts and len(buyouts) > 0:
+                logger.info(f"🔍 [_check_buyouts_simple] First buyout: sale_id={buyouts[0].sale_id}, sale_date={buyouts[0].sale_date}, nm_id={buyouts[0].nm_id}")
+                logger.info(f"🔍 [_check_buyouts_simple] First buyout sale_date type: {type(buyouts[0].sale_date)}")
+                logger.info(f"🔍 [_check_buyouts_simple] First buyout sale_date tzinfo: {buyouts[0].sale_date.tzinfo if buyouts[0].sale_date else 'None'}")
+            
             return buyouts
             
         except Exception as e:
             logger.error(f"Error checking buyouts: {e}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
             return []
     
     async def _check_cancellations_simple(self, cabinet_id: int, last_sync_at: datetime) -> List:
@@ -2082,21 +2153,32 @@ class NotificationService:
         """Простая проверка возвратов - ИСПРАВЛЕНО: ищем с момента последней синхронизации"""
         try:
             from app.features.wb_api.models_sales import WBSales
+            from app.utils.timezone import TimezoneUtils
             
-            # Ищем возвраты с момента последней синхронизации
+            # ИСПРАВЛЕНИЕ: last_sync_at уже приходит в UTC из БД!
+            # sale_date в БД хранится в UTC, last_sync_at тоже в UTC
+            # Поэтому НЕ нужна конвертация!
+            logger.info(f"🔍 [_check_returns_simple] Checking returns for cabinet {cabinet_id}")
+            logger.info(f"🔍 [_check_returns_simple] last_sync_at (UTC): {last_sync_at}")
+            
+            # Ищем возвраты с момента последней синхронизации (оба в UTC)
             returns = self.db.query(WBSales).filter(
                 WBSales.cabinet_id == cabinet_id,
-                WBSales.sale_date > last_sync_at,  # С момента последней синхронизации
+                WBSales.sale_date > last_sync_at,  # Сравниваем UTC с UTC напрямую
                 WBSales.type == "return",
                 WBSales.is_cancel == False
             ).all()
             
-            if returns:  # Логируем только если есть возвраты
-                logger.info(f"🔍 [Simple] Found {len(returns)} returns for cabinet {cabinet_id}")
+            logger.info(f"🔍 [_check_returns_simple] Found {len(returns)} returns for cabinet {cabinet_id}")
+            if returns and len(returns) > 0:
+                logger.info(f"🔍 [_check_returns_simple] First return: sale_id={returns[0].sale_id}, sale_date={returns[0].sale_date}, nm_id={returns[0].nm_id}")
+            
             return returns
             
         except Exception as e:
             logger.error(f"Error checking returns: {e}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
             return []
     
     async def _check_critical_stocks_simple(self, cabinet_id: int, last_sync_at: datetime) -> List:
@@ -2242,12 +2324,12 @@ class NotificationService:
 🎹 {order.barcode}
 
 💰 Финансы:
-Цена заказа: {order.total_price:,.0f}₽
+Цена заказа: {self.format_currency(order.total_price)}
 СПП %: {order.spp_percent:.1f}%
-Цена для покупателя: {order.customer_price:,.0f}₽
+Цена для покупателя: {self.format_currency(order.customer_price)}
 Скидка: {order.discount_percent:.1f}%
 
-🚛 {order.warehouse_from} → {order.warehouse_to}
+🚛 {order.warehouse_from} -> {order.warehouse_to}
 
 📈 Выкупы за периоды:
 7 | 14 | 30 дней:
@@ -2271,8 +2353,8 @@ class NotificationService:
         if sale_date:
             if sale_date.tzinfo is None:
                 sale_date = sale_date.replace(tzinfo=timezone.utc)
-            # ИСПРАВЛЕНО: Правильная конвертация UTC в MSK (+3 часа)
-            sale_date_msk = sale_date.astimezone(timezone.utc).replace(tzinfo=None) + datetime.timedelta(hours=3)
+            # ИСПРАВЛЕНО: Используем TimezoneUtils.from_utc() как в отменах - правильная конвертация UTC в МСК
+            sale_date_msk = TimezoneUtils.from_utc(sale_date)
             formatted_date = sale_date_msk.strftime("%Y-%m-%d %H:%M")
         else:
             formatted_date = "N/A"
@@ -2293,7 +2375,7 @@ class NotificationService:
 🎹 {sale.brand}
 
 💰 Финансы:
-Сумма: {sale.amount:,.0f}₽
+Сумма: {self.format_currency(sale.amount)}
 Тип: {sale.type}
 Статус: {sale.status or 'N/A'}
 
@@ -2342,12 +2424,12 @@ class NotificationService:
 🎹 {order.barcode}
 
 💰 Финансы:
-Цена заказа: {order.total_price:,.0f}₽
+Цена заказа: {self.format_currency(order.total_price)}
 СПП %: {order.spp_percent:.1f}%
-Цена для покупателя: {order.customer_price:,.0f}₽
+Цена для покупателя: {self.format_currency(order.customer_price)}
 Скидка: {order.discount_percent:.1f}%
 
-🚛 {order.warehouse_from} → {order.warehouse_to}
+🚛 {order.warehouse_from} -> {order.warehouse_to}
 
 📈 Выкупы за периоды:
 7 | 14 | 30 дней:
@@ -2371,8 +2453,8 @@ class NotificationService:
         if sale_date:
             if sale_date.tzinfo is None:
                 sale_date = sale_date.replace(tzinfo=timezone.utc)
-            # ИСПРАВЛЕНО: Правильная конвертация UTC в MSK (+3 часа)
-            sale_date_msk = sale_date.astimezone(timezone.utc).replace(tzinfo=None) + datetime.timedelta(hours=3)
+            # ИСПРАВЛЕНО: Используем TimezoneUtils.from_utc() как в отменах - правильная конвертация UTC в МСК
+            sale_date_msk = TimezoneUtils.from_utc(sale_date)
             formatted_date = sale_date_msk.strftime("%Y-%m-%d %H:%M")
         else:
             formatted_date = "N/A"
@@ -2393,7 +2475,7 @@ class NotificationService:
 🎹 {sale.brand}
 
 💰 Финансы:
-Сумма: {sale.amount:,.0f}₽
+Сумма: {self.format_currency(sale.amount)}
 Тип: {sale.type}
 Статус: {sale.status or 'N/A'}
 

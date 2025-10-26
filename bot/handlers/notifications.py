@@ -8,6 +8,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from aiogram import Router, F
 from aiogram.types import CallbackQuery, Message, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters import Command
+from utils.formatters import format_currency
 from aiogram.fsm.context import FSMContext
 
 logger = logging.getLogger(__name__)
@@ -174,12 +175,12 @@ async def handle_new_order_notification(message: Message, data: dict):
     text += f"🆔 {nm_id} / {supplier_article} / ({size})\n"
     text += f"🎹 {barcode}\n"
     text += f"🚛 {warehouse_from} ⟶ {warehouse_to}\n"
-    text += f"💰 Цена заказа: {order_amount:,.0f}₽\n"
-    text += f"💶 Комиссия WB: {commission_percent}% ({commission_amount:,.0f}₽)\n"
-    text += f"🛍 СПП: {spp_percent}% (Цена для покупателя: {customer_price:,.0f}₽)\n"
+    text += f"💰 Цена заказа: {format_currency(order_amount)}\n"
+    text += f"💶 Комиссия WB: {commission_percent}% ({format_currency(commission_amount)})\n"
+    text += f"🛍 СПП: {spp_percent}% (Цена для покупателя: {format_currency(customer_price)})\n"
     # Логистика исключена из системы
     text += f"        Габариты: {dimensions}. ({volume_liters}л.)\n"
-    text += f"        Тариф склада: {warehouse_rate_per_liter:,.1f}₽ за 1л. | {warehouse_rate_extra:,.1f}₽ за л. свыше)\n"
+    text += f"        Тариф склада: {format_currency(warehouse_rate_per_liter)} за 1л. | {format_currency(warehouse_rate_extra)} за л. свыше)\n"
     text += f"🌟 Оценка: {rating}\n"
     text += f"💬 Отзывы: {reviews_count}\n"
     text += f"⚖️ Выкуп/с учетом возврата (7/14/30):\n"
@@ -200,32 +201,39 @@ async def handle_new_order_notification(message: Message, data: dict):
 
 
 async def handle_critical_stocks_notification(message: Message, data: dict):
-    """Обработать уведомление о критичных остатках"""
-    products = data.get("data", {}).get("products", [])
+    """Обработать уведомление о критичных остатках - НОВАЯ ЛОГИКА: детализация по складам"""
+    nm_id = data.get("nm_id", "N/A")
+    name = data.get("name", f"Товар {nm_id}")
+    brand = data.get("brand", "")
+    total_quantity = data.get("total_quantity", 0)
+    stocks_by_warehouse = data.get("stocks_by_warehouse", {})
+    image_url = data.get("image_url")
     
-    text = "⚠️ КРИТИЧНЫЕ ОСТАТКИ!\n\n"
+    text = f"""⚠️ КРИТИЧНЫЕ ОСТАТКИ
+
+👗 {name} ({brand})
+🆔 {nm_id}
+
+📊 Остатки:"""
     
-    for product in products[:3]:  # Показываем максимум 3 товара
-        text += f"📦 {product.get('name', 'N/A')} ({product.get('brand', 'N/A')})\n"
-        text += f"🆔 {product.get('nm_id', 'N/A')}\n"
-        text += f"📊 Остатки: {format_stocks_summary(product.get('stocks', {}))}\n"
-        
-        critical_sizes = product.get("critical_sizes", [])
-        zero_sizes = product.get("zero_sizes", [])
-        
-        if critical_sizes:
-            text += f"⚠️ Критично: {', '.join(critical_sizes)}\n"
-        if zero_sizes:
-            text += f"🔴 Нулевые: {', '.join(zero_sizes)}\n"
-        
-        text += "\n"
+    # Показываем только склады с остатками > 0 (без размеров)
+    for warehouse_name, sizes in stocks_by_warehouse.items():
+        warehouse_total = sum(sizes.values())
+        if warehouse_total > 0:
+            text += f"\n📦 {warehouse_name}: {warehouse_total} шт."
     
-    if len(products) > 3:
-        text += f"... и еще {len(products) - 3} товаров\n\n"
+    text += f"""
+
+⚠️ Общий остаток: {total_quantity} шт. (критично ≤ 10)"""
     
-    text += "💡 Нажмите /stocks для подробного отчета"
-    
-    await message.answer(text)
+    # Отправляем с изображением если есть
+    if image_url:
+        await message.answer_photo(
+            photo=image_url,
+            caption=text
+        )
+    else:
+        await message.answer(text)
 
 
 async def handle_new_review_notification(message: Message, data: dict):

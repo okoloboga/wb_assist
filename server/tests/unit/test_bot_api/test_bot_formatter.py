@@ -60,7 +60,7 @@ class TestBotMessageFormatter:
         assert "Последняя синхронизация: 2 мин назад" in result
         assert "Всего товаров: 45" in result
         assert "Новых заказов: 19" in result
-        assert "На сумму: 26,790₽" in result
+        assert "На сумму: 26 790₽" in result
         assert "Критичных товаров: 3" in result
         assert "Новых отзывов: 5" in result
         assert "Средний рейтинг: 4.8/5" in result
@@ -99,14 +99,14 @@ class TestBotMessageFormatter:
         result = formatter.format_orders(orders_data)
         
         assert "🛒 ПОСЛЕДНИЕ ЗАКАЗЫ" in result
-        assert "#154 | 12:48 | 1,410₽" in result
+        assert "#154 | 12:48 | 1 410₽" in result
         assert "Шифоновая блузка (S)" in result
         assert "SLAVALOOK BRAND" in result
-        assert "Электросталь → ЦФО/Москва" in result
+        assert "Электросталь -> ЦФО/Москва" in result
         assert "Комиссия: 29.5%" in result
         assert "Рейтинг: 4.8⭐" in result
         assert "Всего заказов: 19" in result
-        assert "Общая сумма: 26,790₽" in result
+        assert "Общая сумма: 26 790₽" in result
 
     def test_format_critical_stocks_message(self, formatter):
         """Тест форматирования сообщения о критичных остатках"""
@@ -250,14 +250,14 @@ class TestBotMessageFormatter:
         result = formatter.format_analytics(analytics_data)
         
         assert "📈 АНАЛИТИКА ПРОДАЖ" in result
-        assert "Сегодня: 19 заказов на 26,790₽" in result
-        assert "Вчера: 24 заказов на 33,840₽" in result
-        assert "За 7 дней: 156 заказов на 234,500₽" in result
+        assert "Сегодня: 19 заказов на 26 790₽" in result
+        assert "Вчера: 24 заказов на 33 840₽" in result
+        assert "За 7 дней: 156 заказов на 234 500₽" in result
         assert "Рост к вчера: -21% по заказам" in result
-        assert "Средний чек: 1,410₽" in result
+        assert "Средний чек: 1 410₽" in result
         assert "Конверсия: 3.2%" in result
         assert "🏆 ТОП ТОВАРОВ" in result
-        assert "Шифоновая блузка - 73 шт. (46,800₽)" in result
+        assert "Шифоновая блузка - 73 шт. (46 800₽)" in result
 
     def test_format_sync_status_message(self, formatter):
         """Тест форматирования сообщения о статусе синхронизации"""
@@ -321,11 +321,11 @@ class TestBotMessageFormatter:
         result = formatter.format_new_order_notification(order_data)
         
         assert "🎉 НОВЫЙ ЗАКАЗ!" in result
-        assert "#154 | 12:48 | 1,410₽" in result
+        assert "#154 | 12:48 | 1 410₽" in result
         assert "SLAVALOOK BRAND" in result
         assert "Шифоновая блузка (S)" in result
-        assert "Электросталь → ЦФО/Москва" in result
-        assert "Сегодня: 19 заказов на 26,790₽" in result
+        assert "Электросталь -> ЦФО/Москва" in result
+        assert "Сегодня: 19 заказов на 26 790₽" in result
         assert "Остаток: S(13) M(1) L(0) XL(0)" in result
 
     def test_format_critical_stocks_notification(self, formatter):
