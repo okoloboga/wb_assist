@@ -381,3 +381,7 @@ async def safe_send_message(bot: Bot, telegram_id: int, text: str, reply_markup=
 
 
 # Все проблемные функции с неправильными импортами удалены - теперь используется простой подход
+
+@webhook_app.get("/health")
+async def webhook_health():
+    return {"status": "ok"}

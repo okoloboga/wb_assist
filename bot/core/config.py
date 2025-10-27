@@ -38,6 +38,9 @@ class BotConfig:
     
     # Webhook настройки
     webhook_port: int = 8001  # Порт для webhook сервера
+
+    # Адрес GPT сервиса
+    gpt_service_url: str = "http://127.0.0.1:9000"
     
     # LLM (GPT) настройки
     openai_api_key: Optional[str] = None
@@ -74,6 +77,8 @@ def load_config() -> BotConfig:
         enable_notifications=os.getenv("ENABLE_NOTIFICATIONS", "true").lower() == "true",
         notification_retry_attempts=int(os.getenv("NOTIFICATION_RETRY_ATTEMPTS", "5")),
         webhook_port=int(os.getenv("WEBHOOK_PORT", "8001")),
+        # GPT Service URL
+        gpt_service_url=os.getenv("GPT_SERVICE_URL", "http://127.0.0.1:9000"),
         # LLM (GPT)
         openai_api_key=os.getenv("OPENAI_API_KEY"),
         openai_base_url=os.getenv("OPENAI_BASE_URL"),

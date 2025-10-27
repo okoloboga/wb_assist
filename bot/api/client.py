@@ -70,13 +70,14 @@ class BotAPIClient:
             try:
                 async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=timeout)) as session:
                     url = f"{self.base_url}{endpoint}"
-                    
-                    if method.upper() == "GET":
-                        async with session.get(url, params=params, headers=self.headers) as response:
-                            return await self._handle_response(response)
-                    elif method.upper() == "POST":
-                        async with session.post(url, json=data, headers=self.headers) as response:
-                            return await self._handle_response(response)
+                    async with session.request(
+                        method=method.upper(),
+                        url=url,
+                        headers=self.headers,
+                        params=params,
+                        json=data
+                    ) as response:
+                        return await self._handle_response(response)
                             
             except asyncio.TimeoutError:
                 logger.warning(f"⏰ Timeout на попытке {attempt + 1}/{self.max_retries} для {endpoint}")
@@ -86,7 +87,7 @@ class BotAPIClient:
                 else:
                     return BotAPIResponse(
                         success=False,
-                        error=f"Timeout после {self.max_retries} попыток",
+                        error="Request timeout",
                         status_code=408
                     )
                     
@@ -101,6 +102,13 @@ class BotAPIClient:
                         error=f"Network error: {str(e)}",
                         status_code=500
                     )
+            except Exception as e:
+                logger.error(f"💥 Непредвиденная ошибка при запросе: {e}")
+                return BotAPIResponse(
+                    success=False,
+                    error="Internal client error",
+                    status_code=500
+                )
         
         return BotAPIResponse(
             success=False,
@@ -147,8 +155,7 @@ class BotAPIClient:
                     status_code=response.status
                 )
             else:
-                error_msg = data.get("detail", f"HTTP {response.status}")
-                logger.error(f"❌ API error {response.status}: {error_msg}")
+                error_msg = data.get("error") or data.get("detail") or f"HTTP {response.status}"
                 return BotAPIResponse(
                     success=False,
                     error=error_msg,
@@ -194,7 +201,6 @@ class BotAPIClient:
                 ) as resp:
                     logger.info(f"📡 Получен ответ от сервера:")
                     logger.info(f"   📊 Status: {resp.status}")
-                    logger.info(f"   📋 Headers: {dict(resp.headers)}")
                     
                     try:
                         response_data = await resp.json()
@@ -282,7 +288,6 @@ class BotAPIClient:
                 ) as resp:
                     logger.info(f"📡 Получен ответ от сервера:")
                     logger.info(f"   📊 Status: {resp.status}")
-                    logger.info(f"   📋 Headers: {dict(resp.headers)}")
                     
                     try:
                         response_data = await resp.json()
@@ -343,7 +348,7 @@ class BotAPIClient:
     ) -> BotAPIResponse:
         """Получить последние заказы пользователя с фильтрацией по статусу"""
         logger.info(f"📦 Получение заказов для пользователя {user_id}, limit={limit}, offset={offset}, status={status}")
-        params = {"telegram_id": user_id, "limit": limit, "offset": offset}
+        params = {"limit": limit, "offset": offset}
         if status:
             params["status"] = status
         return await self._make_request_with_retry("GET", "/orders/recent", params=params)

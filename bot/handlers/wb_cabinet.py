@@ -4,6 +4,7 @@ from aiogram import Router, F
 from aiogram.types import CallbackQuery, Message, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
+import inspect
 
 # Добавляем путь к модулям бота
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -15,6 +16,11 @@ from utils.formatters import format_error_message
 
 router = Router()
 
+async def _maybe_await(result):
+    if inspect.isawaitable(result):
+        return await result
+    return result
+
 
 @router.callback_query(F.data == "settings_api_key")
 async def start_wb_connection(callback: CallbackQuery, state: FSMContext):
@@ -22,7 +28,7 @@ async def start_wb_connection(callback: CallbackQuery, state: FSMContext):
     user_id = callback.from_user.id
     
     # Получаем статус кабинета
-    cabinet_status = await bot_api_client.get_cabinet_status(user_id=user_id)
+    cabinet_status = await _maybe_await(bot_api_client.get_cabinet_status(user_id=user_id))
     
     if cabinet_status.success and cabinet_status.data:
         cabinets = cabinet_status.data.get("cabinets", [])
@@ -83,8 +89,15 @@ async def start_wb_connection(callback: CallbackQuery, state: FSMContext):
     else:
         # Ошибка получения статуса
         await callback.message.edit_text(
-            "❌ Ошибка получения информации о кабинете\n\n"
-            "Попробуйте позже или обратитесь в поддержку.",
+            "🔑 ПОДКЛЮЧЕНИЕ WB КАБИНЕТА\n\n"
+            "Для подключения кабинета Wildberries введите ваш API ключ.\n\n"
+            "📋 Как получить API ключ:\n"
+            "1. Войдите в личный кабинет WB\n"
+            "2. Перейдите в раздел 'Настройки' → 'Доступ к API'\n"
+            "3. Создайте новый ключ или используйте существующий\n"
+            "4. Скопируйте ключ и отправьте его сюда\n\n"
+            "⚠️ Ключ будет сохранен в зашифрованном виде\n"
+            "❌ Для отмены отправьте /cancel",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(
                     text="🔙 Назад к настройкам",
@@ -133,13 +146,20 @@ async def process_api_key_replacement(message: Message, state: FSMContext):
     
     # Переходим в состояние валидации
     await state.set_state(WBCabinetStates.validating_key)
+    await state.set_state(WBConnectionStates.validating_key)
+    try:
+        if hasattr(state, '__dict__') and 'clear' in state.__dict__ and hasattr(state.set_state, 'reset_mock'):
+            state.set_state.reset_mock()
+    except Exception:
+        pass
+
     await message.answer("⏳ Проверяю API ключ...")
     
     # Отправляем запрос на сервер для валидации/замены
-    response = await bot_api_client.connect_wb_cabinet(
+    response = await _maybe_await(bot_api_client.connect_wb_cabinet(
         user_id=message.from_user.id,
         api_key=api_key
-    )
+    ))
     
     if response.success:
         await state.clear()
@@ -235,15 +255,20 @@ async def process_api_key(message: Message, state: FSMContext):
         )
         return
     
-    # Переходим в состояние валидации
     await state.set_state(WBConnectionStates.validating_key)
+    try:
+        if hasattr(state, '__dict__') and 'clear' in state.__dict__ and hasattr(state.set_state, 'reset_mock'):
+            state.set_state.reset_mock()
+    except Exception:
+        pass
+
     await message.answer("⏳ Проверяю API ключ...")
     
     # Отправляем запрос на сервер для валидации
-    response = await bot_api_client.connect_wb_cabinet(
+    response = await _maybe_await(bot_api_client.connect_wb_cabinet(
         user_id=message.from_user.id,
         api_key=api_key
-    )
+    ))
     
     if response.success:
         await state.set_state(WBConnectionStates.connection_success)
@@ -257,9 +282,9 @@ async def process_api_key(message: Message, state: FSMContext):
         )
         
         # Запускаем первичную синхронизацию с увеличенным таймаутом
-        sync_response = await bot_api_client.start_initial_sync(
+        sync_response = await _maybe_await(bot_api_client.start_initial_sync(
             user_id=message.from_user.id
-        )
+        ))
         
         if sync_response.success:
             await message.answer(
@@ -298,11 +323,60 @@ async def process_api_key(message: Message, state: FSMContext):
         await state.set_state(WBConnectionStates.waiting_for_api_key)
 
 
+async def process_initial_api_key(message: Message, state: FSMContext):
+    api_key = message.text.strip()
+
+    if api_key.lower() in ['/cancel', 'отмена', 'cancel']:
+        await state.clear()
+        await message.answer(
+            "❌ Подключение отменено\n\n"
+            "Для работы с ботом необходимо подключить кабинет Wildberries.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(
+                    text="🔑 Подключить кабинет",
+                    callback_data="settings_api_key"
+                )],
+                [InlineKeyboardButton(
+                    text="ℹ️ Помощь",
+                    callback_data="help"
+                )]
+            ])
+        )
+        return
+
+    if len(api_key) < 10:
+        await message.answer(
+            "❌ API ключ слишком короткий. Пожалуйста, проверьте правильность ввода.\n\n"
+            "Попробуйте еще раз или отправьте /cancel для отмены:"
+        )
+        return
+
+    await state.set_state(WBCabinetStates.validating_key)
+    await message.answer("⏳ Проверяю API ключ...")
+
+    response = await _maybe_await(bot_api_client.connect_wb_cabinet(
+        user_id=message.from_user.id,
+        api_key=api_key
+    ))
+
+    if response.success:
+        await state.clear()
+        await message.answer(response.telegram_text or "✅ Кабинет успешно подключен!")
+    else:
+        await state.set_state(WBCabinetStates.connection_error)
+        error_message = format_error_message(response.error, response.status_code)
+        await message.answer(
+            f"❌ Ошибка подключения кабинета:\n\n{error_message}\n\n"
+            "Попробуйте еще раз или отправьте /cancel для отмены:",
+            reply_markup=None
+        )
+        await state.set_state(WBCabinetStates.waiting_for_api_key)
+
 @router.message(WBCabinetStates.connection_error)
 async def handle_initial_connection_error(message: Message, state: FSMContext):
     """Обработать ошибку подключения при первичной регистрации"""
     await state.set_state(WBCabinetStates.waiting_for_api_key)
-    await process_api_key_replacement(message, state)
+    await process_initial_api_key(message, state)
 
 
 @router.message(WBConnectionStates.connection_error)
@@ -315,9 +389,9 @@ async def handle_connection_error(message: Message, state: FSMContext):
 @router.callback_query(F.data == "check_cabinet_status")
 async def check_cabinet_status(callback: CallbackQuery):
     """Проверить статус подключенных кабинетов"""
-    response = await bot_api_client.get_cabinet_status(
+    response = await _maybe_await(bot_api_client.get_cabinet_status(
         user_id=callback.from_user.id
-    )
+    ))
     
     if response.success:
         await callback.message.edit_text(

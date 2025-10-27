@@ -121,6 +121,7 @@ class TestAPIKeyFlow:
         # 2. Middleware блокирует обычные сообщения
         with patch.object(middleware, '_check_api_key', return_value=False):
             with patch.object(middleware, '_block_user_access') as mock_block:
+                mock_start_message.text = "test message"
                 await middleware(mock_handler, mock_start_message, {})
                 
                 # Обработчик не должен быть вызван
