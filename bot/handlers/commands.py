@@ -215,6 +215,35 @@ async def main_menu_callback(callback: CallbackQuery):
     await callback.answer()
 
 
+@router.callback_query(F.data == "wb_menu")
+async def wb_menu_callback(callback: CallbackQuery):
+    """Обработчик для кнопки 'Назад к меню' - показывает дашборд"""
+    logger.info(f"🔍 DEBUG: Обработка wb_menu для пользователя {callback.from_user.id}")
+    
+    from api.client import bot_api_client
+    
+    dashboard_response = await bot_api_client.get_dashboard(
+        user_id=callback.from_user.id
+    )
+    
+    if dashboard_response.success:
+        await safe_edit_message(
+            callback=callback,
+            text=dashboard_response.telegram_text or "📊 Дашборд загружен",
+            reply_markup=wb_menu_keyboard(),
+            user_id=callback.from_user.id
+        )
+    else:
+        await safe_edit_message(
+            callback=callback,
+            text="✅ Кабинет подключен\n\nВыберите действие:",
+            reply_markup=wb_menu_keyboard(),
+            user_id=callback.from_user.id
+        )
+    
+    await callback.answer()
+
+
 @router.callback_query(F.data.in_(["prices", "content", "ai_assistant", "settings"]))
 async def menu_callback(callback: CallbackQuery):
     data = callback.data

@@ -149,6 +149,10 @@ def should_sync_cabinet(cabinet: WBCabinet) -> bool:
     # Вычисляем время следующей синхронизации
     next_sync_time = calculate_next_sync_time(cabinet)
     
+    # Логируем для отладки
+    logger.info(f"Кабинет {cabinet.id}: last_sync={last_sync}, now={now}, next_sync={next_sync_time}")
+    logger.info(f"Кабинет {cabinet.id}: time_since_last_sync={time_since_last_sync}, should_sync={now >= next_sync_time}")
+    
     # Проверяем, пора ли синхронизироваться
     return now >= next_sync_time
 
@@ -166,8 +170,10 @@ def calculate_next_sync_time(cabinet: WBCabinet) -> datetime:
     if last_sync.tzinfo is None:
         last_sync = last_sync.replace(tzinfo=timezone.utc)
     
-    # Интервал синхронизации (10 минут)
-    sync_interval = 10 * 60  # 10 минут в секундах
+    # Интервал синхронизации из переменной окружения
+    import os
+    sync_interval_env = os.getenv("SYNC_INTERVAL", "180")  # По умолчанию 3 минуты
+    sync_interval = int(sync_interval_env)
     
     # Вычисляем время следующей синхронизации (без случайного офсета)
     next_sync = last_sync + timedelta(seconds=sync_interval)

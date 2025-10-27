@@ -127,10 +127,32 @@ class BotAPIClient:
                     data=data.get("data"),
                     telegram_text=data.get("telegram_text"),
                     status_code=response.status,
-                    orders=data.get("data", {}).get("orders"),
-                    pagination=data.get("data", {}).get("pagination"),
-                    order=data.get("data", {}).get("order"),
-                    stocks=data.get("data", {}).get("stocks")
+                    # Единообразная структура - поля в корне ответа
+                    orders=data.get("orders"),
+                    pagination=data.get("pagination"),
+                    order=data.get("order"),
+                    stocks=data.get("stocks")
+                )
+            elif response.status == 404:
+                logger.warning(f"🔍 Resource not found: {response.url}")
+                return BotAPIResponse(
+                    success=False,
+                    error="Ресурс не найден",
+                    status_code=response.status
+                )
+            elif response.status == 429:
+                logger.warning(f"⏰ Rate limit exceeded: {response.url}")
+                return BotAPIResponse(
+                    success=False,
+                    error="Превышен лимит запросов, попробуйте позже",
+                    status_code=response.status
+                )
+            elif response.status >= 500:
+                logger.error(f"🔥 Server error {response.status}: {response.url}")
+                return BotAPIResponse(
+                    success=False,
+                    error="Ошибка сервера, попробуйте позже",
+                    status_code=response.status
                 )
             else:
                 error_msg = data.get("error") or data.get("detail") or f"HTTP {response.status}"

@@ -8,6 +8,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from aiogram import Router, F
 from aiogram.types import CallbackQuery, Message, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters import Command
+from utils.formatters import format_currency
 from aiogram.fsm.context import FSMContext
 
 logger = logging.getLogger(__name__)
@@ -24,42 +25,26 @@ router = Router()
 @router.callback_query(F.data == "notifications")
 async def show_notifications_menu(callback: CallbackQuery):
     """Показать меню уведомлений"""
-    await callback.message.edit_text(
-        "🔔 УВЕДОМЛЕНИЯ\n\n"
-        "📊 Статус уведомлений:\n"
-        "✅ Заказы: Включены\n"
-        "✅ Остатки: Включены\n"
-        "✅ Отзывы: Включены\n"
-        "✅ Синхронизация: Включены\n\n"
-        "🔧 Настройте уведомления в разделе 'Настройки' → 'Уведомления'",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(
-                text="⚙️ Настройки уведомлений",
-                callback_data="settings_notifications"
-            )],
-            [InlineKeyboardButton(
-                text="🔙 Назад",
-                callback_data="wb_menu"
-            )]
-        ])
-    )
-    await callback.answer()
-
-
-@router.callback_query(F.data == "settings_notifications")
-async def show_notification_settings(callback: CallbackQuery, state: FSMContext):
-    """Показать настройки уведомлений (с сервера)"""
-    await state.set_state(NotificationStates.settings_menu)
-
     user_id = callback.from_user.id
+    
+    # Загружаем реальные настройки с сервера
     response = await bot_api_client.get_notification_settings(user_id)
-
+    
     if response.success and response.data:
-        settings = response.data.get("data", response.data)  # APIResponse wraps data
+        settings = response.data.get("data", response.data)
+        
+        # Формируем статус на основе реальных настроек
+        status_text = "📊 Статус уведомлений:\n"
+        status_text += f"✅ Заказы: {'Включены' if settings.get('new_orders_enabled', True) else 'Выключены'}\n"
+        status_text += f"✅ Выкупы: {'Включены' if settings.get('order_buyouts_enabled', True) else 'Выключены'}\n"
+        status_text += f"✅ Отмены: {'Включены' if settings.get('order_cancellations_enabled', True) else 'Выключены'}\n"
+        status_text += f"✅ Возвраты: {'Включены' if settings.get('order_returns_enabled', True) else 'Выключены'}\n"
+        status_text += f"✅ Отзывы: {'Включены' if settings.get('negative_reviews_enabled', True) else 'Выключены'}\n"
+        status_text += f"✅ Остатки: {'Включены' if settings.get('critical_stocks_enabled', True) else 'Выключены'}\n"
+        
         await callback.message.edit_text(
-            "🔔 НАСТРОЙКИ УВЕДОМЛЕНИЙ\n\n"
-            "Нажмите на тип уведомления для переключения:\n\n"
-            "✅ Вкл | ❌ Выкл",
+            f"🔔 УВЕДОМЛЕНИЯ\n\n{status_text}\n"
+            "Нажмите на тип уведомления для переключения:",
             reply_markup=create_notification_keyboard(settings)
         )
     else:
@@ -67,6 +52,7 @@ async def show_notification_settings(callback: CallbackQuery, state: FSMContext)
             f"❌ Не удалось получить настройки уведомлений.\n\n{response.error or ''}",
             reply_markup=wb_menu_keyboard()
         )
+    
     await callback.answer()
 
 
@@ -86,11 +72,20 @@ async def _toggle_and_refresh(callback: CallbackQuery, key: str):
     # Получаем обновлённые
     refreshed = await bot_api_client.get_notification_settings(user_id)
     new_settings = refreshed.data.get("data", refreshed.data) if refreshed.success and refreshed.data else settings
+    
+    # Формируем статус на основе обновленных настроек
+    status_text = "📊 Статус уведомлений:\n"
+    status_text += f"✅ Заказы: {'Включены' if new_settings.get('new_orders_enabled', True) else 'Выключены'}\n"
+    status_text += f"✅ Выкупы: {'Включены' if new_settings.get('order_buyouts_enabled', True) else 'Выключены'}\n"
+    status_text += f"✅ Отмены: {'Включены' if new_settings.get('order_cancellations_enabled', True) else 'Выключены'}\n"
+    status_text += f"✅ Возвраты: {'Включены' if new_settings.get('order_returns_enabled', True) else 'Выключены'}\n"
+    status_text += f"✅ Отзывы: {'Включены' if new_settings.get('negative_reviews_enabled', True) else 'Выключены'}\n"
+    status_text += f"✅ Остатки: {'Включены' if new_settings.get('critical_stocks_enabled', True) else 'Выключены'}\n"
+    
     # Обновляем текст/клавиатуру
     await callback.message.edit_text(
-        "🔔 НАСТРОЙКИ УВЕДОМЛЕНИЙ\n\n"
-        "Нажмите на тип уведомления для переключения:\n\n"
-        "✅ Вкл | ❌ Выкл",
+        f"🔔 УВЕДОМЛЕНИЯ\n\n{status_text}\n"
+        "Нажмите на тип уведомления для переключения:",
         reply_markup=create_notification_keyboard(new_settings)
     )
     await callback.answer()
@@ -101,9 +96,19 @@ async def toggle_notif_new_orders(callback: CallbackQuery):
     await _toggle_and_refresh(callback, "new_orders_enabled")
 
 
-@router.callback_query(F.data == "toggle_notif_critical_stocks")
-async def toggle_notif_critical_stocks(callback: CallbackQuery):
-    await _toggle_and_refresh(callback, "critical_stocks_enabled")
+@router.callback_query(F.data == "toggle_notif_buyouts")
+async def toggle_notif_buyouts(callback: CallbackQuery):
+    await _toggle_and_refresh(callback, "order_buyouts_enabled")
+
+
+@router.callback_query(F.data == "toggle_notif_cancellations")
+async def toggle_notif_cancellations(callback: CallbackQuery):
+    await _toggle_and_refresh(callback, "order_cancellations_enabled")
+
+
+@router.callback_query(F.data == "toggle_notif_returns")
+async def toggle_notif_returns(callback: CallbackQuery):
+    await _toggle_and_refresh(callback, "order_returns_enabled")
 
 
 @router.callback_query(F.data == "toggle_notif_negative_reviews")
@@ -111,9 +116,9 @@ async def toggle_notif_negative_reviews(callback: CallbackQuery):
     await _toggle_and_refresh(callback, "negative_reviews_enabled")
 
 
-@router.callback_query(F.data == "toggle_notif_grouping")
-async def toggle_notif_grouping(callback: CallbackQuery):
-    await _toggle_and_refresh(callback, "grouping_enabled")
+@router.callback_query(F.data == "toggle_notif_critical_stocks")
+async def toggle_notif_critical_stocks(callback: CallbackQuery):
+    await _toggle_and_refresh(callback, "critical_stocks_enabled")
 
 
 @router.callback_query(F.data == "test_notification")
@@ -128,19 +133,6 @@ async def test_notification(callback: CallbackQuery):
     await callback.answer("✅ Тестовое уведомление отправлено")
 
 
-@router.message(Command("notifications"))
-async def cmd_notifications(message: Message, state: FSMContext):
-    """Команда /notifications"""
-    await state.set_state(NotificationStates.settings_menu)
-    
-    await message.answer(
-        "🔔 НАСТРОЙКИ УВЕДОМЛЕНИЙ\n\n"
-        "Выберите типы уведомлений, которые хотите получать:\n\n"
-        "✅ Включено\n"
-        "❌ Выключено\n\n"
-        "Нажмите на тип уведомления для переключения:",
-        reply_markup=create_notification_keyboard()
-    )
 
 
 # Polling обработчики для получения уведомлений от сервера
@@ -183,12 +175,12 @@ async def handle_new_order_notification(message: Message, data: dict):
     text += f"🆔 {nm_id} / {supplier_article} / ({size})\n"
     text += f"🎹 {barcode}\n"
     text += f"🚛 {warehouse_from} ⟶ {warehouse_to}\n"
-    text += f"💰 Цена заказа: {order_amount:,.0f}₽\n"
-    text += f"💶 Комиссия WB: {commission_percent}% ({commission_amount:,.0f}₽)\n"
-    text += f"🛍 СПП: {spp_percent}% (Цена для покупателя: {customer_price:,.0f}₽)\n"
+    text += f"💰 Цена заказа: {format_currency(order_amount)}\n"
+    text += f"💶 Комиссия WB: {commission_percent}% ({format_currency(commission_amount)})\n"
+    text += f"🛍 СПП: {spp_percent}% (Цена для покупателя: {format_currency(customer_price)})\n"
     # Логистика исключена из системы
     text += f"        Габариты: {dimensions}. ({volume_liters}л.)\n"
-    text += f"        Тариф склада: {warehouse_rate_per_liter:,.1f}₽ за 1л. | {warehouse_rate_extra:,.1f}₽ за л. свыше)\n"
+    text += f"        Тариф склада: {format_currency(warehouse_rate_per_liter)} за 1л. | {format_currency(warehouse_rate_extra)} за л. свыше)\n"
     text += f"🌟 Оценка: {rating}\n"
     text += f"💬 Отзывы: {reviews_count}\n"
     text += f"⚖️ Выкуп/с учетом возврата (7/14/30):\n"
@@ -209,32 +201,39 @@ async def handle_new_order_notification(message: Message, data: dict):
 
 
 async def handle_critical_stocks_notification(message: Message, data: dict):
-    """Обработать уведомление о критичных остатках"""
-    products = data.get("data", {}).get("products", [])
+    """Обработать уведомление о критичных остатках - НОВАЯ ЛОГИКА: детализация по складам"""
+    nm_id = data.get("nm_id", "N/A")
+    name = data.get("name", f"Товар {nm_id}")
+    brand = data.get("brand", "")
+    total_quantity = data.get("total_quantity", 0)
+    stocks_by_warehouse = data.get("stocks_by_warehouse", {})
+    image_url = data.get("image_url")
     
-    text = "⚠️ КРИТИЧНЫЕ ОСТАТКИ!\n\n"
+    text = f"""⚠️ КРИТИЧНЫЕ ОСТАТКИ
+
+👗 {name} ({brand})
+🆔 {nm_id}
+
+📊 Остатки:"""
     
-    for product in products[:3]:  # Показываем максимум 3 товара
-        text += f"📦 {product.get('name', 'N/A')} ({product.get('brand', 'N/A')})\n"
-        text += f"🆔 {product.get('nm_id', 'N/A')}\n"
-        text += f"📊 Остатки: {format_stocks_summary(product.get('stocks', {}))}\n"
-        
-        critical_sizes = product.get("critical_sizes", [])
-        zero_sizes = product.get("zero_sizes", [])
-        
-        if critical_sizes:
-            text += f"⚠️ Критично: {', '.join(critical_sizes)}\n"
-        if zero_sizes:
-            text += f"🔴 Нулевые: {', '.join(zero_sizes)}\n"
-        
-        text += "\n"
+    # Показываем только склады с остатками > 0 (без размеров)
+    for warehouse_name, sizes in stocks_by_warehouse.items():
+        warehouse_total = sum(sizes.values())
+        if warehouse_total > 0:
+            text += f"\n📦 {warehouse_name}: {warehouse_total} шт."
     
-    if len(products) > 3:
-        text += f"... и еще {len(products) - 3} товаров\n\n"
+    text += f"""
+
+⚠️ Общий остаток: {total_quantity} шт. (критично ≤ 10)"""
     
-    text += "💡 Нажмите /stocks для подробного отчета"
-    
-    await message.answer(text)
+    # Отправляем с изображением если есть
+    if image_url:
+        await message.answer_photo(
+            photo=image_url,
+            caption=text
+        )
+    else:
+        await message.answer(text)
 
 
 async def handle_new_review_notification(message: Message, data: dict):

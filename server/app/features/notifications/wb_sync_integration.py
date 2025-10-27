@@ -29,33 +29,75 @@ class WBSyncNotificationIntegration:
         current_stocks: List[Dict[str, Any]] = None,
         previous_stocks: List[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
-        """Обработка уведомлений после синхронизации данных"""
+        """Обработка уведомлений после синхронизации данных для ВСЕХ пользователей кабинета"""
         try:
-            # Webhook система для уведомлений
-            # Получаем пользователя
+            # Получаем ВСЕХ пользователей кабинета
             from app.features.user.models import User
             from app.features.wb_api.crud_cabinet_users import CabinetUserCRUD
             cabinet_user_crud = CabinetUserCRUD()
             user_ids = cabinet_user_crud.get_cabinet_users(self.db, cabinet.id)
-            user = self.db.query(User).filter(User.id.in_(user_ids)).first() if user_ids else None
-            if not user:
-                logger.warning(f"User not found for cabinet {cabinet.id}")
-                return {"status": "error", "error": "User not found"}
             
-            # Обрабатываем события через NotificationService (без webhook)
-            result = await self.notification_service.process_sync_events(
-                user_id=user.id,
-                cabinet_id=cabinet.id,
-                current_orders=current_orders or [],
-                previous_orders=previous_orders or [],
-                current_reviews=current_reviews or [],
-                previous_reviews=previous_reviews or [],
-                current_stocks=current_stocks or [],
-                previous_stocks=previous_stocks or []
-            )
+            if not user_ids:
+                logger.warning(f"No users found for cabinet {cabinet.id}")
+                return {"status": "error", "error": "No users found"}
             
-            logger.info(f"NotificationService processed {result.get('notifications_sent', 0)} notifications for cabinet {cabinet.id}")
-            return result
+            logger.info(f"🔔 Processing notifications for {len(user_ids)} users of cabinet {cabinet.id}")
+            
+            # Обрабатываем уведомления для КАЖДОГО пользователя
+            total_notifications_sent = 0
+            results = []
+            
+            for user_id in user_ids:
+                try:
+                    # Получаем данные пользователя
+                    user = self.db.query(User).filter(User.id == user_id).first()
+                    if not user:
+                        logger.warning(f"User {user_id} not found, skipping")
+                        continue
+                    
+                    logger.info(f"🔔 Processing notifications for user {user_id} (telegram_id: {user.telegram_id})")
+                    
+                    # Обрабатываем события через NotificationService для каждого пользователя
+                    result = await self.notification_service.process_sync_events(
+                        user_id=user.id,
+                        cabinet_id=cabinet.id,
+                        current_orders=current_orders or [],
+                        previous_orders=previous_orders or [],
+                        current_reviews=current_reviews or [],
+                        previous_reviews=previous_reviews or [],
+                        current_stocks=current_stocks or [],
+                        previous_stocks=previous_stocks or []
+                    )
+                    
+                    notifications_sent = result.get('notifications_sent', 0)
+                    total_notifications_sent += notifications_sent
+                    
+                    results.append({
+                        "user_id": user_id,
+                        "telegram_id": user.telegram_id,
+                        "notifications_sent": notifications_sent,
+                        "status": result.get('status', 'unknown')
+                    })
+                    
+                    logger.info(f"✅ User {user_id}: {notifications_sent} notifications sent")
+                    
+                except Exception as user_error:
+                    logger.error(f"❌ Error processing notifications for user {user_id}: {user_error}")
+                    results.append({
+                        "user_id": user_id,
+                        "notifications_sent": 0,
+                        "status": "error",
+                        "error": str(user_error)
+                    })
+            
+            logger.info(f"🎉 Total notifications sent: {total_notifications_sent} to {len(user_ids)} users of cabinet {cabinet.id}")
+            
+            return {
+                "status": "success",
+                "total_notifications_sent": total_notifications_sent,
+                "users_processed": len(user_ids),
+                "results": results
+            }
             
         except Exception as e:
             logger.error(f"Error processing sync notifications for cabinet {cabinet.id}: {e}")

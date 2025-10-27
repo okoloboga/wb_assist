@@ -172,13 +172,16 @@ async def process_api_key_replacement(message: Message, state: FSMContext):
             # Если не можем импортировать, пропускаем
             pass
         
-        # Проверяем, это новая регистрация или замена API ключа
-        # Проверяем по telegram_text или по данным ответа
+        # Проверяем тип подключения по telegram_text или по данным ответа
         telegram_text = response.telegram_text or ""
         is_replacement = (
             "обновлен" in telegram_text.lower() or 
             "заменен" in telegram_text.lower() or
             "замен" in telegram_text.lower()
+        )
+        is_existing_cabinet = (
+            "подключен к существующему" in telegram_text.lower() or
+            "существующему кабинету" in telegram_text.lower()
         )
         
         if is_replacement:
@@ -195,6 +198,12 @@ async def process_api_key_replacement(message: Message, state: FSMContext):
                         callback_data="main_menu"
                     )]
                 ])
+            )
+        elif is_existing_cabinet:
+            # Это подключение к существующему кабинету - показываем Dashboard с главным меню
+            await message.answer(
+                response.telegram_text or "✅ Подключен к существующему кабинету!",
+                reply_markup=wb_menu_keyboard()
             )
         else:
             # Это новая регистрация - показываем сообщение о синхронизации

@@ -1,5 +1,6 @@
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from typing import Dict, Any
+from utils.formatters import format_currency
 
 
 def main_keyboard() -> InlineKeyboardMarkup:
@@ -110,7 +111,6 @@ def settings_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔑 Подключение WB-кабинета (API-ключ)", callback_data="settings_api_key")],
         [InlineKeyboardButton(text="👥 Доступы (добавить/удалить пользователя по TelegramID)", callback_data="settings_access")],
-        [InlineKeyboardButton(text="🔔 Уведомления (вкл/выкл, частота)", callback_data="settings_notifications")],
         [InlineKeyboardButton(text="🌐 Интеграции (Google Sheets, Docs)", callback_data="settings_integrations")],
         [InlineKeyboardButton(text="🔙 Назад", callback_data="main_menu")]
     ])
@@ -123,8 +123,21 @@ def create_orders_keyboard(orders: list, offset: int = 0, has_more: bool = False
     buttons = []
     
     # Кнопки для каждого заказа
-    for order in orders[:5]:  # Показываем максимум 5 заказов
-        order_text = f"#{order.get('id', 'N/A')} | {order.get('amount', 0):,}₽"
+    for order in orders:  # Показываем все заказы (до 10)
+        # Форматируем дату и время
+        order_date = order.get('date', '')
+        if order_date:
+            # Простое форматирование: 2025-10-24T11:41:25+03:00 -> 2025-10-24 11:41
+            if 'T' in order_date and '+03:00' in order_date:
+                # МСК время: простое обрезание
+                formatted_date = order_date.replace('T', ' ').split('+')[0][:16]  # 2025-10-24 11:41
+            else:
+                # UTC время или другой формат: используем как есть
+                formatted_date = order_date[:16] if len(order_date) > 16 else order_date
+        else:
+            formatted_date = "N/A"
+        
+        order_text = f"{formatted_date} | {format_currency(order.get('amount', 0))}"
         callback_data = f"order_details_{order.get('id', 'N/A')}"
         buttons.append([InlineKeyboardButton(
             text=order_text,
@@ -337,9 +350,11 @@ def create_notification_keyboard(settings: Dict[str, Any]) -> InlineKeyboardMark
         return "✅ Вкл" if enabled else "❌ Выкл"
 
     new_orders = settings.get("new_orders_enabled", True)
-    critical_stocks = settings.get("critical_stocks_enabled", True)
+    buyouts = settings.get("order_buyouts_enabled", True)
+    cancellations = settings.get("order_cancellations_enabled", True)
+    returns = settings.get("order_returns_enabled", True)
     negative_reviews = settings.get("negative_reviews_enabled", True)
-    grouping = settings.get("grouping_enabled", True)
+    critical_stocks = settings.get("critical_stocks_enabled", True)
 
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(
@@ -347,19 +362,27 @@ def create_notification_keyboard(settings: Dict[str, Any]) -> InlineKeyboardMark
             callback_data="toggle_notif_new_orders"
         )],
         [InlineKeyboardButton(
-            text=f"⚠️ Критичные остатки: {flag_text(critical_stocks)}",
-            callback_data="toggle_notif_critical_stocks"
+            text=f"💰 Выкупы: {flag_text(buyouts)}",
+            callback_data="toggle_notif_buyouts"
+        )],
+        [InlineKeyboardButton(
+            text=f"↩️ Отмены: {flag_text(cancellations)}",
+            callback_data="toggle_notif_cancellations"
+        )],
+        [InlineKeyboardButton(
+            text=f"🔴 Возвраты: {flag_text(returns)}",
+            callback_data="toggle_notif_returns"
         )],
         [InlineKeyboardButton(
             text=f"⭐ Негативные отзывы: {flag_text(negative_reviews)}",
             callback_data="toggle_notif_negative_reviews"
         )],
         [InlineKeyboardButton(
-            text=f"📦 Группировка: {flag_text(grouping)}",
-            callback_data="toggle_notif_grouping"
+            text=f"⚠️ Критичные остатки: {flag_text(critical_stocks)}",
+            callback_data="toggle_notif_critical_stocks"
         )],
         [InlineKeyboardButton(
-            text="🔙 Назад к настройкам",
-            callback_data="main_menu"
+            text="🔙 Назад к меню",
+            callback_data="wb_menu"
         )]
     ])

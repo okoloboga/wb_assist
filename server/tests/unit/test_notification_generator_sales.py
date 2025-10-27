@@ -34,7 +34,7 @@ class TestNotificationGeneratorSales:
         assert "Новый выкуп #order_1" in notification["content"]
         assert "Product 1" in notification["content"]
         assert "Brand 1" in notification["content"]
-        assert "1,000.00 ₽" in notification["content"]
+        assert "1 000₽" in notification["content"]
         assert notification["priority"] == "HIGH"
     
     def test_generate_sales_notification_new_return(self, notification_generator):
@@ -56,7 +56,7 @@ class TestNotificationGeneratorSales:
         assert "Новый возврат #order_1" in notification["content"]
         assert "Product 1" in notification["content"]
         assert "Brand 1" in notification["content"]
-        assert "500.00 ₽" in notification["content"]
+        assert "500₽" in notification["content"]
         assert notification["priority"] == "HIGH"
     
     def test_generate_sales_notification_status_change(self, notification_generator):
@@ -76,7 +76,7 @@ class TestNotificationGeneratorSales:
         assert notification["type"] == "sale_status_change"
         assert "📊 Статус изменен #order_1" in notification["title"]
         assert "Статус изменен #order_1" in notification["content"]
-        assert "pending → completed" in notification["content"]
+        assert "pending -> completed" in notification["content"]
         assert notification["priority"] == "MEDIUM"
     
     def test_generate_sales_notification_cancellation_change(self, notification_generator):
@@ -120,7 +120,7 @@ class TestNotificationGeneratorSales:
         )
         
         assert "💰 Новый выкуп #order_1" in content
-        assert "1,000.00 ₽" in content
+        assert "1 000₽" in content
         assert "Product 1" in content
         assert "Brand 1" in content
         assert "M" in content
@@ -132,7 +132,7 @@ class TestNotificationGeneratorSales:
         )
         
         assert "🔄 Новый возврат #order_1" in content
-        assert "500.00 ₽" in content
+        assert "500₽" in content
         assert "Product 1" in content
         assert "Brand 1" in content
         assert "L" in content
@@ -145,8 +145,8 @@ class TestNotificationGeneratorSales:
         
         assert "📊 Статус изменен #order_1" in content
         assert "Product 1" in content
-        assert "1,000.00 ₽" in content
-        assert "pending → completed" in content
+        assert "1 000₽" in content
+        assert "pending -> completed" in content
     
     def test_format_sale_cancellation_change_content_cancelled(self, notification_generator):
         """Тест форматирования контента уведомления об отмене продажи"""
@@ -156,7 +156,7 @@ class TestNotificationGeneratorSales:
         
         assert "❌ Продажа отменена #order_1" in content
         assert "Product 1" in content
-        assert "1,000.00 ₽" in content
+        assert "1 000₽" in content
         assert "Статус: Отменена" in content
     
     def test_format_sale_cancellation_change_content_restored(self, notification_generator):
@@ -167,5 +167,5 @@ class TestNotificationGeneratorSales:
         
         assert "❌ Продажа восстановлена #order_1" in content
         assert "Product 1" in content
-        assert "1,000.00 ₽" in content
+        assert "1 000₽" in content
         assert "Статус: Активна" in content

@@ -16,11 +16,16 @@ class BotMessageFormatter:
     def __init__(self, max_length: int = 4096):
         self.max_length = max_length
     
+    @staticmethod
+    def format_currency(amount: float) -> str:
+        """Форматировать валюту с пробелами вместо запятых"""
+        return f"{amount:,.0f}₽".replace(",", " ")
+    
     def format_dashboard(self, data: Dict[str, Any]) -> str:
         """Форматирование dashboard сообщения"""
         try:
             cabinet_name = data.get("cabinet_name", "Неизвестный кабинет")
-            last_sync = data.get("last_sync", "Неизвестно")
+            last_sync = data.get("last_sync") or "Никогда"
             status = data.get("status", "Неизвестно")
             
             products = data.get("products", {})
@@ -28,22 +33,12 @@ class BotMessageFormatter:
             stocks = data.get("stocks", {})
             reviews = data.get("reviews", {})
             
-            message = f"""📊 ВАШ КАБИНЕТ WB
-
-🏢 {cabinet_name}
-🔄 Последняя синхронизация: {last_sync}
-📈 Статус: ✅ {status}
-
-📦 ТОВАРЫ
-• Всего товаров: {products.get('total', 0)}
-• Активных: {products.get('active', 0)}
-• На модерации: {products.get('moderation', 0)}
-• Критичных остатков: {products.get('critical_stocks', 0)}
+            message = f"""🔄 Обновление: {last_sync}
 
 🛒 ЗАКАЗЫ (сегодня)
 • Новых заказов: {orders_today.get('count', 0)}
-• На сумму: {orders_today.get('amount', 0):,.0f}₽
-• Вчера: {orders_today.get('yesterday_count', 0)} заказов на {orders_today.get('yesterday_amount', 0):,.0f}₽
+• На сумму: {self.format_currency(orders_today.get('amount', 0))}
+• Вчера: {orders_today.get('yesterday_count', 0)} заказов на {self.format_currency(orders_today.get('yesterday_amount', 0))}
 • Рост к вчера: {orders_today.get('growth_percent', 0):+.0f}% по количеству
 
 📦 ОСТАТКИ
@@ -52,10 +47,13 @@ class BotMessageFormatter:
 • Требуют внимания: {stocks.get('attention_needed', 0)}
 
 ⭐ ОТЗЫВЫ
-• Новых отзывов: {reviews.get('new_count', 0)}
 • Средний рейтинг: {reviews.get('average_rating', 0):.1f}/5
 • Неотвеченных: {reviews.get('unanswered', 0)}
-• Всего отзывов: {reviews.get('total', 0)}"""
+• Всего отзывов: {reviews.get('total', 0)}
+
+📦 ТОВАРЫ
+• Всего товаров: {products.get('total', 0)}
+• Активных: {products.get('active', 0)}"""
             
             return self._truncate_message(message)
             
@@ -76,20 +74,21 @@ class BotMessageFormatter:
                 message += "Заказов не найдено"
             else:
                 for order in orders[:10]:  # Ограничиваем количество заказов
-                    order_date = self._format_datetime(order.get("date", ""))
-                    message += f"""🧾 #{order.get('id', 'N/A')} | {order_date} | {order.get('amount', 0):,.0f}₽
-   {order.get('product_name', 'N/A')} | {order.get('brand', 'N/A')}
-   {order.get('warehouse_from', 'N/A')} → {order.get('warehouse_to', 'N/A')}
+                    # Используем WB Order ID вместо внутреннего ID
+                    wb_order_id = order.get('order_id', order.get('id', 'N/A'))
+                    # Простое форматирование даты
+                    order_date = self._format_datetime_simple(order.get("date", ""))
+                    amount = order.get('amount', 0)
+                    warehouse_from = order.get('warehouse_from', 'N/A')
+                    warehouse_to = order.get('warehouse_to', 'N/A')
+                    
+                    message += f"""🧾 {wb_order_id}
+   {order_date} | {self.format_currency(amount)}
+   {warehouse_from} -> {warehouse_to}
 
 """
             
-            message += f"""📊 СТАТИСТИКА ЗА СЕГОДНЯ
-• Всего заказов: {statistics.get('today_count', 0)}
-• Общая сумма: {statistics.get('today_amount', 0):,.0f}₽
-• Средний чек: {statistics.get('average_check', 0):,.0f}₽
-• Рост к вчера: {statistics.get('growth_percent', 0):+.0f}% по количеству, {statistics.get('amount_growth_percent', 0):+.0f}% по сумме
-
-💡 Нажмите номер заказа для детального отчета"""
+            message += "💡 Нажмите номер заказа для детального отчета"
             
             return self._truncate_message(message)
             
@@ -124,8 +123,8 @@ class BotMessageFormatter:
                     
                     message += f"""📦 {product.get('name', 'N/A')} ({product.get('brand', 'N/A')})
    🆔 {product.get('nm_id', 'N/A')}
-   🏷️ Категория: {category} → {subject}
-   💰 Цена: {price:,.0f}₽ {f"(-{discount:,.0f}₽ = {final_price:,.0f}₽)" if discount > 0 else ""}
+   🏷️ Категория: {category} -> {subject}
+   💰 Цена: {self.format_currency(price)} {f"(-{self.format_currency(discount)} = {self.format_currency(final_price)})" if discount > 0 else ""}
    📊 Остатки: {stocks_str}
 """
                     if critical_sizes:
@@ -136,7 +135,7 @@ class BotMessageFormatter:
                         message += f"   ⚠️ {' '.join(critical_info)}\n"
                     
                     message += f"""   📈 Продажи: {product.get('sales_per_day', 0):.1f} шт/день (7дн)
-   💰 Цена: {product.get('price', 0):,.0f}₽ | Комиссия: {product.get('commission_percent', 0):.1f}%
+   💰 Цена: {self.format_currency(product.get('price', 0))} | Комиссия: {product.get('commission_percent', 0):.1f}%
 
 """
             
@@ -149,7 +148,7 @@ class BotMessageFormatter:
    📊 Остатки: {stocks_str}
    🔴 Все размеры = 0!
    📈 Продажи: {product.get('sales_per_day', 0):.1f} шт/день (7дн)
-   💰 Цена: {product.get('price', 0):,.0f}₽ | Комиссия: {product.get('commission_percent', 0):.1f}%
+   💰 Цена: {self.format_currency(product.get('price', 0))} | Комиссия: {product.get('commission_percent', 0):.1f}%
 
 """
             
@@ -245,20 +244,20 @@ class BotMessageFormatter:
                 period_data = sales_periods.get(period_key, {})
                 count = period_data.get("count", 0)
                 amount = period_data.get("amount", 0)
-                message += f"• {period_name}: {count} заказов на {amount:,.0f}₽\n"
+                message += f"• {period_name}: {count} заказов на {self.format_currency(amount)}\n"
             
             # Динамика
             message += f"""\n📈 ДИНАМИКА
 • Рост к вчера: {dynamics.get('yesterday_growth_percent', 0):+.0f}% по заказам, {dynamics.get('yesterday_growth_percent', 0):+.0f}% по сумме
 • Рост к прошлой неделе: {dynamics.get('week_growth_percent', 0):+.0f}% по заказам
-• Средний чек: {dynamics.get('average_check', 0):,.0f}₽ (стабильно)
+• Средний чек: {self.format_currency(dynamics.get('average_check', 0))} (стабильно)
 • Конверсия: {dynamics.get('conversion_percent', 0):.1f}% (норма)
 
 🏆 ТОП ТОВАРОВ (7 дней)"""
             
             for i, product in enumerate(top_products[:3], 1):  # Ограничиваем количество
                 stocks_str = self._format_stocks(product.get("stocks", {}))
-                message += f"""\n{i}. {product.get('name', 'N/A')} - {product.get('sales_count', 0)} шт. ({product.get('sales_amount', 0):,.0f}₽)
+                message += f"""\n{i}. {product.get('name', 'N/A')} - {product.get('sales_count', 0)} шт. ({self.format_currency(product.get('sales_amount', 0))})
    Рейтинг: {product.get('rating', 0):.1f}⭐ | Остаток: {stocks_str}"""
             
             # Остатки
@@ -342,40 +341,30 @@ class BotMessageFormatter:
             return "❌ Ошибка форматирования уведомления о заказе"
 
     def format_critical_stocks_notification(self, data: Dict[str, Any]) -> str:
-        """Форматирование уведомления о критичных остатках"""
+        """Форматирование уведомления о критичных остатках - НОВАЯ ЛОГИКА: детализация по складам"""
         try:
-            products = data.get("products", [])
+            nm_id = data.get("nm_id", "N/A")
+            name = data.get("name", f"Товар {nm_id}")
+            brand = data.get("brand", "")
+            total_quantity = data.get("total_quantity", 0)
+            stocks_by_warehouse = data.get("stocks_by_warehouse", {})
             
-            message = "⚠️ КРИТИЧНЫЕ ОСТАТКИ\n\n"
-            
-            for product in products[:3]:  # Ограничиваем количество
-                nm_id = product.get("nm_id", "N/A")
-                # Надежный fallback для названия товара
-                name = product.get("name") or product.get("product_name") or product.get("title") or f"Товар {nm_id}"
-                stocks = product.get("stocks", {})
-                critical_sizes = product.get("critical_sizes", [])
-                zero_sizes = product.get("zero_sizes", [])
-                days_left = product.get("days_left", {})
-                
-                stocks_str = self._format_stocks(stocks)
-                
-                message += f"""📦 {name}
-🆔 {nm_id}
-📊 Остатки: {stocks_str}
+            message = f"""⚠️ КРИТИЧНЫЕ ОСТАТКИ
 
-"""
-                
-                if critical_sizes:
-                    critical_info = []
-                    for size in critical_sizes:
-                        days = days_left.get(size, 0)
-                        critical_info.append(f"{size}({stocks.get(size, 0)}) - на {days} дней!")
-                    message += f"⚠️ Критично: {' '.join(critical_info)}\n"
-                
-                if zero_sizes:
-                    message += f"🔴 Нулевые: {', '.join(zero_sizes)} на всех складах\n"
-                
-                message += "\n"
+👗 {name} ({brand})
+🆔 {nm_id}
+
+📊 Остатки:"""
+            
+            # Показываем только склады с остатками > 0 (без размеров)
+            for warehouse_name, sizes in stocks_by_warehouse.items():
+                warehouse_total = sum(sizes.values())
+                if warehouse_total > 0:
+                    message += f"\n📦 {warehouse_name}: {warehouse_total} шт."
+            
+            message += f"""
+
+⚠️ Общий остаток: {total_quantity} шт. (критично ≤ 10)"""
             
             return self._truncate_message(message)
             
@@ -411,7 +400,38 @@ class BotMessageFormatter:
             if not datetime_str:
                 return "N/A"
             dt = datetime.fromisoformat(datetime_str.replace('Z', '+00:00'))
-            return TimezoneUtils.format_time_only(dt)
+            # Конвертируем в МСК
+            msk_dt = TimezoneUtils.to_msk(dt)
+            # Форматируем как ДД.ММ.ГГГГ ЧЧ:ММ
+            return msk_dt.strftime("%d.%m.%Y %H:%M")
+        except:
+            return datetime_str
+    
+    def _format_datetime_simple(self, datetime_str: str) -> str:
+        """Форматирование даты/времени с конвертацией в МСК."""
+        try:
+            if not datetime_str:
+                return "N/A"
+            
+            # Если время уже в МСК формате (содержит +03:00), просто форматируем
+            if '+03:00' in datetime_str:
+                # Заменяем T на пробел и убираем секунды и timezone
+                # 2025-10-24T11:02:25+03:00 -> 2025-10-24 11:02
+                formatted = datetime_str.replace('T', ' ')
+                # Убираем секунды и timezone (все после :MM)
+                if ':' in formatted:
+                    # Находим позицию второго двоеточия (секунды)
+                    parts = formatted.split(':')
+                    if len(parts) >= 2:
+                        # Берем только дату и часы:минуты
+                        date_part = parts[0]  # 2025-10-24 11
+                        time_part = parts[1]  # 02
+                        return f"{date_part}:{time_part}"
+            
+            # Fallback: полная конвертация для других форматов
+            dt = datetime.fromisoformat(datetime_str.replace('Z', '+00:00'))
+            msk_dt = TimezoneUtils.to_msk(dt)
+            return msk_dt.strftime("%Y-%m-%d %H:%M")
         except:
             return datetime_str
 
@@ -471,7 +491,7 @@ class BotMessageFormatter:
             # Основная информация
             order_id = order.get("id", "N/A")
             wb_order_id = order.get("order_id", "N/A")
-            order_date = self._format_datetime(order.get("date", ""))
+            order_date = self._format_datetime_simple(order.get("date", ""))
             status = order.get("status", "unknown")
             
             # Товар
@@ -507,34 +527,30 @@ class BotMessageFormatter:
             
             # Определяем тип заказа по статусу
             status_map = {
-                "active": "Заказ",
-                "buyout": "Выкуп", 
-                "canceled": "Отмена",
-                "return": "Возврат"
+                "active": "🧾ЗАКАЗ🧾",
+                "buyout": "💰ВЫКУП💰", 
+                "canceled": "↩️ОТМЕНА↩️",
+                "return": "🔴ВОЗВРАТ🔴"
             }
-            order_type = status_map.get(status, "Заказ")
+            order_type = status_map.get(status, "🧾ЗАКАЗ🧾")
             
-            # Форматируем дату и время из ISO формата
-            formatted_datetime = order_date
-            if 'T' in order_date:
-                date_part = order_date.split('T')[0]  # 2025-10-23
-                time_part = order_date.split('T')[1][:5]  # 14:13
-                # Преобразуем дату в формат ДД.ММ.ГГГГ
-                year, month, day = date_part.split('-')
-                formatted_datetime = f"{day}.{month}.{year} {time_part}"
+            # Форматируем дату и время (с конвертацией в МСК)
+            formatted_datetime = self._format_datetime_simple(order_date)
             
             # Формируем сообщение в новом формате
-            message = f"""{order_type} ID: {order_id} от {formatted_datetime}
+            message = f"""{order_type}
+🆔 {wb_order_id}
+{formatted_datetime}
 
-🆔 {nm_id} / {article} / ({size})
+👗 {nm_id} / {article} / ({size})
 🎹 {barcode}"""
             
             message += f"""
 
 💰 Финансы:
-Цена заказа: {total_price:,.1f}₽
+Цена заказа: {self.format_currency(total_price)}
 СПП %: {spp_percent}%
-Цена для покупателя: {customer_price:,.1f}₽
+Цена для покупателя: {self.format_currency(customer_price)}
 Скидка: {discount_percent}%"""
             
             if warehouse_from or warehouse_to:
@@ -599,12 +615,32 @@ class BotMessageFormatter:
 2⭐ - {pct_2:.1f}%
 1⭐ - {pct_1:.1f}%"""
             
-            # Остатки
+            # Остатки по складам и размерам
             if stocks:
-                message += "\n\n📦 Остатки по размерам:"
-                for size_key in sorted(stocks.keys()):
-                    quantity = stocks[size_key]
-                    message += f"\n{size_key}: {quantity} шт."
+                # Получаем детализацию по складам
+                stocks_by_warehouse = order.get("stocks_by_warehouse", {})
+                
+                # Считаем общую сумму остатков
+                total_stocks = sum(
+                    sum(sizes.values()) 
+                    for sizes in stocks_by_warehouse.values()
+                )
+                
+                message += f"\n\n📦 Остатки по складам - {total_stocks}:"
+                
+                # Показываем только склады с остатками > 0
+                for warehouse_name, sizes in stocks_by_warehouse.items():
+                    warehouse_total = sum(sizes.values())
+                    if warehouse_total > 0:
+                        # Формируем строку размеров
+                        size_items = []
+                        for size in sorted(sizes.keys()):
+                            quantity = sizes[size]
+                            if quantity > 0:  # Показываем только размеры с остатками
+                                size_items.append(f"{size}: {quantity}")
+                        
+                        if size_items:
+                            message += f"\n{warehouse_name} - {warehouse_total} - [{' | '.join(size_items)}]"
             
             return self._truncate_message(message)
             
@@ -804,9 +840,9 @@ class BotMessageFormatter:
             message += f"• Всего продаж: {sales.get('total_sales', 0)}\n"
             message += f"• Выкупы: {sales.get('buyouts', 0)} ({sales.get('buyout_rate', 0):.1f}%)\n"
             message += f"• Возвраты: {sales.get('returns', 0)}\n"
-            message += f"• Общая сумма: {sales.get('total_amount', 0):,.0f}₽\n"
-            message += f"• Сумма выкупов: {sales.get('buyouts_amount', 0):,.0f}₽\n"
-            message += f"• Сумма возвратов: {sales.get('returns_amount', 0):,.0f}₽\n\n"
+            message += f"• Общая сумма: {self.format_currency(sales.get('total_amount', 0))}\n"
+            message += f"• Сумма выкупов: {self.format_currency(sales.get('buyouts_amount', 0))}\n"
+            message += f"• Сумма возвратов: {self.format_currency(sales.get('returns_amount', 0))}\n\n"
             
             # Сводка
             message += "📈 СВОДКА:\n"

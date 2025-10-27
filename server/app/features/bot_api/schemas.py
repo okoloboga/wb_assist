@@ -46,6 +46,7 @@ class DashboardData(BaseModel):
 class OrderData(BaseModel):
     """Данные заказа"""
     id: int
+    order_id: Optional[str] = None  # WB Order ID
     date: str
     amount: float
     product_name: str

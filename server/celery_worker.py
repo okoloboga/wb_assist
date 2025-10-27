@@ -15,6 +15,6 @@ if __name__ == "__main__":
     celery_app.worker_main([
         "worker",
         "--loglevel=info",
-        "--concurrency=2",  # 2 воркера для обработки задач
+        "--concurrency=1",  # 1 воркер для избежания дублирования синхронизации
         "--queues=sync_queue",  # Очередь для задач синхронизации
     ])

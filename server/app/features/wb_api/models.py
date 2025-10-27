@@ -5,6 +5,9 @@ from datetime import datetime, timezone
 # Используем Base из database.py
 from ...core.database import Base
 
+# Импортируем func для работы с БД
+from sqlalchemy import func
+
 # Импортируем WBSales для связи
 from .models_sales import WBSales
 from .models_cabinet_users import CabinetUser
