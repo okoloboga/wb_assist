@@ -21,7 +21,7 @@ from utils.formatters import (
     escape_markdown_v2,
     split_telegram_message,
 )
-from gpt_integration.gpt_client import GPTClient
+# from gpt_integration.gpt_client import GPTClient  # Закомментировано - архитектурная проблема
 
 import aiohttp
 
@@ -46,7 +46,8 @@ async def cmd_gpt(message: Message, state: FSMContext):
     # Инициализируем клиент для сессии чата
     global _gpt_client
     try:
-        _gpt_client = GPTClient.from_env()
+        # _gpt_client = GPTClient.from_env()  # Закомментировано - архитектурная проблема
+        _gpt_client = None  # Временная заглушка
     except Exception as e:
         logger.error(f"Не удалось инициализировать GPT клиент: {e}")
         _gpt_client = None
@@ -65,7 +66,8 @@ async def cb_ai_chat(callback: CallbackQuery, state: FSMContext):
     # Инициализируем клиент для сессии чата
     global _gpt_client
     try:
-        _gpt_client = GPTClient.from_env()
+        # _gpt_client = GPTClient.from_env()  # Закомментировано - архитектурная проблема
+        _gpt_client = None  # Временная заглушка
     except Exception as e:
         logger.error(f"Не удалось инициализировать GPT клиент: {e}")
         _gpt_client = None
@@ -98,20 +100,24 @@ async def handle_user_prompt(message: Message, state: FSMContext):
     # Используем инъецируемый клиент для тестов Stage 2
     global _gpt_client
     if _gpt_client is None:
-        await message.answer(text="❌ GPT клиент не инициализирован. Настройте OPENAI_API_KEY.")
+        await message.answer(text="❌ GPT функционал временно отключен (архитектурная проблема).")
         return
 
-    try:
-        messages = [{"role": "user", "content": user_text}]
-        llm_text = _gpt_client.complete_messages(messages)
-    except Exception as e:
-        logger.exception("LLM вызов завершился ошибкой")
-        await message.answer(text=f"❌ Ошибка запроса к LLM: {e}")
-        return
+    # Закомментировано - архитектурная проблема
+    # try:
+    #     messages = [{"role": "user", "content": user_text}]
+    #     llm_text = _gpt_client.complete_messages(messages)
+    # except Exception as e:
+    #     logger.exception("LLM вызов завершился ошибкой")
+    #     await message.answer(text=f"❌ Ошибка запроса к LLM: {e}")
+    #     return
 
-    chunks = _format_and_split(llm_text) or ["(пустой ответ)"]
-    for chunk in chunks:
-        await message.answer(text=chunk, parse_mode="MarkdownV2")
+    # chunks = _format_and_split(llm_text) or ["(пустой ответ)"]
+    # for chunk in chunks:
+    #     await message.answer(text=chunk, parse_mode="MarkdownV2")
+    
+    # Временная заглушка
+    await message.answer(text="🤖 GPT функционал временно недоступен. Обратитесь к старжеру для исправления архитектуры.")
 
 
 @router.message(GPTStates.gpt_chat)

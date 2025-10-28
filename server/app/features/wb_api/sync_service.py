@@ -1641,10 +1641,16 @@ class WBSyncService:
                     records_processed += 1
                     
                     # Подготавливаем данные для сохранения
+                    # Используем order_dt как sale_id для читаемости (как у выкупов)
+                    order_id = str(claim.get("order_dt", ""))
+                    if not order_id or order_id == "None":
+                        # Fallback на srid если order_dt пустой
+                        order_id = str(claim.get("srid", ""))
+                    
                     claim_data = {
                         "cabinet_id": cabinet.id,
-                        "sale_id": str(claim.get("srid", "")),
-                        "order_id": str(claim.get("order_dt", "")),
+                        "sale_id": order_id,  # Используем читаемый order_id как sale_id
+                        "order_id": order_id,  # Дублируем для совместимости
                         "nm_id": claim.get("nm_id", 0),
                         "product_name": claim.get("imt_name", ""),
                         "brand": "",  # В Claims API нет бренда
@@ -1661,7 +1667,7 @@ class WBSyncService:
                     # Ищем по cabinet_id + sale_id + type (новый UniqueConstraint)
                     existing_sale = self.db.query(WBSales).filter(
                         WBSales.cabinet_id == cabinet.id,
-                        WBSales.sale_id == claim_data["sale_id"],
+                        WBSales.sale_id == order_id,  # Используем order_id как sale_id
                         WBSales.type == claim_data["type"]
                     ).first()
                     
