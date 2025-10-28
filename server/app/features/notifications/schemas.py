@@ -15,6 +15,7 @@ class NotificationSettingsResponse(BaseModel):
     order_cancellations_enabled: bool
     order_returns_enabled: bool
     negative_reviews_enabled: bool
+    review_rating_threshold: int = Field(ge=0, le=5)
     critical_stocks_enabled: bool
     grouping_enabled: bool
     max_group_size: int = Field(ge=1, le=50)
@@ -32,6 +33,7 @@ class NotificationSettingsUpdate(BaseModel):
     order_cancellations_enabled: Optional[bool] = None
     order_returns_enabled: Optional[bool] = None
     negative_reviews_enabled: Optional[bool] = None
+    review_rating_threshold: Optional[int] = Field(None, ge=0, le=5)
     critical_stocks_enabled: Optional[bool] = None
     grouping_enabled: Optional[bool] = None
     max_group_size: Optional[int] = Field(None, ge=1, le=50)

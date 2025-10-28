@@ -21,6 +21,7 @@ class NotificationSettings(Base):
     order_cancellations_enabled = Column(Boolean, default=True, nullable=False)
     order_returns_enabled = Column(Boolean, default=True, nullable=False)
     negative_reviews_enabled = Column(Boolean, default=True, nullable=False)
+    review_rating_threshold = Column(Integer, default=3, nullable=False)  # 0-5, где 0 = отключено
     critical_stocks_enabled = Column(Boolean, default=True, nullable=False)
     
     # Группировка

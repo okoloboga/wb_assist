@@ -17,6 +17,7 @@ from .crud import (
     NotificationHistoryCRUD,
     OrderStatusHistoryCRUD
 )
+from .models import NotificationSettings
 from app.features.bot_api.formatter import BotMessageFormatter
 from app.utils.timezone import TimezoneUtils
 from app.features.wb_api.models import WBOrder, WBCabinet, WBReview, WBProduct, WBStock
@@ -315,9 +316,12 @@ class NotificationService:
                 if critical_stocks:
                     notifications.extend(critical_stocks)
             
-            # 6. НЕГАТИВНЫЕ ОТЗЫВЫ (простая проверка)
+            # 6. НЕГАТИВНЫЕ ОТЗЫВЫ (простая проверка с регулируемым порогом)
             if user_settings.negative_reviews_enabled:
-                negative_reviews = await self._check_negative_reviews_simple(cabinet_id, last_sync_at)
+                # Получаем порог из настроек (по умолчанию 3, если поле еще не добавлено)
+                threshold = getattr(user_settings, 'review_rating_threshold', 3)
+                logger.info(f"🔧 [process_sync_events_simple] Review threshold for user {user_id}: {threshold}")
+                negative_reviews = await self._check_negative_reviews_simple(cabinet_id, last_sync_at, threshold)
                 for review in negative_reviews:
                     notifications.append({
                         "type": "negative_review",
@@ -432,13 +436,20 @@ class NotificationService:
         events = []
         
         if user_settings.negative_reviews_enabled:
+            # Получаем порог из настроек (по умолчанию 3, если поле еще не добавлено)
+            threshold = getattr(user_settings, 'review_rating_threshold', 3)
+            
+            # Если порог = 0, отзывы не проверяются (отключено)
+            if threshold == 0:
+                return events
+            
             # Получаем ID предыдущих отзывов
             previous_review_ids = {review["review_id"] for review in previous_reviews}
             
-            # Находим новые негативные отзывы (0-3 звезды)
+            # Находим новые отзывы с рейтингом <= threshold
             for review in current_reviews:
                 if (review["review_id"] not in previous_review_ids and 
-                    review.get("rating", 0) <= 3):
+                    review.get("rating", 0) <= threshold):
                     
                     event = {
                         "type": "negative_review",
@@ -1080,6 +1091,13 @@ class NotificationService:
     async def _get_new_reviews(self, user_id: int, cabinet_ids: List[int], last_check: datetime) -> List[Dict[str, Any]]:
         """Получение новых негативных отзывов (0-3 звезды) с защитой от дублирования"""
         try:
+            # Получаем настройки пользователя
+            user_settings = self.db.query(NotificationSettings).filter(
+                NotificationSettings.user_id == user_id
+            ).first()
+            
+            if not user_settings or not user_settings.negative_reviews_enabled:
+                return []
             
             # Проверяем, что это не первая синхронизация кабинета
             # Если last_sync_at не установлен или очень старый, пропускаем уведомления
@@ -1125,10 +1143,13 @@ class NotificationService:
                 )
             ).all()
             
+            # Получаем порог из настроек (по умолчанию 3, если поле еще не добавлено)
+            threshold = getattr(user_settings, 'review_rating_threshold', 3)
+            
             events = []
             for review in reviews:
-                # Создаем события ТОЛЬКО для негативных отзывов (0-3 звезды)
-                if review.rating and review.rating <= 3:
+                # Создаем события для отзывов с рейтингом <= threshold (если threshold > 0)
+                if threshold > 0 and review.rating and review.rating <= threshold:
                     events.append({
                         "type": "negative_review",
                         "user_id": user_id,
@@ -2096,30 +2117,28 @@ class NotificationService:
             return []
     
     async def _check_buyouts_simple(self, cabinet_id: int, last_sync_at: datetime) -> List:
-        """Простая проверка выкупов - КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: используем created_at вместо sale_date"""
+        """Простая проверка выкупов - используем created_at и updated_at (как работало раньше)"""
         try:
             from app.features.wb_api.models_sales import WBSales
             from app.utils.timezone import TimezoneUtils
             
-            # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Используем created_at вместо sale_date!
-            # Проблема: WB API с flag=0 и dateFrom=30 дней возвращает ВСЕ старые данные
-            # sale_date - это время выкупа по WB (может быть в прошлом, например, 3 часа назад)
-            # created_at - это время добавления записи в нашу БД (всегда новое)
-            # 
-            # Пример проблемы:
-            # - Выкуп произошел в 10:00 (sale_date=10:00)
-            # - Синхронизация в 10:03 добавила его в БД (created_at=10:03)
-            # - Следующая синхронизация в 10:06 (last_sync_at=10:03)
-            # - Если ищем sale_date > 10:03, то выкуп НЕ найден (10:00 < 10:03)
-            # - Если ищем created_at > 10:03, то выкуп найден (10:03 новая запись)
+            # ЛОГИКА: Buyouts создаются как новые записи
+            # - При первой синхронизации: создаются новые buyouts с created_at = NOW(), updated_at = NOW()
+            # - При последующих синхронизациях: те же buyouts не обновляются
+            # - created_at = last_sync_at (FALSE), updated_at = NULL (NULL > timestamp = NULL)
+            # - Результат: уведомления НЕ отправляются (как и должно быть)
             
             logger.info(f"🔍 [_check_buyouts_simple] Checking buyouts for cabinet {cabinet_id}")
             logger.info(f"🔍 [_check_buyouts_simple] last_sync_at (UTC): {last_sync_at}")
             
-            # Ищем выкупы, которые были ДОБАВЛЕНЫ в БД после последней синхронизации
+            # Ищем выкупы, которые были ДОБАВЛЕНЫ или ОБНОВЛЕНЫ в БД после последней синхронизации
+            from sqlalchemy import or_
             buyouts = self.db.query(WBSales).filter(
                 WBSales.cabinet_id == cabinet_id,
-                WBSales.created_at > last_sync_at,  # ИСПРАВЛЕНО: created_at вместо sale_date
+                or_(
+                    WBSales.created_at > last_sync_at,  # Новые записи
+                    WBSales.updated_at > last_sync_at   # Обновленные записи
+                ),
                 WBSales.type == "buyout",
                 WBSales.is_cancel == False
             ).all()
@@ -2155,22 +2174,29 @@ class NotificationService:
             return []
     
     async def _check_returns_simple(self, cabinet_id: int, last_sync_at: datetime) -> List:
-        """Простая проверка возвратов - КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: используем created_at вместо sale_date"""
+        """Простая проверка возвратов - используем created_at и updated_at (аналогично buyouts)"""
         try:
             from app.features.wb_api.models_sales import WBSales
             from app.utils.timezone import TimezoneUtils
             
-            # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Используем created_at вместо sale_date!
-            # Аналогично выкупам - sale_date может быть в прошлом,
-            # а created_at показывает, когда запись была добавлена в БД
+            # ЛОГИКА: Returns создаются как отдельные записи (аналогично buyouts)
+            # - При первой синхронизации: создаются новые returns с created_at = NOW(), updated_at = NOW()
+            # - При последующих синхронизациях: те же returns не обновляются
+            # - created_at = last_sync_at (FALSE), updated_at = NULL (NULL > timestamp = NULL)
+            # - Результат: уведомления НЕ отправляются (как и должно быть)
             
             logger.info(f"🔍 [_check_returns_simple] Checking returns for cabinet {cabinet_id}")
             logger.info(f"🔍 [_check_returns_simple] last_sync_at (UTC): {last_sync_at}")
             
-            # Ищем возвраты, которые были ДОБАВЛЕНЫ в БД после последней синхронизации
+            # Ищем возвраты, которые были ДОБАВЛЕНЫ или ОБНОВЛЕНЫ в БД после последней синхронизации
+            # Returns создаются как отдельные записи, аналогично buyouts
+            from sqlalchemy import or_
             returns = self.db.query(WBSales).filter(
                 WBSales.cabinet_id == cabinet_id,
-                WBSales.created_at > last_sync_at,  # ИСПРАВЛЕНО: created_at вместо sale_date
+                or_(
+                    WBSales.created_at > last_sync_at,  # Новые записи
+                    WBSales.updated_at > last_sync_at   # Обновленные записи
+                ),
                 WBSales.type == "return",
                 WBSales.is_cancel == False
             ).all()
@@ -2219,24 +2245,36 @@ class NotificationService:
             logger.error(f"Error checking critical stocks: {e}")
             return []
     
-    async def _check_negative_reviews_simple(self, cabinet_id: int, last_sync_at: datetime) -> List:
-        """Простая проверка негативных отзывов - ИСПРАВЛЕНО: с момента последней синхронизации"""
+    async def _check_negative_reviews_simple(self, cabinet_id: int, last_sync_at: datetime, threshold: int = 3) -> List:
+        """Простая проверка негативных отзывов с регулируемым порогом"""
         try:
             from app.features.wb_api.models import WBReview
             
-            # Ищем негативные отзывы с момента последней синхронизации
+            logger.info(f"🔍 [_check_negative_reviews_simple] Checking negative reviews for cabinet {cabinet_id}, threshold={threshold}")
+            logger.info(f"🔍 [_check_negative_reviews_simple] last_sync_at (UTC): {last_sync_at}")
+            
+            # Если порог = 0, отзывы не проверяются (отключено)
+            if threshold == 0:
+                logger.info(f"🔍 [_check_negative_reviews_simple] Reviews disabled (threshold=0)")
+                return []
+            
+            # Ищем отзывы с рейтингом <= threshold, которые были ДОБАВЛЕНЫ в БД после последней синхронизации
             negative_reviews = self.db.query(WBReview).filter(
                 WBReview.cabinet_id == cabinet_id,
-                WBReview.created_date > last_sync_at,  # С момента последней синхронизации
-                WBReview.rating <= 3
+                WBReview.created_at > last_sync_at,  # ИСПРАВЛЕНО: created_at вместо created_date
+                WBReview.rating <= threshold  # ИСПОЛЬЗУЕМ РЕГУЛИРУЕМЫЙ ПОРОГ
             ).all()
             
-            if negative_reviews:  # Логируем только если есть негативные отзывы
-                logger.info(f"🔍 [Simple] Found {len(negative_reviews)} negative reviews for cabinet {cabinet_id}")
+            logger.info(f"🔍 [_check_negative_reviews_simple] Found {len(negative_reviews)} reviews with rating <= {threshold} for cabinet {cabinet_id}")
+            if negative_reviews and len(negative_reviews) > 0:
+                logger.info(f"🔍 [_check_negative_reviews_simple] First review: review_id={negative_reviews[0].review_id}, created_at={negative_reviews[0].created_at}, created_date={negative_reviews[0].created_date}, rating={negative_reviews[0].rating}")
+            
             return negative_reviews
             
         except Exception as e:
             logger.error(f"Error checking negative reviews: {e}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
             return []
     
     # ==================== ПРОСТЫЕ ФОРМАТТЕРЫ (КАК В СТАРОЙ ВЕРСИИ) ====================
@@ -2595,7 +2633,7 @@ class NotificationService:
         
         # Формируем информацию о товаре
         if product:
-            product_info = f"{product.nm_id} / {product.article} / ({product.size})"
+            product_info = f"{product.nm_id} / {product.vendor_code or 'N/A'} / ({product.name or 'N/A'})"
         else:
             product_info = f"{review.nm_id} / Неизвестный товар"
         

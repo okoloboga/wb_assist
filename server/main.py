@@ -22,6 +22,7 @@ from app.features.user.models import User
 from app.features.wb_api.models import WBCabinet, WBProduct, WBOrder, WBStock, WBReview, WBAnalyticsCache, WBWarehouse, WBSyncLog
 from app.features.wb_api.models_sales import WBSales
 from app.features.notifications.models import NotificationSettings, NotificationHistory, OrderStatusHistory
+from app.features.stock_alerts.models import DailySalesAnalytics, StockAlertHistory
 
 # Создаем FastAPI приложение с настройками из config
 app = FastAPI(**settings.get_app_config())

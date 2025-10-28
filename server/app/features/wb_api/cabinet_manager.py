@@ -39,7 +39,19 @@ class CabinetManager:
             
             # Валидируем API ключ (retry логика уже есть в _make_request)
             logger.info(f"Validating API key for cabinet {cabinet.id}")
-            validation_result = await client.validate_api_key()
+            
+            try:
+                validation_result = await client.validate_api_key()
+            except Exception as e:
+                # Timeout и другие сетевые ошибки - НЕ удаляем кабинет!
+                logger.warning(f"API validation error for cabinet {cabinet.id}: {e}")
+                return {
+                    "success": True,  # НЕ False!
+                    "valid": True,    # НЕ False!
+                    "message": f"Validation error (timeout/network): {str(e)}",
+                    "attempts": 1,
+                    "warning": True
+                }
             
             if validation_result.get("valid", False):
                 logger.info(f"API key validation successful for cabinet {cabinet.id}")
@@ -50,7 +62,7 @@ class CabinetManager:
                     "attempts": 1
                 }
             
-            # Если API невалиден, удаляем кабинет
+            # Если API невалиден (статус 401), удаляем кабинет
             logger.error(f"API validation failed for cabinet {cabinet.id}. Removing cabinet.")
             
             # Получаем всех пользователей кабинета для уведомления
@@ -92,11 +104,11 @@ class CabinetManager:
             }
             
         except Exception as e:
-            logger.error(f"Error during cabinet validation for cabinet {cabinet.id}: {e}")
+            logger.error(f"Unexpected error during cabinet validation for cabinet {cabinet.id}: {e}")
             return {
                 "success": False,
                 "valid": False,
-                "message": f"Validation error: {str(e)}",
+                "message": f"Unexpected validation error: {str(e)}",
                 "attempts": 0,
                 "cabinet_removed": False
             }

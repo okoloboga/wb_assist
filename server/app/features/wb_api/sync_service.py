@@ -878,6 +878,9 @@ class WBSyncService:
             
             self.db.commit()
             
+            # ПРИМЕЧАНИЕ: Проверка динамических алертов теперь происходит только в настраиваемое время
+            # (STOCK_ALERT_CHECK_TIME) через задачу aggregate_daily_sales_all_cabinets
+            
             return {
                 "status": "success",
                 "records_processed": len(stocks_data),
@@ -1493,6 +1496,8 @@ class WBSyncService:
     ) -> Dict[str, Any]:
         """Синхронизация продаж и возвратов"""
         try:
+            from app.features.wb_api.models_sales import WBSales
+            from app.features.wb_api import sales_crud
             logger.info(f"Starting sales sync for cabinet {cabinet.id}")
             
             # ИСПРАВЛЕНО: Всегда используем flag=0 для sales API
@@ -1547,7 +1552,7 @@ class WBSyncService:
                     sale_data = {
                         "cabinet_id": cabinet.id,
                         "sale_id": str(sale_item.get("srid", "")),
-                        "order_id": str(sale_item.get("orderId", "")),
+                        "order_id": str(sale_item.get("saleID", "")),
                         "nm_id": sale_item.get("nmId", 0),
                         "product_name": sale_item.get("subject", ""),
                         "brand": sale_item.get("brand", ""),
@@ -1560,18 +1565,24 @@ class WBSyncService:
                         "last_change_date": self._parse_wb_date(sale_item.get("lastChangeDate"))
                     }
                     
-                    # Проверяем, существует ли уже такая запись
-                    existing_sale = sales_crud.get_sale_by_sale_id(self.db, cabinet.id, sale_data["sale_id"])
+                    # Проверяем, существует ли уже такая запись с тем же типом
+                    # Ищем по cabinet_id + sale_id + type (новый UniqueConstraint)
+                    existing_sale = self.db.query(WBSales).filter(
+                        WBSales.cabinet_id == cabinet.id,
+                        WBSales.sale_id == sale_data["sale_id"],
+                        WBSales.type == sale_data["type"]
+                    ).first()
                     
                     if not existing_sale:
-                        # Создаем новую запись
+                        # Создаем новую запись (как buyout, так и return)
                         sales_crud.create_sale(self.db, sale_data)
                         records_created += 1
                         
                         # Уведомления о продажах обрабатываются через NotificationService.process_sync_events
                         # после завершения всей синхронизации
                     else:
-                        logger.debug(f"🔍 [sync_sales] Sale already exists: {sale_data['sale_id']}")
+                        # Запись уже существует - пропускаем (не обновляем)
+                        logger.debug(f"🔍 [sync_sales] {sale_data['type'].title()} already exists: {sale_data['sale_id']}")
                     
                     records_processed += 1
                     
@@ -1613,17 +1624,16 @@ class WBSyncService:
                     "status": "success",
                     "records_processed": 0,
                     "records_created": 0,
-                    "records_updated": 0,
                     "records_errors": 0,
                     "message": "No claims data to sync"
                 }
             
             from .crud_sales import WBSalesCRUD
+            from .models_sales import WBSales
             sales_crud = WBSalesCRUD()
             
             records_processed = 0
             records_created = 0
-            records_updated = 0
             records_errors = 0
             
             for claim in all_claims:
@@ -1647,19 +1657,21 @@ class WBSyncService:
                         "last_change_date": self._parse_wb_date(claim.get("dt_update"))
                     }
                     
-                    # Проверяем, существует ли уже такая запись
-                    existing_sale = sales_crud.get_sale_by_sale_id(self.db, cabinet.id, claim_data["sale_id"])
+                    # Проверяем, существует ли уже такая запись с тем же типом
+                    # Ищем по cabinet_id + sale_id + type (новый UniqueConstraint)
+                    existing_sale = self.db.query(WBSales).filter(
+                        WBSales.cabinet_id == cabinet.id,
+                        WBSales.sale_id == claim_data["sale_id"],
+                        WBSales.type == claim_data["type"]
+                    ).first()
                     
-                    if existing_sale:
-                        # Обновляем существующую запись
-                        for key, value in claim_data.items():
-                            if key != "cabinet_id" and key != "sale_id":
-                                setattr(existing_sale, key, value)
-                        records_updated += 1
-                    else:
+                    if not existing_sale:
                         # Создаем новую запись
                         sales_crud.create_sale(self.db, claim_data)
                         records_created += 1
+                    else:
+                        # Запись уже существует - пропускаем (не обновляем)
+                        logger.debug(f"🔍 [sync_claims] Return already exists: {claim_data['sale_id']}")
                     
                 except Exception as e:
                     records_errors += 1
@@ -1668,15 +1680,14 @@ class WBSyncService:
             
             # Логируем результат синхронизации
             logger.info(f"Claims sync completed for cabinet {cabinet.id}: "
-                       f"{records_created} created, {records_updated} updated, {records_errors} errors")
+                       f"{records_created} created, {records_errors} errors")
             
             return {
                 "status": "success",
                 "records_processed": records_processed,
                 "records_created": records_created,
-                "records_updated": records_updated,
                 "records_errors": records_errors,
-                "message": f"Claims sync completed: {records_created} created, {records_updated} updated, {records_errors} errors"
+                "message": f"Claims sync completed: {records_created} created, {records_errors} errors"
             }
             
         except Exception as e:

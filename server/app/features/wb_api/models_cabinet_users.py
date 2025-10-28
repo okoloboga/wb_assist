@@ -10,7 +10,7 @@ class CabinetUser(Base):
     __tablename__ = "cabinet_users"
     
     id = Column(Integer, primary_key=True, index=True)
-    cabinet_id = Column(Integer, ForeignKey("wb_cabinets.id"), nullable=False, index=True)
+    cabinet_id = Column(Integer, ForeignKey("wb_cabinets.id", ondelete="CASCADE"), nullable=False, index=True)
     user_id = Column(Integer, nullable=False, index=True)  # Без ForeignKey для простоты
     is_active = Column(Boolean, default=True, nullable=False)
     first_sync_completed = Column(Boolean, default=False, nullable=False)  # Флаг первой синхронизации для пользователя

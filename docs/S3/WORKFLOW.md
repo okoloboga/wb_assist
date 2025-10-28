@@ -73,7 +73,7 @@ WHERE cabinet_id = ? AND created_at > ? AND status = 'active'
 **2. Выкупы:**
 ```sql
 SELECT * FROM wb_sales 
-WHERE cabinet_id = ? AND created_at > ? AND type = 'buyout' AND is_cancel = false
+WHERE cabinet_id = ? AND (created_at > ? OR updated_at > ?) AND type = 'buyout' AND is_cancel = false
 ```
 
 **3. Отмены:**
@@ -85,7 +85,7 @@ WHERE cabinet_id = ? AND updated_at > ? AND status = 'canceled'
 **4. Возвраты:**
 ```sql
 SELECT * FROM wb_sales 
-WHERE cabinet_id = ? AND created_at > ? AND type = 'return' AND is_cancel = false
+WHERE cabinet_id = ? AND (created_at > ? OR updated_at > ?) AND type = 'return' AND is_cancel = false
 ```
 
 **5. Негативные отзывы:**
@@ -96,12 +96,14 @@ WHERE cabinet_id = ? AND created_date > ? AND rating <= 3
 
 ### **🎯 Ключевая особенность системы:**
 
-**Почему используется `created_at` для выкупов/возвратов:**
+**Почему используется `created_at` и `updated_at` для выкупов/возвратов:**
 - WB API с `flag=0` и `dateFrom=30 дней` возвращает ВСЕ данные за период
 - `sale_date` - это время выкупа по WB (может быть 3 часа назад)
 - `created_at` - это время добавления записи в нашу БД (всегда новое)
+- `updated_at` - это время обновления записи (buyout → return)
 - При частых синхронизациях (каждые 3 минуты) `sale_date` может быть меньше `last_sync_at`
 - `created_at` всегда больше `last_sync_at` для новых записей
+- `updated_at` позволяет обнаружить обновления существующих записей (выкуп → возврат)
 
 ### **🕐 Обработка timezone:**
 
@@ -249,7 +251,7 @@ WHERE cabinet_id = ? AND created_date > ? AND rating <= 3
 
 ### **WBSyncService:**
 - `sync_all_data()` - основная синхронизация всех типов данных
-- `sync_sales()` - синхронизация sales с `flag=0`
+- `sync_sales()` - синхронизация sales с `flag=0` и обновлением записей (buyout → return)
 - `_parse_wb_date()` - правильный парсинг дат из WB API (МСК → UTC)
 - `_perform_sync_with_lock()` - синхронизация с блокировкой
 - `_send_sync_completion_notification()` - уведомление о завершении
@@ -274,7 +276,7 @@ WHERE cabinet_id = ? AND created_date > ? AND rating <= 3
 - **Формат:** Полная информация о заказе + статистика товара
 
 ### **2. Выкупы (order_buyout)**
-- **Триггер:** `WBSales.created_at > last_sync_at AND type = 'buyout' AND is_cancel = false`
+- **Триггер:** `WBSales.created_at > last_sync_at OR updated_at > last_sync_at AND type = 'buyout' AND is_cancel = false`
 - **Формат:** Полная информация о выкупе + статистика товара
 
 ### **3. Отмены заказов (order_cancellation)**
@@ -282,7 +284,7 @@ WHERE cabinet_id = ? AND created_date > ? AND rating <= 3
 - **Формат:** Полная информация о заказе + статистика товара
 
 ### **4. Возвраты (order_return)**
-- **Триггер:** `WBSales.created_at > last_sync_at AND type = 'return' AND is_cancel = false`
+- **Триггер:** `WBSales.created_at > last_sync_at OR updated_at > last_sync_at AND type = 'return' AND is_cancel = false`
 - **Формат:** Полная информация о возврате + статистика товара
 
 ### **5. Негативные отзывы (negative_review)**

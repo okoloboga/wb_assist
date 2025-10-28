@@ -17,10 +17,25 @@ if not sync_interval_env:
     raise ValueError("SYNC_INTERVAL environment variable is required but not set")
 sync_interval = int(sync_interval_env)
 
+# Получаем время проверки алертов из переменной окружения
+stock_alert_check_time = os.getenv("STOCK_ALERT_CHECK_TIME")
+if not stock_alert_check_time:
+    raise ValueError("STOCK_ALERT_CHECK_TIME environment variable is required but not set")
+
+# Парсим время в формате HH:MM
+try:
+    hour, minute = map(int, stock_alert_check_time.split(':'))
+    if not (0 <= hour <= 23) or not (0 <= minute <= 59):
+        raise ValueError("Invalid time format")
+except ValueError as e:
+    raise ValueError(f"STOCK_ALERT_CHECK_TIME must be in HH:MM format (e.g., '02:30' or '08:00'), got: {stock_alert_check_time}") from e
+
 logger.info(f"Redis configuration:")
 logger.info(f"  Redis URL: {redis_url}")
 logger.info(f"Sync configuration:")
 logger.info(f"  Sync interval: {sync_interval} seconds ({sync_interval/60:.1f} minutes)")
+logger.info(f"Stock alerts configuration:")
+logger.info(f"  Check time: {stock_alert_check_time} MSK")
 
 # Создаем экземпляр Celery с Redis
 celery_app = Celery(
@@ -29,6 +44,7 @@ celery_app = Celery(
     backend=redis_url,
     include=[
         "app.features.sync.tasks",
+        "app.features.stock_alerts.tasks",
     ]
 )
 
@@ -48,8 +64,14 @@ celery_app.conf.update(
     
     # Настройки очередей
     task_routes={
+        # Синхронизация - отдельная очередь
         "app.features.sync.tasks.sync_all_cabinets": {"queue": "sync_queue"},
         "app.features.sync.tasks.sync_cabinet_data": {"queue": "sync_queue"},
+        
+        # Алерты по остаткам - отдельная очередь
+        "app.features.stock_alerts.tasks.aggregate_daily_sales_all_cabinets": {"queue": "alerts_queue"},
+        "app.features.stock_alerts.tasks.check_stock_alerts_task": {"queue": "alerts_queue"},
+        "app.features.stock_alerts.tasks.cleanup_old_analytics_task": {"queue": "alerts_queue"},
     },
     
     # Настройки для периодических задач
@@ -57,6 +79,14 @@ celery_app.conf.update(
         "sync-all-cabinets": {
             "task": "app.features.sync.tasks.sync_all_cabinets",
             "schedule": float(sync_interval),  # Используем переменную окружения SYNC_INTERVAL
+        },
+        "aggregate-daily-sales": {
+            "task": "app.features.stock_alerts.tasks.aggregate_daily_sales_all_cabinets",
+            "schedule": crontab(hour=hour, minute=minute),  # Настраиваемое время из STOCK_ALERT_CHECK_TIME
+        },
+        "cleanup-old-analytics": {
+            "task": "app.features.stock_alerts.tasks.cleanup_old_analytics_task",
+            "schedule": crontab(hour=3, minute=0, day_of_week=0),  # Воскресенье 03:00
         },
     },
     

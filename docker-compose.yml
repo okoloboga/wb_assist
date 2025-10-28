@@ -52,6 +52,9 @@ services:
       - REDIS_URL=redis://redis:6379/0
       - SYNC_INTERVAL=${SYNC_INTERVAL}
       - SYNC_DAYS=${SYNC_DAYS}
+      - STOCK_ALERT_CHECK_TIME=${STOCK_ALERT_CHECK_TIME}
+      - STOCK_ALERT_LOOKBACK_HOURS=${STOCK_ALERT_LOOKBACK_HOURS}
+      - STOCK_ALERT_COOLDOWN_HOURS=${STOCK_ALERT_COOLDOWN_HOURS}
       # BOT_WEBHOOK_URL удален - используется только polling
     networks:
       - app-network
@@ -60,7 +63,7 @@ services:
     build:
       context: ./server
       dockerfile: Dockerfile
-    command: python celery_worker.py
+    command: celery -A app.core.celery_app worker --loglevel=info --queues=sync_queue,alerts_queue
     depends_on:
       db:
         condition: service_healthy
@@ -71,6 +74,9 @@ services:
       - REDIS_URL=redis://redis:6379/0
       - SYNC_INTERVAL=${SYNC_INTERVAL}
       - SYNC_DAYS=${SYNC_DAYS}
+      - STOCK_ALERT_CHECK_TIME=${STOCK_ALERT_CHECK_TIME}
+      - STOCK_ALERT_LOOKBACK_HOURS=${STOCK_ALERT_LOOKBACK_HOURS}
+      - STOCK_ALERT_COOLDOWN_HOURS=${STOCK_ALERT_COOLDOWN_HOURS}
     networks:
       - app-network
 
@@ -89,6 +95,9 @@ services:
       - REDIS_URL=redis://redis:6379/0
       - SYNC_INTERVAL=${SYNC_INTERVAL}
       - SYNC_DAYS=${SYNC_DAYS}
+      - STOCK_ALERT_CHECK_TIME=${STOCK_ALERT_CHECK_TIME}
+      - STOCK_ALERT_LOOKBACK_HOURS=${STOCK_ALERT_LOOKBACK_HOURS}
+      - STOCK_ALERT_COOLDOWN_HOURS=${STOCK_ALERT_COOLDOWN_HOURS}
     volumes:
       - celery_beat_data:/app/beat_data
     networks:

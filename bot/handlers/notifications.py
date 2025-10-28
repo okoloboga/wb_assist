@@ -33,13 +33,21 @@ async def show_notifications_menu(callback: CallbackQuery):
     if response.success and response.data:
         settings = response.data.get("data", response.data)
         
+        # Вспомогательная функция для форматирования порога отзывов
+        review_threshold = settings.get('review_rating_threshold', 3)
+        if review_threshold == 0:
+            review_status = "Выключены"
+        else:
+            stars = "⭐" * review_threshold
+            review_status = f"Включены {stars} (≤{review_threshold}★)"
+        
         # Формируем статус на основе реальных настроек
         status_text = "📊 Статус уведомлений:\n"
         status_text += f"✅ Заказы: {'Включены' if settings.get('new_orders_enabled', True) else 'Выключены'}\n"
         status_text += f"✅ Выкупы: {'Включены' if settings.get('order_buyouts_enabled', True) else 'Выключены'}\n"
         status_text += f"✅ Отмены: {'Включены' if settings.get('order_cancellations_enabled', True) else 'Выключены'}\n"
         status_text += f"✅ Возвраты: {'Включены' if settings.get('order_returns_enabled', True) else 'Выключены'}\n"
-        status_text += f"✅ Отзывы: {'Включены' if settings.get('negative_reviews_enabled', True) else 'Выключены'}\n"
+        status_text += f"✅ Отзывы: {review_status}\n"  # ИЗМЕНЕНО
         status_text += f"✅ Остатки: {'Включены' if settings.get('critical_stocks_enabled', True) else 'Выключены'}\n"
         
         await callback.message.edit_text(
@@ -73,13 +81,21 @@ async def _toggle_and_refresh(callback: CallbackQuery, key: str):
     refreshed = await bot_api_client.get_notification_settings(user_id)
     new_settings = refreshed.data.get("data", refreshed.data) if refreshed.success and refreshed.data else settings
     
+    # Вспомогательная функция для форматирования порога отзывов
+    review_threshold = new_settings.get('review_rating_threshold', 3)
+    if review_threshold == 0:
+        review_status = "Выключены"
+    else:
+        stars = "⭐" * review_threshold
+        review_status = f"Включены {stars} (≤{review_threshold}★)"
+    
     # Формируем статус на основе обновленных настроек
     status_text = "📊 Статус уведомлений:\n"
     status_text += f"✅ Заказы: {'Включены' if new_settings.get('new_orders_enabled', True) else 'Выключены'}\n"
     status_text += f"✅ Выкупы: {'Включены' if new_settings.get('order_buyouts_enabled', True) else 'Выключены'}\n"
     status_text += f"✅ Отмены: {'Включены' if new_settings.get('order_cancellations_enabled', True) else 'Выключены'}\n"
     status_text += f"✅ Возвраты: {'Включены' if new_settings.get('order_returns_enabled', True) else 'Выключены'}\n"
-    status_text += f"✅ Отзывы: {'Включены' if new_settings.get('negative_reviews_enabled', True) else 'Выключены'}\n"
+    status_text += f"✅ Отзывы: {review_status}\n"  # ИЗМЕНЕНО
     status_text += f"✅ Остатки: {'Включены' if new_settings.get('critical_stocks_enabled', True) else 'Выключены'}\n"
     
     # Обновляем текст/клавиатуру
@@ -113,7 +129,63 @@ async def toggle_notif_returns(callback: CallbackQuery):
 
 @router.callback_query(F.data == "toggle_notif_negative_reviews")
 async def toggle_notif_negative_reviews(callback: CallbackQuery):
-    await _toggle_and_refresh(callback, "negative_reviews_enabled")
+    """Циклически изменяем порог: 3 -> 4 -> 5 -> 0 -> 1 -> 2 -> 3"""
+    user_id = callback.from_user.id
+    
+    # Получаем текущие настройки
+    current = await bot_api_client.get_notification_settings(user_id)
+    settings = current.data.get("data", current.data) if current.success and current.data else {}
+    
+    # Получаем текущий порог (по умолчанию 3)
+    current_threshold = settings.get('review_rating_threshold', 3)
+    
+    # Циклическое переключение: 3 -> 4 -> 5 -> 0 -> 1 -> 2 -> 3
+    next_threshold = (current_threshold % 5) + 1 if current_threshold < 5 else 0
+    
+    # Если включили с 0, начинаем с 1
+    if current_threshold == 0:
+        next_threshold = 1
+    
+    # Обновляем порог и включаем уведомления, если порог > 0
+    update = {
+        "review_rating_threshold": next_threshold,
+        "negative_reviews_enabled": next_threshold > 0  # Автоматически включаем/выключаем
+    }
+    
+    upd_resp = await bot_api_client.update_notification_settings(user_id, update)
+    if not upd_resp.success:
+        await callback.answer(f"❌ Ошибка обновления: {upd_resp.error or upd_resp.status_code}", show_alert=True)
+        return
+    
+    # Получаем обновлённые настройки
+    refreshed = await bot_api_client.get_notification_settings(user_id)
+    new_settings = refreshed.data.get("data", refreshed.data) if refreshed.success and refreshed.data else settings
+    
+    # Формируем обновленный статус
+    review_threshold = new_settings.get('review_rating_threshold', 3)
+    if review_threshold == 0:
+        review_status = "Выключены"
+        callback_text = "❌ Уведомления по отзывам отключены"
+    else:
+        stars = "⭐" * review_threshold
+        review_status = f"Включены {stars} (≤{review_threshold}★)"
+        callback_text = f"✅ Порог установлен: {stars} (≤{review_threshold}★)"
+    
+    status_text = "📊 Статус уведомлений:\n"
+    status_text += f"✅ Заказы: {'Включены' if new_settings.get('new_orders_enabled', True) else 'Выключены'}\n"
+    status_text += f"✅ Выкупы: {'Включены' if new_settings.get('order_buyouts_enabled', True) else 'Выключены'}\n"
+    status_text += f"✅ Отмены: {'Включены' if new_settings.get('order_cancellations_enabled', True) else 'Выключены'}\n"
+    status_text += f"✅ Возвраты: {'Включены' if new_settings.get('order_returns_enabled', True) else 'Выключены'}\n"
+    status_text += f"✅ Отзывы: {review_status}\n"
+    status_text += f"✅ Остатки: {'Включены' if new_settings.get('critical_stocks_enabled', True) else 'Выключены'}\n"
+    
+    # Обновляем текст/клавиатуру
+    await callback.message.edit_text(
+        f"🔔 УВЕДОМЛЕНИЯ\n\n{status_text}\n"
+        "Нажмите на тип уведомления для переключения:",
+        reply_markup=create_notification_keyboard(new_settings)
+    )
+    await callback.answer(callback_text)
 
 
 @router.callback_query(F.data == "toggle_notif_critical_stocks")
@@ -201,7 +273,7 @@ async def handle_new_order_notification(message: Message, data: dict):
 
 
 async def handle_critical_stocks_notification(message: Message, data: dict):
-    """Обработать уведомление о критичных остатках - НОВАЯ ЛОГИКА: детализация по складам"""
+    """Обработать уведомление о критичных остатках - СТАРАЯ ЛОГИКА (пороговая)"""
     nm_id = data.get("nm_id", "N/A")
     name = data.get("name", f"Товар {nm_id}")
     brand = data.get("brand", "")
@@ -225,6 +297,42 @@ async def handle_critical_stocks_notification(message: Message, data: dict):
     text += f"""
 
 ⚠️ Общий остаток: {total_quantity} шт. (критично ≤ 10)"""
+    
+    # Отправляем с изображением если есть
+    if image_url:
+        await message.answer_photo(
+            photo=image_url,
+            caption=text
+        )
+    else:
+        await message.answer(text)
+
+
+async def handle_dynamic_stock_alert(message: Message, data: dict):
+    """Обработать динамический алерт остатков - НОВАЯ ЛОГИКА на основе заказов"""
+    alert_data = data.get("data", {})
+    
+    nm_id = alert_data.get("nm_id", "N/A")
+    name = alert_data.get("name", f"Товар {nm_id}")
+    brand = alert_data.get("brand", "")
+    warehouse = alert_data.get("warehouse_name", "Неизвестный склад")
+    size = alert_data.get("size", "N/A")
+    current_stock = alert_data.get("current_stock", 0)
+    orders_24h = alert_data.get("orders_last_24h", 0)
+    days_remaining = alert_data.get("days_remaining", 0)
+    image_url = alert_data.get("image_url")
+    
+    text = f"""⚠️ КРИТИЧЕСКИЕ ОСТАТКИ
+
+👗 {name} ({brand})
+🆔 {nm_id}
+📦 {warehouse}
+📏 Размер: {size}
+
+📊 Аналитика за 24ч:
+• Заказов: {orders_24h} шт.
+• Текущий остаток: {current_stock} шт.
+• Прогноз: {days_remaining:.1f} дн."""
     
     # Отправляем с изображением если есть
     if image_url:

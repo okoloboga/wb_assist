@@ -14,7 +14,7 @@ class WBSales(Base):
     __tablename__ = "wb_sales"
 
     id = Column(Integer, primary_key=True, index=True)
-    cabinet_id = Column(Integer, ForeignKey("wb_cabinets.id"), nullable=False, index=True)
+    cabinet_id = Column(Integer, ForeignKey("wb_cabinets.id", ondelete="CASCADE"), nullable=False, index=True)
     sale_id = Column(String(100), nullable=False, index=True)  # srid из WB API
     order_id = Column(String(100), nullable=True, index=True)
     nm_id = Column(Integer, nullable=False, index=True)
@@ -33,14 +33,14 @@ class WBSales(Base):
     commission_amount = Column(Float, nullable=True)
     
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
     # Связи
     cabinet = relationship("WBCabinet", back_populates="sales")
 
     # Индексы и ограничения
     __table_args__ = (
-        UniqueConstraint('cabinet_id', 'sale_id', name='uq_cabinet_sale_id'),
+        UniqueConstraint('cabinet_id', 'sale_id', 'type', name='uq_cabinet_sale_type'),
         Index('idx_sales_nm_id', 'nm_id'),
         Index('idx_sales_date', 'sale_date'),
         Index('idx_sales_type', 'type'),

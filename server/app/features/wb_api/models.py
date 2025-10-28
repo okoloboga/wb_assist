@@ -43,7 +43,7 @@ class WBProduct(Base):
     __tablename__ = "wb_products"
 
     id = Column(Integer, primary_key=True, index=True)
-    cabinet_id = Column(Integer, ForeignKey("wb_cabinets.id"), nullable=False, index=True)
+    cabinet_id = Column(Integer, ForeignKey("wb_cabinets.id", ondelete="CASCADE"), nullable=False, index=True)
     nm_id = Column(Integer, nullable=False, index=True)
     name = Column(String(500), nullable=True)
     vendor_code = Column(String(100), nullable=True)
@@ -79,7 +79,7 @@ class WBOrder(Base):
     __tablename__ = "wb_orders"
 
     id = Column(Integer, primary_key=True, index=True)
-    cabinet_id = Column(Integer, ForeignKey("wb_cabinets.id"), nullable=False, index=True)
+    cabinet_id = Column(Integer, ForeignKey("wb_cabinets.id", ondelete="CASCADE"), nullable=False, index=True)
     order_id = Column(String(100), nullable=True, index=True)  # ИСПРАВЛЕНО: nullable=True
     nm_id = Column(Integer, nullable=False, index=True)
     article = Column(String(100), nullable=True)
@@ -133,7 +133,7 @@ class WBStock(Base):
     __tablename__ = "wb_stocks"
 
     id = Column(Integer, primary_key=True, index=True)
-    cabinet_id = Column(Integer, ForeignKey("wb_cabinets.id"), nullable=False, index=True)
+    cabinet_id = Column(Integer, ForeignKey("wb_cabinets.id", ondelete="CASCADE"), nullable=False, index=True)
     nm_id = Column(Integer, nullable=False, index=True)
     article = Column(String(100), nullable=True)
     name = Column(String(500), nullable=True)
@@ -180,7 +180,7 @@ class WBReview(Base):
     __tablename__ = "wb_reviews"
 
     id = Column(Integer, primary_key=True, index=True)
-    cabinet_id = Column(Integer, ForeignKey("wb_cabinets.id"), nullable=False, index=True)
+    cabinet_id = Column(Integer, ForeignKey("wb_cabinets.id", ondelete="CASCADE"), nullable=False, index=True)
     nm_id = Column(Integer, nullable=True, index=True)  # ИСПРАВЛЕНО: nullable=True
     review_id = Column(String(100), nullable=False)
     text = Column(Text, nullable=True)
@@ -221,7 +221,7 @@ class WBAnalyticsCache(Base):
     __tablename__ = "wb_analytics_cache"
 
     id = Column(Integer, primary_key=True, index=True)
-    cabinet_id = Column(Integer, ForeignKey("wb_cabinets.id"), nullable=False, index=True)
+    cabinet_id = Column(Integer, ForeignKey("wb_cabinets.id", ondelete="CASCADE"), nullable=False, index=True)
     nm_id = Column(Integer, nullable=False, index=True)
     period = Column(String(10), nullable=False)  # 7d, 14d, 30d, 60d, 90d
     sales_count = Column(Integer, nullable=True, default=0)
@@ -255,7 +255,7 @@ class WBWarehouse(Base):
     __tablename__ = "wb_warehouses"
 
     id = Column(Integer, primary_key=True, index=True)
-    cabinet_id = Column(Integer, ForeignKey("wb_cabinets.id"), nullable=False, index=True)
+    cabinet_id = Column(Integer, ForeignKey("wb_cabinets.id", ondelete="CASCADE"), nullable=False, index=True)
     warehouse_id = Column(Integer, nullable=False, index=True)
     name = Column(String(255), nullable=True)
     address = Column(Text, nullable=True)
@@ -282,7 +282,7 @@ class WBSyncLog(Base):
     __tablename__ = "wb_sync_logs"
 
     id = Column(Integer, primary_key=True, index=True)
-    cabinet_id = Column(Integer, ForeignKey("wb_cabinets.id"), nullable=False, index=True)
+    cabinet_id = Column(Integer, ForeignKey("wb_cabinets.id", ondelete="CASCADE"), nullable=False, index=True)
     sync_type = Column(String(50), nullable=False)  # products, orders, stocks, reviews
     status = Column(String(20), nullable=False)  # success, error, partial
     records_processed = Column(Integer, nullable=True)

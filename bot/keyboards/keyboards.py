@@ -348,12 +348,21 @@ def create_notification_keyboard(settings: Dict[str, Any]) -> InlineKeyboardMark
     """Создать клавиатуру для настроек уведомлений на основе серверных флагов"""
     def flag_text(enabled: bool) -> str:
         return "✅ Вкл" if enabled else "❌ Выкл"
+    
+    def review_threshold_text(threshold: int) -> str:
+        """Форматирование порога отзывов"""
+        if threshold == 0:
+            return "❌ Выкл"
+        else:
+            stars = "⭐" * threshold
+            return f"{stars} (≤{threshold}★)"
 
     new_orders = settings.get("new_orders_enabled", True)
     buyouts = settings.get("order_buyouts_enabled", True)
     cancellations = settings.get("order_cancellations_enabled", True)
     returns = settings.get("order_returns_enabled", True)
     negative_reviews = settings.get("negative_reviews_enabled", True)
+    review_threshold = settings.get("review_rating_threshold", 3)  # НОВОЕ ПОЛЕ
     critical_stocks = settings.get("critical_stocks_enabled", True)
 
     return InlineKeyboardMarkup(inline_keyboard=[
@@ -374,7 +383,7 @@ def create_notification_keyboard(settings: Dict[str, Any]) -> InlineKeyboardMark
             callback_data="toggle_notif_returns"
         )],
         [InlineKeyboardButton(
-            text=f"⭐ Негативные отзывы: {flag_text(negative_reviews)}",
+            text=f"⭐ Отзывы: {review_threshold_text(review_threshold)}",
             callback_data="toggle_notif_negative_reviews"
         )],
         [InlineKeyboardButton(
