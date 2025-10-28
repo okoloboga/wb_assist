@@ -1355,6 +1355,14 @@ class BotAPIService:
             # Формируем список отзывов
             reviews_list = []
             for review in reviews:
+                # Получаем название товара из таблицы WBProduct
+                product = self.db.query(WBProduct).filter(
+                    WBProduct.cabinet_id == review.cabinet_id,
+                    WBProduct.nm_id == review.nm_id
+                ).first()
+                
+                product_name = product.name if product else f"Товар {review.nm_id}"
+                
                 reviews_list.append({
                     "id": review.id,
                     "nm_id": review.nm_id,
@@ -1363,6 +1371,7 @@ class BotAPIService:
                     "rating": review.rating or 0,
                     "is_answered": review.is_answered,
                     "created_date": review.created_date.isoformat() if review.created_date else None,
+                    "product_name": product_name,  # ДОБАВЛЕНО
                     # Новые поля из WB API отзывов
                     "pros": review.pros,
                     "cons": review.cons,
@@ -1384,14 +1393,14 @@ class BotAPIService:
                 "new_reviews": reviews_list,  # Список отзывов
                 "unanswered_questions": [],  # Пока пустой список вопросов
                 "statistics": {
-                "total_reviews": total_reviews,
+                    "total_reviews": total_reviews,
                     "new_today": new_reviews,
                     "unanswered": unanswered_reviews,
-                "average_rating": round(avg_rating, 1),
+                    "average_rating": round(avg_rating, 1),
                     "answered_count": total_reviews - unanswered_reviews,
                     "answered_percent": round((total_reviews - unanswered_reviews) / total_reviews * 100, 1) if total_reviews > 0 else 0.0,
-                    "attention_needed": len([r for r in reviews if r.rating and r.rating <= 3]),
-                    "new_today": new_reviews
+                    "attention_needed": len([r for r in reviews if r.rating and r.rating <= 3])
+                    # Убрали дублирование "new_today"
                 },
                 "recommendations": ["Все отзывы обработаны"] if unanswered_reviews == 0 else [f"Требуют ответа: {unanswered_reviews} отзывов"]
             }

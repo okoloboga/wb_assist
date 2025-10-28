@@ -3,9 +3,9 @@
 """
 
 from typing import Dict, List, Any, Optional
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import logging
-from app.utils.timezone import TimezoneUtils
+from app.utils.timezone import TimezoneUtils, MSK_TZ
 
 logger = logging.getLogger(__name__)
 
@@ -180,21 +180,45 @@ class BotMessageFormatter:
             message = "⭐ ОТЗЫВЫ И ВОПРОСЫ\n\n"
             
             if new_reviews:
-                message += f"🆕 НОВЫЕ ОТЗЫВЫ ({len(new_reviews)}):\n"
-                for review in new_reviews[:5]:  # Ограничиваем количество
+                for review in new_reviews[:10]:  # Показываем 10 отзывов
                     rating = review.get("rating", 0)
                     stars = "⭐" * rating
                     user_name = review.get("user_name", "Аноним")
                     color = review.get("color", "")
                     pros = review.get("pros", "")
                     cons = review.get("cons", "")
+                    nm_id = review.get("nm_id", "N/A")
+                    product_name = review.get("product_name", f"Товар {nm_id}")
+                    
+                    # Форматируем дату и время
+                    created_date = review.get("created_date", "")
+                    if created_date:
+                        try:
+                            from datetime import datetime
+                            # Парсим UTC время из БД
+                            dt = datetime.fromisoformat(created_date.replace('Z', '+00:00'))
+                            # Правильно конвертируем UTC → МСК
+                            msk_dt = dt.astimezone(MSK_TZ)
+                            formatted_date = msk_dt.strftime("%d.%m.%Y %H:%M")
+                        except:
+                            formatted_date = created_date
+                    else:
+                        formatted_date = "Не указано"
                     
                     message += f"""{stars} | {rating}/5
-   Пользователь: {user_name} {f"({color})" if color else ""}
-   Плюсы: {pros if pros else "Не указаны"}
-   Минусы: {cons if cons else "Не указаны"}
-
-"""
+   {formatted_date}
+   👗 {product_name} ({nm_id})
+   👤 {user_name}{f" ({color})" if color else ""}"""
+                    
+                    # Добавляем плюсы только если они есть
+                    if pros:
+                        message += f"\n   ➕ {pros}"
+                    
+                    # Добавляем минусы только если они есть
+                    if cons:
+                        message += f"\n   ➖ {cons}"
+                    
+                    message += "\n\n"
             
             if unanswered_questions:
                 message += f"❓ НЕОТВЕЧЕННЫЕ ВОПРОСЫ ({len(unanswered_questions)}):\n"
@@ -203,18 +227,6 @@ class BotMessageFormatter:
   Время: {question.get('time_ago', 'N/A')} | Требует ответа
 
 """
-            
-            message += f"""📊 СТАТИСТИКА
-• Средний рейтинг: {statistics.get('average_rating', 0):.1f}/5
-• Всего отзывов: {statistics.get('total_reviews', 0)}
-• Отвечено: {statistics.get('answered_count', 0)} ({statistics.get('answered_percent', 0):.0f}%)
-• Требуют внимания: {statistics.get('attention_needed', 0)} (низкий рейтинг)
-• Новых за день: {statistics.get('new_today', 0)}
-
-💡 РЕКОМЕНДАЦИИ"""
-            
-            for rec in recommendations[:3]:  # Ограничиваем количество рекомендаций
-                message += f"\n• {rec}"
             
             return self._truncate_message(message)
             
@@ -542,7 +554,7 @@ class BotMessageFormatter:
 🆔 {wb_order_id}
 {formatted_datetime}
 
-👗 {nm_id} / {article} / ({size})
+👗 {nm_id} / {product_name} / ({size})
 🎹 {barcode}"""
             
             message += f"""
@@ -607,13 +619,24 @@ class BotMessageFormatter:
                 pct_2 = (stars_2 / reviews_count) * 100
                 pct_1 = (stars_1 / reviews_count) * 100
                 
-                message += f"""
+                # Формируем строки только для ненулевых рейтингов
+                rating_lines = []
+                if pct_5 > 0:
+                    rating_lines.append(f"5⭐ - {pct_5:.1f}%")
+                if pct_4 > 0:
+                    rating_lines.append(f"4⭐ - {pct_4:.1f}%")
+                if pct_3 > 0:
+                    rating_lines.append(f"3⭐ - {pct_3:.1f}%")
+                if pct_2 > 0:
+                    rating_lines.append(f"2⭐ - {pct_2:.1f}%")
+                if pct_1 > 0:
+                    rating_lines.append(f"1⭐ - {pct_1:.1f}%")
+                
+                # Добавляем рейтинги только если есть ненулевые
+                if rating_lines:
+                    message += f"""
 
-5⭐ - {pct_5:.1f}%
-4⭐ - {pct_4:.1f}%
-3⭐ - {pct_3:.1f}%
-2⭐ - {pct_2:.1f}%
-1⭐ - {pct_1:.1f}%"""
+{chr(10).join(rating_lines)}"""
             
             # Остатки по складам и размерам
             if stocks:

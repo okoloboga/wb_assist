@@ -206,7 +206,7 @@ class StockAlertNotificationService:
         Returns:
             Данные для webhook
         """
-        telegram_text = f"""⚠️ ДИНАМИЧЕСКИЙ АЛЕРТ ОСТАТКОВ
+        telegram_text = f"""⚠️ КРИТИЧЕСКИЕ ОСТАТКИ
 
 👗 {position['name']} ({position['brand']})
 🆔 {position['nm_id']}
@@ -216,11 +216,7 @@ class StockAlertNotificationService:
 📊 Аналитика за 24ч:
 • Заказов: {position['orders_last_24h']} шт.
 • Текущий остаток: {position['current_stock']} шт.
-• Прогноз: {position['days_remaining']} дн.
-
-⚠️ Рекомендация: Пополнить остатки в ближайшее время
-
-🕒 {TimezoneUtils.format_for_user(TimezoneUtils.now_msk())}"""
+• Прогноз: {position['days_remaining']} дн."""
         
         return {
             "type": "dynamic_stock_alert",

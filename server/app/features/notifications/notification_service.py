@@ -792,7 +792,7 @@ class NotificationService:
         # Формируем сообщение в том же формате, что и в меню
         message = f"🧾 {status} [#{order_id}] {order_date}\n\n"
         message += f"✏ {product_name}\n"
-        message += f"🆔 {nm_id} / {supplier_article} / ({size})\n"
+        message += f"🆔 {nm_id} / {product_name} / ({size})\n"
         if barcode:
             message += f"🎹 {barcode}\n"
         message += f"🚛 {warehouse_from} ⟶ {warehouse_to}\n"
@@ -2364,7 +2364,7 @@ class NotificationService:
 🆔 {order.order_id}
 {formatted_date}
 
-👗 {order.nm_id} / {order.article} / ({order.size})
+👗 {order.nm_id} / {order.name} / ({order.size})
 🎹 {order.barcode}
 
 💰 Финансы:
@@ -2416,12 +2416,13 @@ class NotificationService:
 {formatted_date}
 
 👗 {sale.nm_id} / {sale.product_name} / ({sale.size})
-🎹 {sale.brand}
+🎹 {sale.barcode}
 
 💰 Финансы:
-Сумма: {self.format_currency(sale.amount)}
-Тип: {sale.type}
-Статус: {sale.status or 'N/A'}
+Цена заказа: {self.format_currency(sale.amount)}
+СПП %: {sale.spp_percent:.1f if sale.spp_percent else 'N/A'}%
+Цена для покупателя: {self.format_currency(sale.customer_price) if sale.customer_price else 'N/A'}
+Скидка: {sale.discount_percent:.1f if sale.discount_percent else 'N/A'}%
 
 📅 Дата продажи: {formatted_date}
 
@@ -2464,7 +2465,7 @@ class NotificationService:
 🆔 {order.order_id}
 {formatted_date}
 
-👗 {order.nm_id} / {order.article} / ({order.size})
+👗 {order.nm_id} / {order.name} / ({order.size})
 🎹 {order.barcode}
 
 💰 Финансы:
@@ -2516,12 +2517,13 @@ class NotificationService:
 {formatted_date}
 
 👗 {sale.nm_id} / {sale.product_name} / ({sale.size})
-🎹 {sale.brand}
+🎹 {sale.barcode}
 
 💰 Финансы:
-Сумма: {self.format_currency(sale.amount)}
-Тип: {sale.type}
-Статус: {sale.status or 'N/A'}
+Цена заказа: {self.format_currency(sale.amount)}
+СПП %: {sale.spp_percent:.1f if sale.spp_percent else 'N/A'}%
+Цена для покупателя: {self.format_currency(sale.customer_price) if sale.customer_price else 'N/A'}
+Скидка: {sale.discount_percent:.1f if sale.discount_percent else 'N/A'}%
 
 📅 Дата возврата: {formatted_date}
 

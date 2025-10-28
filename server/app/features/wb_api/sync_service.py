@@ -1557,12 +1557,17 @@ class WBSyncService:
                         "product_name": sale_item.get("subject", ""),
                         "brand": sale_item.get("brand", ""),
                         "size": sale_item.get("techSize", ""),
+                        "barcode": sale_item.get("barcode", ""),
                         "amount": float(sale_item.get("totalPrice", 0)),
                         "sale_date": self._parse_wb_date(sale_item.get("date")),
                         "type": sale_type,
                         "status": "completed",
                         "is_cancel": bool(sale_item.get("isCancel", False)),
-                        "last_change_date": self._parse_wb_date(sale_item.get("lastChangeDate"))
+                        "last_change_date": self._parse_wb_date(sale_item.get("lastChangeDate")),
+                        # Дополнительные финансовые поля
+                        "spp_percent": float(sale_item.get("spp", 0)) if sale_item.get("spp") else None,
+                        "customer_price": float(sale_item.get("finishedPrice", 0)) if sale_item.get("finishedPrice") else None,
+                        "discount_percent": float(sale_item.get("discountPercent", 0)) if sale_item.get("discountPercent") else None
                     }
                     
                     # Проверяем, существует ли уже такая запись с тем же типом

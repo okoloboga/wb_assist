@@ -348,7 +348,7 @@ class BotAPIClient:
     ) -> BotAPIResponse:
         """Получить последние заказы пользователя с фильтрацией по статусу"""
         logger.info(f"📦 Получение заказов для пользователя {user_id}, limit={limit}, offset={offset}, status={status}")
-        params = {"limit": limit, "offset": offset}
+        params = {"telegram_id": user_id, "limit": limit, "offset": offset}
         if status:
             params["status"] = status
         return await self._make_request_with_retry("GET", "/orders/recent", params=params)

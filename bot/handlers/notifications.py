@@ -310,38 +310,18 @@ async def handle_critical_stocks_notification(message: Message, data: dict):
 
 async def handle_dynamic_stock_alert(message: Message, data: dict):
     """Обработать динамический алерт остатков - НОВАЯ ЛОГИКА на основе заказов"""
-    alert_data = data.get("data", {})
-    
-    nm_id = alert_data.get("nm_id", "N/A")
-    name = alert_data.get("name", f"Товар {nm_id}")
-    brand = alert_data.get("brand", "")
-    warehouse = alert_data.get("warehouse_name", "Неизвестный склад")
-    size = alert_data.get("size", "N/A")
-    current_stock = alert_data.get("current_stock", 0)
-    orders_24h = alert_data.get("orders_last_24h", 0)
-    days_remaining = alert_data.get("days_remaining", 0)
-    image_url = alert_data.get("image_url")
-    
-    text = f"""⚠️ КРИТИЧЕСКИЕ ОСТАТКИ
-
-👗 {name} ({brand})
-🆔 {nm_id}
-📦 {warehouse}
-📏 Размер: {size}
-
-📊 Аналитика за 24ч:
-• Заказов: {orders_24h} шт.
-• Текущий остаток: {current_stock} шт.
-• Прогноз: {days_remaining:.1f} дн."""
+    # Сервер уже формирует готовый текст, просто отправляем его
+    telegram_text = data.get("telegram_text", "⚠️ Критические остатки")
+    image_url = data.get("data", {}).get("image_url")
     
     # Отправляем с изображением если есть
     if image_url:
         await message.answer_photo(
             photo=image_url,
-            caption=text
+            caption=telegram_text
         )
     else:
-        await message.answer(text)
+        await message.answer(telegram_text)
 
 
 async def handle_new_review_notification(message: Message, data: dict):

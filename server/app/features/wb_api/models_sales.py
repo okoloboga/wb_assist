@@ -21,6 +21,7 @@ class WBSales(Base):
     product_name = Column(String(500), nullable=True)  # subject из WB API
     brand = Column(String(255), nullable=True)
     size = Column(String(50), nullable=True)  # techSize из WB API
+    barcode = Column(String(100), nullable=True)  # barcode из WB API
     amount = Column(Float, nullable=True)  # totalPrice из WB API
     sale_date = Column(DateTime(timezone=True), nullable=True)  # date из WB API
     type = Column(String(20), nullable=False, index=True)  # 'buyout' или 'return'
@@ -31,6 +32,11 @@ class WBSales(Base):
     # Дополнительные поля для аналитики
     commission_percent = Column(Float, nullable=True)
     commission_amount = Column(Float, nullable=True)
+    
+    # Поля для детальной финансовой информации (как в заказах)
+    spp_percent = Column(Float, nullable=True)  # СПП процент
+    customer_price = Column(Float, nullable=True)  # Цена для покупателя
+    discount_percent = Column(Float, nullable=True)  # Скидка в процентах
     
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
