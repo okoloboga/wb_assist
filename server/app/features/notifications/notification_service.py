@@ -2131,14 +2131,11 @@ class NotificationService:
             logger.info(f"🔍 [_check_buyouts_simple] Checking buyouts for cabinet {cabinet_id}")
             logger.info(f"🔍 [_check_buyouts_simple] last_sync_at (UTC): {last_sync_at}")
             
-            # Ищем выкупы, которые были ДОБАВЛЕНЫ или ОБНОВЛЕНЫ в БД после последней синхронизации
-            from sqlalchemy import or_
+            # Ищем выкупы, которые были ДОБАВЛЕНЫ в БД после последней синхронизации
+            # Используем только created_at (выкупы создаются как отдельные записи)
             buyouts = self.db.query(WBSales).filter(
                 WBSales.cabinet_id == cabinet_id,
-                or_(
-                    WBSales.created_at > last_sync_at,  # Новые записи
-                    WBSales.updated_at > last_sync_at   # Обновленные записи
-                ),
+                WBSales.created_at > last_sync_at,  # Новые записи
                 WBSales.type == "buyout",
                 WBSales.is_cancel == False
             ).all()
@@ -2188,15 +2185,11 @@ class NotificationService:
             logger.info(f"🔍 [_check_returns_simple] Checking returns for cabinet {cabinet_id}")
             logger.info(f"🔍 [_check_returns_simple] last_sync_at (UTC): {last_sync_at}")
             
-            # Ищем возвраты, которые были ДОБАВЛЕНЫ или ОБНОВЛЕНЫ в БД после последней синхронизации
-            # Returns создаются как отдельные записи, аналогично buyouts
-            from sqlalchemy import or_
+            # Ищем возвраты, которые были ДОБАВЛЕНЫ в БД после последней синхронизации
+            # Используем только created_at (возвраты создаются как отдельные записи)
             returns = self.db.query(WBSales).filter(
                 WBSales.cabinet_id == cabinet_id,
-                or_(
-                    WBSales.created_at > last_sync_at,  # Новые записи
-                    WBSales.updated_at > last_sync_at   # Обновленные записи
-                ),
+                WBSales.created_at > last_sync_at,  # Новые записи
                 WBSales.type == "return",
                 WBSales.is_cancel == False
             ).all()
@@ -2420,9 +2413,9 @@ class NotificationService:
 
 💰 Финансы:
 Цена заказа: {self.format_currency(sale.amount)}
-СПП %: {sale.spp_percent:.1f if sale.spp_percent else 'N/A'}%
+СПП %: {f"{sale.spp_percent:.1f}" if sale.spp_percent else 'N/A'}%
 Цена для покупателя: {self.format_currency(sale.customer_price) if sale.customer_price else 'N/A'}
-Скидка: {sale.discount_percent:.1f if sale.discount_percent else 'N/A'}%
+Скидка: {f"{sale.discount_percent:.1f}" if sale.discount_percent else 'N/A'}%
 
 📅 Дата продажи: {formatted_date}
 
@@ -2521,9 +2514,9 @@ class NotificationService:
 
 💰 Финансы:
 Цена заказа: {self.format_currency(sale.amount)}
-СПП %: {sale.spp_percent:.1f if sale.spp_percent else 'N/A'}%
+СПП %: {f"{sale.spp_percent:.1f}" if sale.spp_percent else 'N/A'}%
 Цена для покупателя: {self.format_currency(sale.customer_price) if sale.customer_price else 'N/A'}
-Скидка: {sale.discount_percent:.1f if sale.discount_percent else 'N/A'}%
+Скидка: {f"{sale.discount_percent:.1f}" if sale.discount_percent else 'N/A'}%
 
 📅 Дата возврата: {formatted_date}
 
@@ -2655,13 +2648,36 @@ class NotificationService:
 🆔 {last_order.order_id}
 {order_formatted_date}"""
         
-        return f"""😞 НЕГАТИВНЫЙ ОТЗЫВ{order_info}
+        # Формируем звезды как в основном списке отзывов
+        stars = "⭐" * review.rating
+        
+        # Получаем плюсы и минусы из отзыва
+        pros = review.pros or ""
+        cons = review.cons or ""
+        user_name = review.user_name or "Аноним"
+        color = review.color or ""
+        
+        # Формируем сообщение в новом формате
+        message = f"""⭐ОТЗЫВ⭐
 
-👗 {product_info}
-
-{stars_display} ({review.rating}/5)
-
-💬 {review.text[:200]}{'...' if len(review.text) > 200 else ''}"""
+{stars} | {review.rating}/5
+   {formatted_date}
+   👗 {product.name or f'Товар {review.nm_id}'} ({review.nm_id})
+   👤 {user_name}{f" ({color})" if color else ""}"""
+        
+        # Добавляем плюсы только если они есть
+        if pros:
+            message += f"\n   ➕ {pros}"
+        
+        # Добавляем минусы только если они есть
+        if cons:
+            message += f"\n   ➖ {cons}"
+        
+        # Добавляем текст отзыва если есть
+        if review.text:
+            message += f"\n   💬 {review.text[:200]}{'...' if len(review.text) > 200 else ''}"
+        
+        return message
     
     def _get_full_product_info(self, cabinet_id: int, nm_id: int) -> Dict[str, Any]:
         """Получение полной информации о товаре для уведомлений"""
