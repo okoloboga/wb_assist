@@ -44,19 +44,65 @@ def compose_messages(data: Dict[str, Any], template_path: Optional[str] = None) 
 
 
 def _safe_json_extract(text: str) -> Optional[Dict[str, Any]]:
-    """Try to extract the largest JSON object from text."""
-    start = text.find("{")
-    end = text.rfind("}")
+    """Try to extract the largest JSON object from text.
+    Handles markdown code blocks like ```json ... ``` properly.
+    """
+    import re
+    
+    # Step 1: Try to extract JSON from markdown code block
+    # Pattern: ```json (optional) ... { ... } ... ``` 
+    code_block_pattern = r'```(?:json)?\s*(\{.*?\})\s*```'
+    matches = re.findall(code_block_pattern, text, re.DOTALL)
+    
+    if matches:
+        # Try each match (usually there's only one)
+        for match in matches:
+            try:
+                return json.loads(match)
+            except Exception:
+                pass
+    
+    # Step 2: Remove all markdown code blocks and try again
+    # Remove ```json ... ``` or ``` ... ```
+    cleaned = re.sub(r'```(?:json)?\s*', '', text)
+    cleaned = re.sub(r'```', '', cleaned)
+    
+    # Step 3: Find the outermost JSON object
+    start = cleaned.find("{")
+    end = cleaned.rfind("}")
     if start == -1 or end == -1 or end <= start:
         return None
-    snippet = text[start : end + 1]
+    
+    snippet = cleaned[start : end + 1]
+    
+    # Step 4: Try to parse
     try:
         return json.loads(snippet)
     except Exception:
+        # Try with escaped newlines fixed
         try:
             return json.loads(snippet.replace("\\n", "\n"))
         except Exception:
-            return None
+            # Last resort: try to find nested braces
+            try:
+                # Count braces to find matching closing brace
+                brace_count = 0
+                end_pos = start
+                for i in range(start, len(cleaned)):
+                    if cleaned[i] == '{':
+                        brace_count += 1
+                    elif cleaned[i] == '}':
+                        brace_count -= 1
+                        if brace_count == 0:
+                            end_pos = i
+                            break
+                if end_pos > start:
+                    snippet = cleaned[start : end_pos + 1]
+                    return json.loads(snippet)
+            except Exception:
+                pass
+    
+    return None
 
 
 def _prepare_telegram_from_text(text: str) -> Dict[str, Any]:
@@ -73,6 +119,16 @@ def _normalize_telegram(block: Any) -> Dict[str, Any]:
             escaped_chunks = [escape_markdown_v2(c) for c in chunks]
             character_count = sum(len(c) for c in escaped_chunks)
             return {"chunks": escaped_chunks, "character_count": character_count}
+        
+        # Check for mdv2 field (MarkdownV2 text from OpenAI)
+        mdv2 = block.get("mdv2")
+        if isinstance(mdv2, str) and mdv2.strip():
+            # mdv2 is already escaped markdown, just split into chunks
+            chunks = split_telegram_message(mdv2)
+            character_count = sum(len(c) for c in chunks)
+            return {"chunks": chunks, "character_count": character_count}
+        
+        # Check for text field
         text = block.get("text")
         if isinstance(text, str) and text.strip():
             return _prepare_telegram_from_text(text)
@@ -120,6 +176,12 @@ def run_analysis(
     """
     messages = compose_messages(data, template_path)
     text = client.complete_messages(messages)
+
+    # Handle explicit LLM errors (from client retries)
+    result_error: Optional[str] = None
+    if isinstance(text, str) and text.strip().startswith("ERROR:"):
+        result_error = text.strip()
+
     parsed = _safe_json_extract(text) or {}
 
     telegram = _normalize_telegram(parsed.get("telegram")) if parsed else {"chunks": [], "character_count": 0}
@@ -131,6 +193,12 @@ def run_analysis(
             tg_text = text[idx + len("output_tg") :].strip()
             if tg_text:
                 telegram = _prepare_telegram_from_text(tg_text)
+
+    # If still empty, and we have an LLM error, return a readable warning for TG
+    if not telegram["chunks"] and result_error:
+        telegram = _prepare_telegram_from_text(
+            "⚠️ Ошибка запроса к LLM. Пожалуйста, повторите попытку позже.\n" + result_error
+        )
 
     sheets = parsed.get("sheets") if isinstance(parsed, dict) else None
     if not isinstance(sheets, dict):
@@ -147,6 +215,8 @@ def run_analysis(
         "telegram": telegram,
         "sheets": sheets,
     }
+    if result_error:
+        result["llm_error"] = result_error
     if validate:
         try:
             schema_text = get_output_json_schema(template_path)

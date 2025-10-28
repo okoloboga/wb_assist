@@ -17,9 +17,17 @@ OPENAI_API_KEY=your_openai_api_key
 # OPENAI_BASE_URL=https://api.openai.com/v1
 OPENAI_MODEL=gpt-4o-mini
 OPENAI_TEMPERATURE=0.2
-OPENAI_MAX_TOKENS=800
+OPENAI_MAX_TOKENS=4000
 OPENAI_TIMEOUT=60
 # OPENAI_SYSTEM_PROMPT=опционально, переопределение системного промпта
+
+# Stage 5: параметры ретраев LLM
+# Количество повторов при ошибках или пустом ответе
+OPENAI_MAX_RETRIES=2
+# Начальная задержка между повторами (мс)
+OPENAI_RETRY_DELAY_MS=500
+# Множитель экспоненциального бэк-оффа
+OPENAI_RETRY_BACKOFF=2
 
 # Примечание: при локальном запуске убедитесь, что импорт bot/utils доступен,
 # например запуская из корня проекта или установив PYTHONPATH на корень.
