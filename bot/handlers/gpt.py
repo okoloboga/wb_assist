@@ -21,7 +21,7 @@ from utils.formatters import (
     escape_markdown_v2,
     split_telegram_message,
 )
-# from gpt_integration.gpt_client import GPTClient  # Закомментировано - архитектурная проблема
+# Удалено импорт из gpt_integration на верхнем уровне, чтобы контейнер бота не падал
 
 import aiohttp
 
@@ -46,8 +46,8 @@ async def cmd_gpt(message: Message, state: FSMContext):
     # Инициализируем клиент для сессии чата
     global _gpt_client
     try:
-        # _gpt_client = GPTClient.from_env()  # Закомментировано - архитектурная проблема
-        _gpt_client = None  # Временная заглушка
+        from gpt_integration.gpt_client import GPTClient
+        _gpt_client = GPTClient.from_env()
     except Exception as e:
         logger.error(f"Не удалось инициализировать GPT клиент: {e}")
         _gpt_client = None
@@ -66,8 +66,8 @@ async def cb_ai_chat(callback: CallbackQuery, state: FSMContext):
     # Инициализируем клиент для сессии чата
     global _gpt_client
     try:
-        # _gpt_client = GPTClient.from_env()  # Закомментировано - архитектурная проблема
-        _gpt_client = None  # Временная заглушка
+        from gpt_integration.gpt_client import GPTClient
+        _gpt_client = GPTClient.from_env()
     except Exception as e:
         logger.error(f"Не удалось инициализировать GPT клиент: {e}")
         _gpt_client = None

@@ -33,6 +33,60 @@ def aggregate(sources: Dict[str, Any]) -> Dict[str, Any]:
     for k, v in sources.items():
         if k not in DATA_KEYS:
             extra[k] = v
+
+    # Compute key metrics for Stage 4
+    sales: Dict[str, Any] = sources.get("sales") or {}
+    dynamics: Dict[str, Any] = sales.get("dynamics") or {}
+    sales_periods: Dict[str, Any] = sales.get("sales_periods") or {}
+    stocks_summary: Dict[str, Any] = sales.get("stocks_summary") or {}
+    top_products_list: List[Dict[str, Any]] = (
+        sales.get("top_products")
+        or sources.get("top_products")
+        or []
+    )
+
+    day_over_day = dynamics.get("yesterday_growth_percent")
+    if day_over_day is None:
+        try:
+            today = sales_periods.get("today") or {}
+            yesterday = sales_periods.get("yesterday") or {}
+            t = float(today.get("count", 0) or 0)
+            y = float(yesterday.get("count", 0) or 0)
+            if y > 0:
+                day_over_day = ((t - y) / y) * 100.0
+            elif t > 0:
+                day_over_day = 100.0
+            else:
+                day_over_day = 0.0
+        except Exception:
+            day_over_day = 0.0
+
+    week_over_week = dynamics.get("week_growth_percent")
+
+    critical_stocks_count = stocks_summary.get("critical_count")
+    if critical_stocks_count is None:
+        stocks_critical = sources.get("stocks_critical")
+        if isinstance(stocks_critical, list):
+            critical_stocks_count = len(stocks_critical)
+
+    top_products_count = len(top_products_list) if isinstance(top_products_list, list) else 0
+
+    computed_metrics = {
+        "day_over_day": day_over_day if isinstance(day_over_day, (int, float)) else 0.0,
+        "week_over_week": week_over_week if isinstance(week_over_week, (int, float)) else 0.0,
+        "top_products_count": top_products_count,
+        "critical_stocks_count": int(critical_stocks_count) if isinstance(critical_stocks_count, (int, float)) else 0,
+    }
+
+    # Ensure meta exists and attach computed metrics
+    meta = sources.get("meta") or {}
+    meta["computed_metrics"] = computed_metrics
+    res["meta"] = meta
+
+    # Prefer to carry top_products list (from sales or sources)
+    if top_products_list:
+        res["top_products"] = top_products_list
+
     if extra:
         res["extra"] = extra
     return res
