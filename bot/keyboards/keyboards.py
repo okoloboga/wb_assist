@@ -101,8 +101,8 @@ def content_keyboard() -> InlineKeyboardMarkup:
 
 def ai_assistant_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🤖 AI-чат", callback_data="ai_chat")],
-        [InlineKeyboardButton(text="🧠 Анализ", callback_data="ai_analysis")],
+        [InlineKeyboardButton(text="🧠 AI-анализ", callback_data="ai_analysis")],
+        [InlineKeyboardButton(text="💬 AI-чат", callback_data="ai_chat")],
         [InlineKeyboardButton(text="🔙 Назад", callback_data="main_menu")]
     ])
 

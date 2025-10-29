@@ -33,6 +33,6 @@ class NotificationStates(StatesGroup):
     testing_notifications = State()
 
 
-class GPTStates(StatesGroup):
-    """Состояния для GPT чата"""
-    gpt_chat = State()
+class AIChatStates(StatesGroup):
+    """Состояния для AI чата"""
+    waiting_for_message = State()
