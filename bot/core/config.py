@@ -42,6 +42,9 @@ class BotConfig:
     # Адрес GPT сервиса
     gpt_service_url: str = "http://127.0.0.1:9000"
     
+    # Адрес AI Chat сервиса
+    ai_chat_service_url: str = "http://127.0.0.1:9001"
+    
     # LLM (GPT) настройки
     openai_api_key: Optional[str] = None
     openai_base_url: Optional[str] = None
@@ -79,6 +82,8 @@ def load_config() -> BotConfig:
         webhook_port=int(os.getenv("WEBHOOK_PORT", "8001")),
         # GPT Service URL
         gpt_service_url=os.getenv("GPT_SERVICE_URL", "http://127.0.0.1:9000"),
+        # AI Chat Service URL
+        ai_chat_service_url=os.getenv("AI_CHAT_SERVICE_URL", "http://127.0.0.1:9001"),
         # LLM (GPT)
         openai_api_key=os.getenv("OPENAI_API_KEY"),
         openai_base_url=os.getenv("OPENAI_BASE_URL"),

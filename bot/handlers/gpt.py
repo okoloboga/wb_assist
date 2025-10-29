@@ -1,130 +1,20 @@
-import sys
-from pathlib import Path
-
-# Добавляем путь к модулям бота
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
 import logging
 import os
 from aiogram import Router, F
-from aiogram.filters import Command
-from aiogram.types import Message, CallbackQuery
-from aiogram.fsm.context import FSMContext
+from aiogram.types import CallbackQuery
 
-from core.states import GPTStates
 from core.config import config
 from keyboards.keyboards import ai_assistant_keyboard
 from utils.formatters import (
-    safe_send_message,
     safe_edit_message,
     handle_telegram_errors,
-    escape_markdown_v2,
-    split_telegram_message,
 )
-# Удалено импорт из gpt_integration на верхнем уровне, чтобы контейнер бота не падал
 
 import aiohttp
 
 logger = logging.getLogger(__name__)
 
 router = Router()
-
-# Инъецируемый клиент для тестов Stage 2
-_gpt_client = None
-
-
-def _format_and_split(text: str) -> list[str]:
-    md = escape_markdown_v2(text)
-    return split_telegram_message(md)
-
-
-@router.message(Command("gpt"))
-@handle_telegram_errors
-async def cmd_gpt(message: Message, state: FSMContext):
-    """Вход в режим GPT-чата по команде /gpt"""
-    await state.set_state(GPTStates.gpt_chat)
-    # Инициализируем клиент для сессии чата
-    global _gpt_client
-    try:
-        from gpt_integration.gpt_client import GPTClient
-        _gpt_client = GPTClient.from_env()
-    except Exception as e:
-        logger.error(f"Не удалось инициализировать GPT клиент: {e}")
-        _gpt_client = None
-    await safe_send_message(
-        message,
-        "🤖 Вы вошли в режим AI-чат.\nНапишите вопрос для GPT.\n\nЧтобы выйти, используйте команду /exit",
-        user_id=message.from_user.id,
-    )
-
-
-@router.callback_query(F.data == "ai_chat")
-@handle_telegram_errors
-async def cb_ai_chat(callback: CallbackQuery, state: FSMContext):
-    """Вход в режим GPT-чата по кнопке 'AI-чат'"""
-    await state.set_state(GPTStates.gpt_chat)
-    # Инициализируем клиент для сессии чата
-    global _gpt_client
-    try:
-        from gpt_integration.gpt_client import GPTClient
-        _gpt_client = GPTClient.from_env()
-    except Exception as e:
-        logger.error(f"Не удалось инициализировать GPT клиент: {e}")
-        _gpt_client = None
-    await safe_edit_message(
-        callback,
-        "🤖 Режим AI-чат активирован.\nНапишите вопрос для GPT.\n\nЧтобы выйти, используйте команду /exit",
-        user_id=callback.from_user.id,
-    )
-
-
-@router.message(Command("exit"))
-@handle_telegram_errors
-async def cmd_exit(message: Message, state: FSMContext):
-    """Выход из режима GPT-чата"""
-    await state.clear()
-    await safe_send_message(
-        message,
-        "✅ Вы вышли из режима AI-чат. Возвращайтесь, когда будут вопросы!",
-        user_id=message.from_user.id,
-    )
-
-
-async def handle_user_prompt(message: Message, state: FSMContext):
-    """Обработка сообщений пользователя в GPT-чате (использует инъецируемый _gpt_client)."""
-    user_text = (message.text or "").strip()
-    if not user_text:
-        await message.answer(text="✍️ Пожалуйста, отправьте текстовый вопрос.")
-        return
-
-    # Используем инъецируемый клиент для тестов Stage 2
-    global _gpt_client
-    if _gpt_client is None:
-        await message.answer(text="❌ GPT функционал временно отключен (архитектурная проблема).")
-        return
-
-    # Закомментировано - архитектурная проблема
-    # try:
-    #     messages = [{"role": "user", "content": user_text}]
-    #     llm_text = _gpt_client.complete_messages(messages)
-    # except Exception as e:
-    #     logger.exception("LLM вызов завершился ошибкой")
-    #     await message.answer(text=f"❌ Ошибка запроса к LLM: {e}")
-    #     return
-
-    # chunks = _format_and_split(llm_text) or ["(пустой ответ)"]
-    # for chunk in chunks:
-    #     await message.answer(text=chunk, parse_mode="MarkdownV2")
-    
-    # Временная заглушка
-    await message.answer(text="🤖 GPT функционал временно недоступен. Обратитесь к старжеру для исправления архитектуры.")
-
-
-@router.message(GPTStates.gpt_chat)
-@handle_telegram_errors
-async def gpt_chat_message(message: Message, state: FSMContext):
-    """Проксирует обработку пользовательских сообщений в handle_user_prompt."""
-    await handle_user_prompt(message, state)
 
 
 @router.callback_query(F.data == "ai_analysis")

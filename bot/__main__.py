@@ -27,6 +27,7 @@ from handlers.notifications import router as notifications_router
 from handlers.prices import router as prices_router
 from handlers.webhook import router as webhook_router, webhook_app
 from handlers.gpt import router as gpt_router
+from handlers.ai_chat import router as ai_chat_router
 from keyboards.keyboards import main_keyboard, wb_menu_keyboard
 
 # Настройка логирования
@@ -54,6 +55,7 @@ dp.callback_query.middleware(RateLimitMiddleware())
 
 # Подключаем роутеры
 dp.include_router(commands_router)  # commands_router должен быть ПЕРВЫМ
+dp.include_router(ai_chat_router)  # ai_chat_router должен быть ВТОРЫМ (для обработки FSM)
 dp.include_router(registration_router)
 dp.include_router(wb_cabinet_router)
 dp.include_router(dashboard_router)

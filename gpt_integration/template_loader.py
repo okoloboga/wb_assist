@@ -14,7 +14,8 @@ def _load_markdown_section(text: str, section_name: str) -> str:
     if not m:
         return ""
     start = m.end()
-    m2 = re.search(r"^##\s+[A-Za-z0-9_ ]+\s*$", text[start:], flags=re.MULTILINE)
+    # Find next level-2 header (## but not ###, ####, etc)
+    m2 = re.search(r"^##(?!#)\s+", text[start:], flags=re.MULTILINE)
     end = start + m2.start() if m2 else len(text)
     return text[start:end].strip()
 

@@ -118,6 +118,7 @@ services:
       - REQUEST_TIMEOUT=600
       - WEBHOOK_SECRET=${WEBHOOK_SECRET:-default_webhook_secret}
       - GPT_SERVICE_URL=http://gpt:9000
+      - AI_CHAT_SERVICE_URL=http://ai_chat:9001
     networks:
       - app-network
 
@@ -146,6 +147,28 @@ services:
       - ./bot/utils:/app/utils
     networks:
       - app-network
+
+  ai_chat:
+    build:
+      context: .
+      dockerfile: ai_chat/Dockerfile
+    ports:
+      - "9001:9001"
+    environment:
+      - AI_CHAT_PORT=9001
+      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      - API_SECRET_KEY=${API_SECRET_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
+      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o-mini}
+      - OPENAI_TEMPERATURE=${OPENAI_TEMPERATURE:-0.7}
+      - OPENAI_MAX_TOKENS=${OPENAI_MAX_TOKENS:-1000}
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - app-network
+    restart: unless-stopped
 
 
 volumes:
