@@ -47,33 +47,36 @@
 
 | Колонка | Описание | Источник данных | Поле БД | Тип данных |
 |---------|----------|-----------------|---------|------------|
-| A | Артикул | WBStock | `article` | String(100) |
-| B | Название товара | WBStock | `name` | String(500) |
-| C | Бренд | WBStock | `brand` | String(255) |
-| D | Размер | WBStock | `size` | String(50) |
-| E | Склад | WBStock | `warehouse_name` | String(255) |
-| F | Количество | WBStock | `quantity` | Integer |
-| G | В пути к клиенту | WBStock | `in_way_to_client` | Integer |
-| H | В пути от клиента | WBStock | `in_way_from_client` | Integer |
-| I | Цена | WBStock | `price` | Float |
-| J | Скидка | WBStock | `discount` | Float |
-| K | Последнее обновление | WBStock | `last_updated` | DateTime |
+| A | Фото | WBProduct | `image_url` | =IMAGE() |
+| B | Артикул (nm_id) | WBStock | `nm_id` | Integer |
+| C | Название товара | WBProduct | `name` | String(500) |
+| D | Бренд | WBStock | `brand` | String(255) |
+| E | Размер | WBStock | `size` | String(50) |
+| F | Склад | WBStock | `warehouse_name` | String(255) |
+| G | Количество | WBStock | `quantity` | Integer |
+| H | В пути к клиенту | WBStock | `in_way_to_client` | Integer |
+| I | В пути от клиента | WBStock | `in_way_from_client` | Integer |
+| J | Цена | WBStock | `price` | Float |
+| K | Скидка | WBStock | `discount` | Float |
+| L | Последнее обновление | WBStock | `last_updated` | DateTime |
 
-**Источник данных:** Таблица `wb_stocks`
+**Источник данных:** Таблицы `wb_stocks` + `wb_products` (LEFT JOIN)
 **Особенности:**
 - Одна строка = один товар на одном складе
+- Название товара берется из `wb_products` по `nm_id`
 - Группировка по `nm_id` + `warehouse_id`
 - Уникальное ограничение: `uq_cabinet_nm_warehouse`
 
 **SQL запрос:**
 ```sql
 SELECT 
-    article, name, brand, size, warehouse_name,
-    quantity, in_way_to_client, in_way_from_client,
-    price, discount, last_updated
-FROM wb_stocks 
-WHERE cabinet_id = ? 
-ORDER BY nm_id, warehouse_name
+    p.image_url, s.nm_id, p.name, s.brand, s.size, s.warehouse_name,
+    s.quantity, s.in_way_to_client, s.in_way_from_client,
+    s.price, s.discount, s.last_updated
+FROM wb_stocks s
+LEFT JOIN wb_products p ON s.nm_id = p.nm_id AND s.cabinet_id = p.cabinet_id
+WHERE s.cabinet_id = ? 
+ORDER BY s.nm_id, s.warehouse_name
 ```
 
 ---
@@ -82,23 +85,24 @@ ORDER BY nm_id, warehouse_name
 
 | Колонка | Описание | Источник данных | Поле БД | Тип данных |
 |---------|----------|-----------------|---------|------------|
-| A | Номер заказа | WBOrder | `order_id` | String(100) |
-| B | Артикул | WBOrder | `article` | String(100) |
-| C | Название | WBOrder | `name` | String(500) |
-| D | Размер | WBOrder | `size` | String(50) |
-| E | Количество | WBOrder | `quantity` | Integer |
-| F | Цена | WBOrder | `price` | Float |
-| G | Общая сумма | WBOrder | `total_price` | Float |
-| H | Статус | WBOrder | `status` | String(50) |
-| I | Дата заказа | WBOrder | `order_date` | DateTime |
-| J | Склад отправки | WBOrder | `warehouse_from` | String(255) |
-| K | Регион доставки | WBOrder | `warehouse_to` | String(255) |
-| L | Комиссия WB | WBOrder | `commission_amount` | Float |
-| M | СПП % | WBOrder | `spp_percent` | Float |
-| N | Цена клиента | WBOrder | `customer_price` | Float |
-| O | Скидка % | WBOrder | `discount_percent` | Float |
+| A | Фото | WBProduct | `image_url` | =IMAGE() |
+| B | Номер заказа | WBOrder | `order_id` | String(100) |
+| C | Артикул (nm_id) | WBOrder | `nm_id` | Integer |
+| D | Название | WBProduct | `name` | String(500) |
+| E | Размер | WBOrder | `size` | String(50) |
+| F | Количество | WBOrder | `quantity` | Integer |
+| G | Цена | WBOrder | `price` | Float |
+| H | Общая сумма | WBOrder | `total_price` | Float |
+| I | Статус | WBOrder | `status` | String(50) |
+| J | Дата заказа | WBOrder | `order_date` | DateTime |
+| K | Склад отправки | WBOrder | `warehouse_from` | String(255) |
+| L | Регион доставки | WBOrder | `warehouse_to` | String(255) |
+| M | Комиссия WB | WBOrder | `commission_amount` | Float |
+| N | СПП % | WBOrder | `spp_percent` | Float |
+| O | Цена клиента | WBOrder | `customer_price` | Float |
+| P | Скидка % | WBOrder | `discount_percent` | Float |
 
-**Источник данных:** Таблица `wb_orders`
+**Источник данных:** Таблицы `wb_orders` + `wb_products` (LEFT JOIN)
 **Статусы:**
 - `Заказ` - новый заказ
 - `Выкуп` - товар выкуплен  
@@ -108,12 +112,13 @@ ORDER BY nm_id, warehouse_name
 **SQL запрос:**
 ```sql
 SELECT 
-    order_id, article, name, size, quantity, price, total_price,
-    status, order_date, warehouse_from, warehouse_to,
-    commission_amount, spp_percent, customer_price, discount_percent
-FROM wb_orders 
-WHERE cabinet_id = ? 
-ORDER BY order_date DESC
+    p.image_url, o.order_id, o.nm_id, p.name, o.size, o.quantity, o.price, o.total_price,
+    o.status, o.order_date, o.warehouse_from, o.warehouse_to,
+    o.commission_amount, o.spp_percent, o.customer_price, o.discount_percent
+FROM wb_orders o
+LEFT JOIN wb_products p ON o.nm_id = p.nm_id AND o.cabinet_id = p.cabinet_id
+WHERE o.cabinet_id = ? 
+ORDER BY o.order_date DESC
 ```
 
 ---
@@ -122,26 +127,27 @@ ORDER BY order_date DESC
 
 | Колонка | Описание | Источник данных | Поле БД | Тип данных |
 |---------|----------|-----------------|---------|------------|
-| A | ID отзыва | WBReview | `review_id` | String(100) |
-| B | Артикул | WBReview | `nm_id` | Integer |
-| C | Название | WBReview | (из WBProduct) | String(500) |
-| D | Рейтинг | WBReview | `rating` | Integer |
-| E | Текст отзыва | WBReview | `text` | Text |
-| F | Плюсы | WBReview | `pros` | Text |
-| G | Минусы | WBReview | `cons` | Text |
-| H | Имя пользователя | WBReview | `user_name` | String(255) |
-| I | Цвет | WBReview | `color` | String(100) |
-| J | Размер | WBReview | `matching_size` | String(50) |
-| K | Дата отзыва | WBReview | `created_date` | DateTime |
-| L | Ответ продавца | WBReview | (из `is_answered`) | Boolean |
-| M | Просмотрен | WBReview | `was_viewed` | Boolean |
+| A | Фото | WBProduct | `image_url` | =IMAGE() |
+| B | ID отзыва | WBReview | `review_id` | String(100) |
+| C | Артикул | WBReview | `nm_id` | Integer |
+| D | Название | WBReview | (из WBProduct) | String(500) |
+| E | Рейтинг | WBReview | `rating` | Integer |
+| F | Текст отзыва | WBReview | `text` | Text |
+| G | Плюсы | WBReview | `pros` | Text |
+| H | Минусы | WBReview | `cons` | Text |
+| I | Имя пользователя | WBReview | `user_name` | String(255) |
+| J | Цвет | WBReview | `color` | String(100) |
+| K | Размер | WBReview | `matching_size` | String(50) |
+| L | Дата отзыва | WBReview | `created_date` | DateTime |
+| M | Ответ продавца | WBReview | `is_answered` | ✅/❌ |
+| N | Просмотрен | WBReview | `was_viewed` | ✅/❌ |
 
 **Источник данных:** Таблица `wb_reviews` + `wb_products` (для названия товара)
 
 **SQL запрос:**
 ```sql
 SELECT 
-    r.review_id, r.nm_id, p.name, r.rating, r.text, r.pros, r.cons,
+    p.image_url, r.review_id, r.nm_id, p.name, r.rating, r.text, r.pros, r.cons,
     r.user_name, r.color, r.matching_size, r.created_date,
     r.is_answered, r.was_viewed
 FROM wb_reviews r
@@ -158,6 +164,8 @@ ORDER BY r.created_date DESC
 - `wb_cabinets` ← `wb_stocks` (cabinet_id)
 - `wb_cabinets` ← `wb_orders` (cabinet_id)  
 - `wb_cabinets` ← `wb_reviews` (cabinet_id)
+- `wb_products` ← `wb_stocks` (nm_id + cabinet_id) ← **НОВОЕ**
+- `wb_products` ← `wb_orders` (nm_id + cabinet_id) ← **НОВОЕ**
 - `wb_products` ← `wb_reviews` (nm_id + cabinet_id)
 
 ### **Уникальные ограничения:**
@@ -170,6 +178,8 @@ ORDER BY r.created_date DESC
 ## 📊 Дополнительные поля БД (не используемые в таблице)
 
 ### **WBStock (неиспользуемые поля):**
+- `article` - артикул поставщика
+- `name` - название товара (теперь берется из WBProduct)
 - `barcode` - штрихкод
 - `category` - категория
 - `subject` - предмет
@@ -179,6 +189,8 @@ ORDER BY r.created_date DESC
 - `sc_code` - код поставщика
 
 ### **WBOrder (неиспользуемые поля):**
+- `article` - артикул поставщика
+- `name` - название товара (теперь берется из WBProduct)
 - `barcode` - штрихкод
 - `category` - категория
 - `subject` - предмет
@@ -201,17 +213,17 @@ ORDER BY r.created_date DESC
 
 **Общее количество полей:**
 - Информация: информационный лист (без полей)
-- Склад: 11 полей
-- Заказы: 15 полей  
-- Отзывы: 13 полей
-- **Итого: 39 полей данных**
+- Склад: 12 полей (включая фото)
+- Заказы: 16 полей (включая фото)
+- Отзывы: 14 полей (включая фото)
+- **Итого: 42 поля данных**
 
 **Источники данных:**
-- `wb_stocks` - 11 полей
-- `wb_orders` - 15 полей
-- `wb_reviews` - 12 полей
-- `wb_products` - 1 поле (название товара)
-- **Всего: 39 полей из PostgreSQL БД**
+- `wb_stocks` - 10 полей + LEFT JOIN `wb_products` (name, image_url)
+- `wb_orders` - 14 полей + LEFT JOIN `wb_products` (name, image_url)
+- `wb_reviews` - 12 полей + LEFT JOIN `wb_products` (name, image_url)
+- `wb_products` - название товара и фото (используется во всех трех листах)
+- **Всего: 42 поля из PostgreSQL БД с JOIN на wb_products**
 
 ---
 

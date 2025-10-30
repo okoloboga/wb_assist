@@ -34,7 +34,7 @@ class ExportService:
         """Инициализирует Google Sheets API сервис"""
         if self._sheets_service is None:
             try:
-                key_file = os.getenv('GOOGLE_SERVICE_ACCOUNT_FILE', 'config/wb-assist-352ded7b5635.json')
+                key_file = os.getenv('GOOGLE_SERVICE_ACCOUNT_FILE', 'config/wb-assist.json')
                 scopes = ['https://www.googleapis.com/auth/spreadsheets']
                 
                 credentials = service_account.Credentials.from_service_account_file(
@@ -151,59 +151,100 @@ class ExportService:
         return export_log
 
     def get_orders_data(self, cabinet_id: int, limit: int = 1000) -> List[Dict[str, Any]]:
-        """Получает данные заказов для экспорта"""
-        orders = self.db.query(WBOrder).filter(
+        """Получает данные заказов для экспорта с названием товара из WBProduct"""
+        orders = self.db.query(WBOrder, WBProduct).join(
+            WBProduct,
+            and_(
+                WBOrder.nm_id == WBProduct.nm_id,
+                WBOrder.cabinet_id == WBProduct.cabinet_id
+            ),
+            isouter=True
+        ).filter(
             WBOrder.cabinet_id == cabinet_id
         ).order_by(desc(WBOrder.order_date)).limit(limit).all()
         
         data = []
-        for order in orders:
+        for order, product in orders:
+            image_url = product.image_url if product else None
+            image_formula = f'=IMAGE("{image_url}")' if image_url else ''
+            
+            # Переводим статус на русский
+            status_map = {
+                "active": "Активный",
+                "canceled": "Отменен"
+            }
+            status_ru = status_map.get(order.status.lower() if order.status else "", order.status or "")
+            
             data.append({
-                "order_id": order.order_id,
-                "article": order.article,
-                "name": order.name,
-                "size": order.size,
-                "quantity": order.quantity,
-                "price": order.price,
-                "total_price": order.total_price,
-                "status": order.status,
-                "order_date": order.order_date.isoformat() if order.order_date else None,
-                "warehouse_from": order.warehouse_from,
-                "warehouse_to": order.warehouse_to,
-                "commission_amount": order.commission_amount,
-                "spp_percent": order.spp_percent,
-                "customer_price": order.customer_price,
-                "discount_percent": order.discount_percent
+                "photo": image_formula,                          # A - photo (formula)
+                "order_id": order.order_id,                     # B - order_id
+                "nm_id": order.nm_id,                           # C - nm_id
+                "product_name": product.name if product else None,  # D - product.name
+                "size": order.size,                             # E - size
+                "quantity": order.quantity,                     # F - quantity
+                "price": order.price,                           # G - price
+                "total_price": order.total_price,               # H - total_price
+                "status": status_ru,                            # I - status (русский)
+                "order_date": order.order_date.strftime("%Y-%m-%d %H:%M") if order.order_date else None,  # J - order_date
+                "warehouse_from": order.warehouse_from,         # K - warehouse_from
+                "warehouse_to": order.warehouse_to,             # L - warehouse_to
+                "commission_amount": order.commission_amount,   # M - commission_amount
+                "spp_percent": order.spp_percent,               # N - spp_percent
+                "customer_price": order.customer_price,         # O - customer_price
+                "discount_percent": order.discount_percent      # P - discount_percent
             })
         
         return data
 
     def get_stocks_data(self, cabinet_id: int, limit: int = 1000) -> List[Dict[str, Any]]:
-        """Получает данные остатков для экспорта"""
-        stocks = self.db.query(WBStock).filter(
+        """Получает данные остатков для экспорта с названием товара из WBProduct"""
+        stocks = self.db.query(WBStock, WBProduct).join(
+            WBProduct,
+            and_(
+                WBStock.nm_id == WBProduct.nm_id,
+                WBStock.cabinet_id == WBProduct.cabinet_id
+            ),
+            isouter=True
+        ).filter(
             WBStock.cabinet_id == cabinet_id
         ).order_by(WBStock.nm_id, WBStock.warehouse_name).limit(limit).all()
         
         data = []
-        for stock in stocks:
+        for stock, product in stocks:
+            image_url = product.image_url if product else None
+            image_formula = f'=IMAGE("{image_url}")' if image_url else ''
+            
             data.append({
-                "article": stock.article,
-                "name": stock.name,
-                "brand": stock.brand,
-                "size": stock.size,
-                "warehouse_name": stock.warehouse_name,
-                "quantity": stock.quantity,
-                "in_way_to_client": stock.in_way_to_client,
-                "in_way_from_client": stock.in_way_from_client,
-                "price": stock.price,
-                "discount": stock.discount,
-                "last_updated": stock.last_updated.isoformat() if stock.last_updated else None
+                "photo": image_formula,                       # A - photo (formula)
+                "nm_id": stock.nm_id,                         # B - nm_id
+                "product_name": product.name if product else None,  # C - product.name
+                "brand": stock.brand,                         # D - brand
+                "size": stock.size,                           # E - size
+                "warehouse_name": stock.warehouse_name,       # F - warehouse
+                "quantity": stock.quantity,                   # G - quantity
+                "in_way_to_client": stock.in_way_to_client,   # H - in_way_to_client
+                "in_way_from_client": stock.in_way_from_client,  # I - in_way_from_client
+                "price": stock.price,                         # J - price
+                "discount": stock.discount,                   # K - discount
+                "last_updated": stock.last_updated.strftime("%Y-%m-%d %H:%M") if stock.last_updated else None  # L - last_updated
             })
         
         return data
 
     def get_reviews_data(self, cabinet_id: int, limit: int = 1000) -> List[Dict[str, Any]]:
-        """Получает данные отзывов для экспорта"""
+        """Получает данные отзывов для экспорта с названием товара и размером из WBProduct и WBStock"""
+        # Сначала получаем все размеры из stock для кабинета
+        stock_sizes = self.db.query(WBStock.nm_id, WBStock.size).filter(
+            WBStock.cabinet_id == cabinet_id
+        ).all()
+        
+        # Создаем словарь nm_id -> первый доступный размер
+        size_map = {}
+        for nm_id, size in stock_sizes:
+            if size and nm_id not in size_map:
+                size_map[nm_id] = size
+        
+        # Получаем отзывы с продуктами
         reviews = self.db.query(WBReview, WBProduct).join(
             WBProduct, 
             and_(
@@ -217,20 +258,27 @@ class ExportService:
         
         data = []
         for review, product in reviews:
+            image_url = product.image_url if product else None
+            image_formula = f'=IMAGE("{image_url}")' if image_url else ''
+            
+            # Используем размер из review, если он есть и не 'ok', иначе берем из size_map
+            size = review.matching_size if review.matching_size and review.matching_size != 'ok' else size_map.get(review.nm_id)
+            
             data.append({
-                "review_id": review.review_id,
-                "nm_id": review.nm_id,
-                "product_name": product.name if product else None,
-                "rating": review.rating,
-                "text": review.text,
-                "pros": review.pros,
-                "cons": review.cons,
-                "user_name": review.user_name,
-                "color": review.color,
-                "matching_size": review.matching_size,
-                "created_date": review.created_date.isoformat() if review.created_date else None,
-                "is_answered": review.is_answered,
-                "was_viewed": review.was_viewed
+                "photo": image_formula,                        # A - photo (formula)
+                "review_id": review.review_id,                 # B - review_id
+                "nm_id": review.nm_id,                         # C - nm_id
+                "product_name": product.name if product else None,  # D - product.name
+                "rating": review.rating,                       # E - rating
+                "text": review.text,                           # F - text
+                "pros": review.pros,                           # G - pros
+                "cons": review.cons,                           # H - cons
+                "user_name": review.user_name,                 # I - user_name
+                "color": review.color,                         # J - color
+                "matching_size": size,                         # K - size (из review или stock)
+                "created_date": review.created_date.strftime("%Y-%m-%d %H:%M") if review.created_date else None,  # L - created_date
+                "is_answered": "✅" if review.is_answered else "❌",  # M - is_answered
+                "was_viewed": "✅" if review.was_viewed else "❌"  # N - was_viewed
             })
         
         return data
@@ -459,108 +507,129 @@ class ExportService:
             service = self._get_sheets_service()
             
             # Получаем данные
-            orders_data = self.get_orders_data(cabinet_id, limit=1000)
-            stocks_data = self.get_stocks_data(cabinet_id, limit=1000)
-            reviews_data = self.get_reviews_data(cabinet_id, limit=1000)
+            logger.info(f"Начинаем получение данных для кабинета {cabinet_id}...")
+            orders_data = self.get_orders_data(cabinet_id, limit=10000)
+            logger.info(f"Получено {len(orders_data)} заказов")
+            
+            stocks_data = self.get_stocks_data(cabinet_id, limit=10000)
+            logger.info(f"Получено {len(stocks_data)} остатков")
+            
+            reviews_data = self.get_reviews_data(cabinet_id, limit=10000)
+            logger.info(f"Получено {len(reviews_data)} отзывов")
             
             # Обновляем заказы
             if orders_data:
+                logger.info("Формируем данные для листа Заказы...")
                 values = [[
-                    order.get('order_id', ''),
-                    order.get('article', ''),
-                    order.get('name', ''),
-                    order.get('size', ''),
-                    order.get('quantity', 0),
-                    order.get('price', 0),
-                    order.get('total_price', 0),
-                    order.get('status', ''),
-                    order.get('order_date', ''),
-                    order.get('warehouse_from', ''),
-                    order.get('warehouse_to', ''),
-                    order.get('commission_amount', 0),
-                    order.get('spp_percent', 0),
-                    order.get('customer_price', 0),
-                    order.get('discount_percent', 0)
+                    order.get('photo', ''),              # A - photo (formula)
+                    order.get('order_id', ''),           # B - order_id
+                    order.get('nm_id', ''),              # C - nm_id
+                    order.get('product_name', ''),       # D - product.name
+                    order.get('size', ''),               # E - size
+                    order.get('quantity', 0),            # F - quantity
+                    order.get('price', 0),               # G - price
+                    order.get('total_price', 0),         # H - total_price
+                    order.get('status', ''),             # I - status
+                    order.get('order_date', ''),         # J - order_date
+                    order.get('warehouse_from', ''),     # K - warehouse_from
+                    order.get('warehouse_to', ''),       # L - warehouse_to
+                    order.get('commission_amount', 0),   # M - commission_amount
+                    order.get('spp_percent', 0),         # N - spp_percent
+                    order.get('customer_price', 0),      # O - customer_price
+                    order.get('discount_percent', 0)     # P - discount_percent
                 ] for order in orders_data]
                 
                 # Очищаем старые данные
+                logger.info("Очищаем старые данные в листе Заказы...")
                 service.spreadsheets().values().clear(
                     spreadsheetId=spreadsheet_id,
-                    range='🛒 Заказы!A2:O'
+                    range='🛒 Заказы!A2:P'
                 ).execute()
                 
                 # Записываем новые данные
                 if values:
+                    logger.info(f"Записываем {len(values)} строк в лист Заказы...")
                     service.spreadsheets().values().update(
                         spreadsheetId=spreadsheet_id,
                         range='🛒 Заказы!A2',
-                        valueInputOption='RAW',
+                        valueInputOption='USER_ENTERED',
                         body={'values': values}
                     ).execute()
+                    logger.info("Лист Заказы успешно обновлен")
             
             # Обновляем остатки
             if stocks_data:
+                logger.info("Формируем данные для листа Склад...")
                 values = [[
-                    stock.get('article', ''),
-                    stock.get('name', ''),
-                    stock.get('brand', ''),
-                    stock.get('size', ''),
-                    stock.get('warehouse_name', ''),
-                    stock.get('quantity', 0),
-                    stock.get('in_way_to_client', 0),
-                    stock.get('in_way_from_client', 0),
-                    stock.get('price', 0),
-                    stock.get('discount', 0),
-                    stock.get('last_updated', '')
+                    stock.get('photo', ''),               # A - photo (formula)
+                    stock.get('nm_id', ''),               # B - nm_id
+                    stock.get('product_name', ''),        # C - product.name
+                    stock.get('brand', ''),               # D - brand
+                    stock.get('size', ''),                # E - size
+                    stock.get('warehouse_name', ''),      # F - warehouse_name
+                    stock.get('quantity', 0),             # G - quantity
+                    stock.get('in_way_to_client', 0),     # H - in_way_to_client
+                    stock.get('in_way_from_client', 0),   # I - in_way_from_client
+                    stock.get('price', 0),                # J - price
+                    stock.get('discount', 0),             # K - discount
+                    stock.get('last_updated', '')         # L - last_updated
                 ] for stock in stocks_data]
                 
                 # Очищаем старые данные
+                logger.info("Очищаем старые данные в листе Склад...")
                 service.spreadsheets().values().clear(
                     spreadsheetId=spreadsheet_id,
-                    range='📦 Склад!A2:K'
+                    range='📦 Склад!A2:L'
                 ).execute()
                 
                 # Записываем новые данные
                 if values:
+                    logger.info(f"Записываем {len(values)} строк в лист Склад...")
                     service.spreadsheets().values().update(
                         spreadsheetId=spreadsheet_id,
                         range='📦 Склад!A2',
-                        valueInputOption='RAW',
+                        valueInputOption='USER_ENTERED',
                         body={'values': values}
                     ).execute()
+                    logger.info("Лист Склад успешно обновлен")
             
             # Обновляем отзывы
             if reviews_data:
+                logger.info("Формируем данные для листа Отзывы...")
                 values = [[
-                    review.get('review_id', ''),
-                    review.get('nm_id', ''),
-                    review.get('product_name', ''),
-                    review.get('rating', 0),
-                    review.get('text', ''),
-                    review.get('pros', ''),
-                    review.get('cons', ''),
-                    review.get('user_name', ''),
-                    review.get('color', ''),
-                    review.get('matching_size', ''),
-                    review.get('created_date', ''),
-                    review.get('is_answered', False),
-                    review.get('was_viewed', False)
+                    review.get('photo', ''),                # A - photo (formula)
+                    review.get('review_id', ''),            # B - review_id
+                    review.get('nm_id', ''),                # C - nm_id
+                    review.get('product_name', ''),         # D - product.name
+                    review.get('rating', 0),                # E - rating
+                    review.get('text', ''),                 # F - text
+                    review.get('pros', ''),                 # G - pros
+                    review.get('cons', ''),                 # H - cons
+                    review.get('user_name', ''),            # I - user_name
+                    review.get('color', ''),                # J - color
+                    review.get('matching_size', ''),        # K - matching_size
+                    review.get('created_date', ''),         # L - created_date
+                    review.get('is_answered', ''),          # M - is_answered
+                    review.get('was_viewed', '')            # N - was_viewed
                 ] for review in reviews_data]
                 
                 # Очищаем старые данные
+                logger.info("Очищаем старые данные в листе Отзывы...")
                 service.spreadsheets().values().clear(
                     spreadsheetId=spreadsheet_id,
-                    range='⭐ Отзывы!A2:M'
+                    range='⭐ Отзывы!A2:N'
                 ).execute()
                 
                 # Записываем новые данные
                 if values:
+                    logger.info(f"Записываем {len(values)} строк в лист Отзывы...")
                     service.spreadsheets().values().update(
                         spreadsheetId=spreadsheet_id,
                         range='⭐ Отзывы!A2',
-                        valueInputOption='RAW',
+                        valueInputOption='USER_ENTERED',
                         body={'values': values}
                     ).execute()
+                    logger.info("Лист Отзывы успешно обновлен")
             
             logger.info(f"Таблица {spreadsheet_id} успешно обновлена для кабинета {cabinet_id}")
             return True

@@ -24,7 +24,7 @@ class GoogleSheetsTemplateGenerator:
     def _initialize_service(self):
         """Инициализирует Google Sheets и Drive API сервисы"""
         try:
-            key_file = os.getenv('GOOGLE_SERVICE_ACCOUNT_FILE', 'config/wb-assist-352ded7b5635.json')
+            key_file = os.getenv('GOOGLE_SERVICE_ACCOUNT_FILE', 'config/wb-assist.json')
             scopes = os.getenv('GOOGLE_SCOPES', 'https://www.googleapis.com/auth/spreadsheets,https://www.googleapis.com/auth/drive').split(',')
             
             if not os.path.exists(key_file):

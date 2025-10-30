@@ -19,7 +19,7 @@ def load_credentials():
         print("⚠️  python-dotenv не установлен, используем переменные окружения напрямую")
     
     # Получаем путь к файлу ключа
-    key_file = os.getenv('GOOGLE_SERVICE_ACCOUNT_FILE', 'server/config/wb-assist-352ded7b5635.json')
+    key_file = os.getenv('GOOGLE_SERVICE_ACCOUNT_FILE', 'server/config/wb-assist.json')
     scopes = os.getenv('GOOGLE_SCOPES', 'https://www.googleapis.com/auth/spreadsheets').split(',')
     
     print(f"🔑 Загружаем ключ из: {key_file}")
