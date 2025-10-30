@@ -7,7 +7,7 @@ from aiogram.filters import Command
 # Добавляем путь к модулям бота
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from keyboards.keyboards import main_keyboard, wb_menu_keyboard
+from keyboards.keyboards import wb_menu_keyboard
 from api.client import register_user_on_server, bot_api_client
 from core.states import WBCabinetStates
 from aiogram.fsm.context import FSMContext
@@ -101,7 +101,6 @@ async def _require_api_key(message: Message, first_name: str, state: FSMContext)
     
     await message.answer(
         welcome_text,
-        reply_markup=main_keyboard(),
         parse_mode="Markdown"
     )
 

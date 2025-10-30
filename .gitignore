@@ -2,6 +2,7 @@
 bot/photos/*
 photos/*
 config/*.json
+server/config/*.json
 
 config.yaml
 *.exe

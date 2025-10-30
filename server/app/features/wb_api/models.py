@@ -21,6 +21,7 @@ class WBCabinet(Base):
     api_key = Column(String(500), nullable=False, unique=True)  # Уникальный API ключ
     name = Column(String(255), nullable=True)
     is_active = Column(Boolean, default=True, nullable=False)
+    spreadsheet_id = Column(String(255), nullable=True, unique=True, index=True)  # ID Google Sheets таблицы пользователя
     last_sync_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())

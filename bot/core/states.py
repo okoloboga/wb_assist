@@ -36,3 +36,13 @@ class NotificationStates(StatesGroup):
 class AIChatStates(StatesGroup):
     """Состояния для AI чата"""
     waiting_for_message = State()
+
+
+class GPTStates(StatesGroup):
+    """Состояния для GPT чата"""
+    gpt_chat = State()
+
+
+class ExportStates(StatesGroup):
+    """Состояния для экспорта в Google Sheets"""
+    waiting_for_spreadsheet_url = State()

@@ -1,0 +1,317 @@
+═══════════════════════════════════════════════════════════════
+  ИНСТРУКЦИЯ: Как добавить Google Apps Script в шаблон
+═══════════════════════════════════════════════════════════════
+
+📝 ШАГ 1: ОТКРОЙТЕ ШАБЛОН
+─────────────────────────────────────────────────────────────
+Откройте ваш шаблон Google Sheets по ID из .env:
+https://docs.google.com/spreadsheets/d/[GOOGLE_TEMPLATE_SPREADSHEET_ID]/edit
+
+
+📝 ШАГ 2: ОТКРОЙТЕ РЕДАКТОР СКРИПТОВ
+─────────────────────────────────────────────────────────────
+В меню: Расширения → Apps Script
+
+
+📝 ШАГ 3: ВСТАВЬТЕ КОД
+─────────────────────────────────────────────────────────────
+1. Удалите весь автоматически созданный код в редакторе
+2. Скопируйте весь код из файла ниже (СТАРТ КОДА ... КОНЕЦ КОДА)
+3. Вставьте в редактор Apps Script
+4. Замените строку (строка 11):
+   const API_BASE_URL = 'PLACEHOLDER_API_URL';
+   
+   На ваш ngrok URL или реальный домен:
+   const API_BASE_URL = 'https://ваш_ngrok_домен.ngrok.io';
+   
+   ИЛИ для боевого сервера:
+   const API_BASE_URL = 'https://api.wb-assist.com';
+
+
+📝 ШАГ 4: СОХРАНИТЕ
+─────────────────────────────────────────────────────────────
+Нажмите Ctrl+S (Windows/Linux) или Cmd+S (Mac)
+
+
+📝 ШАГ 5: ЗАДАЙТЕ РАЗРЕШЕНИЯ
+─────────────────────────────────────────────────────────────
+1. Откройте: Расширения → Apps Script
+2. Запустите функцию `onOpen` из выпадающего списка
+3. Нажмите кнопку "Запустить"
+4. Нажмите "Обзор разрешений" или "Разрешить доступ"
+5. Выберите ваш Google аккаунт
+6. Нажмите "Дополнительно" → "Перейти на [название проекта] (небезопасно)"
+7. Нажмите "Разрешить"
+
+
+📝 ШАГ 6: ПРОВЕРЬТЕ РАБОТУ
+─────────────────────────────────────────────────────────────
+1. Обновите страницу с таблицей (F5)
+2. В меню должно появиться "WB Assist"
+3. Проверьте, что меню работает
+
+
+═══════════════════════════════════════════════════════════════
+                  СТАРТ КОДА ДЛЯ ВСТАВКИ
+═══════════════════════════════════════════════════════════════
+
+/**
+ * Google Apps Script для автоматического обновления данных WB в Google Sheets
+ * Версия: 1.0.0
+ * Автор: WB Assist
+ */
+
+const API_BASE_URL = 'PLACEHOLDER_API_URL'; // ЗАМЕНИТЕ НА ВАШ URL
+
+function onOpen() {
+  const ui = SpreadsheetApp.getUi();
+  ui.createMenu('WB Assist')
+    .addItem('🔄 Обновить данные', 'updateAllData')
+    .addItem('🔍 Проверить подключение', 'checkConnection')
+    .addItem('⚙️ Настройки', 'showSettings')
+    .addItem('❓ Справка', 'showHelp')
+    .addToUi();
+}
+
+function updateAllData() {
+  try {
+    const settings = getSettings();
+    if (!settings.cabinetId || !settings.token) {
+      SpreadsheetApp.getUi().alert(
+        'Ошибка настройки', 
+        'Не заполнены ID кабинета или Token Export.', 
+        SpreadsheetApp.getUi().ButtonSet.OK
+      );
+      return;
+    }
+    
+    SpreadsheetApp.getActiveSpreadsheet().toast('Обновление данных...', 'WB Assist', 3);
+    updateOrders(settings);
+    updateStocks(settings);
+    updateReviews(settings);
+    updateConnectionStatus('✅ Успешно обновлено', new Date());
+    SpreadsheetApp.getActiveSpreadsheet().toast('Данные обновлены!', 'WB Assist', 3);
+  } catch (error) {
+    console.error('Ошибка обновления данных:', error);
+    updateConnectionStatus('❌ Ошибка: ' + error.message, new Date());
+    SpreadsheetApp.getUi().alert('Ошибка обновления', 'Не удалось обновить данные: ' + error.message, SpreadsheetApp.getUi().ButtonSet.OK);
+  }
+}
+
+function getSettings() {
+  const settingsSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('⚙️ Настройки');
+  if (!settingsSheet) throw new Error('Лист "Настройки" не найден');
+  return {
+    cabinetId: settingsSheet.getRange('B1').getValue(),
+    token: settingsSheet.getRange('B2').getValue()
+  };
+}
+
+function checkConnection() {
+  try {
+    const settings = getSettings();
+    if (!settings.cabinetId || !settings.token) {
+      updateConnectionStatus('⚠️ Не настроено', new Date());
+      return false;
+    }
+    const response = UrlFetchApp.fetch(API_BASE_URL + '/api/export/health', {
+      method: 'GET',
+      headers: {'User-Agent': 'WB-Assist-GoogleSheets/1.0'}
+    });
+    if (response.getResponseCode() === 200) {
+      updateConnectionStatus('✅ Подключено', new Date());
+      return true;
+    } else {
+      updateConnectionStatus('❌ Ошибка подключения', new Date());
+      return false;
+    }
+  } catch (error) {
+    console.error('Ошибка проверки подключения:', error);
+    updateConnectionStatus('❌ Ошибка: ' + error.message, new Date());
+    return false;
+  }
+}
+
+function updateOrders(settings) {
+  try {
+    const url = `${API_BASE_URL}/api/export/orders/${settings.cabinetId}?token=${settings.token}&limit=1000`;
+    const response = UrlFetchApp.fetch(url, {
+      method: 'GET',
+      headers: {'User-Agent': 'WB-Assist-GoogleSheets/1.0', 'Accept': 'application/json'}
+    });
+    if (response.getResponseCode() !== 200) throw new Error(`Ошибка API: ${response.getResponseCode()}`);
+    const data = JSON.parse(response.getContentText());
+    if (data.data && data.data.length > 0) {
+      const ordersSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('🛒 Заказы');
+      if (!ordersSheet) throw new Error('Лист "Заказы" не найден');
+      const lastRow = ordersSheet.getLastRow();
+      if (lastRow > 1) ordersSheet.getRange(2, 1, lastRow - 1, ordersSheet.getLastColumn()).clear();
+      const values = data.data.map(row => [
+        row.order_id || '', row.article || '', row.name || '', row.size || '',
+        row.quantity || 0, row.price || 0, row.total_price || 0, row.status || '',
+        row.order_date || '', row.warehouse_from || '', row.warehouse_to || '',
+        row.commission_amount || 0, row.spp_percent || 0, row.customer_price || 0,
+        row.discount_percent || 0
+      ]);
+      if (values.length > 0) ordersSheet.getRange(2, 1, values.length, values[0].length).setValues(values);
+      console.log(`Обновлено заказов: ${values.length}`);
+    }
+  } catch (error) {
+    console.error('Ошибка обновления заказов:', error);
+    throw error;
+  }
+}
+
+function updateStocks(settings) {
+  try {
+    const url = `${API_BASE_URL}/api/export/stocks/${settings.cabinetId}?token=${settings.token}&limit=1000`;
+    const response = UrlFetchApp.fetch(url, {
+      method: 'GET',
+      headers: {'User-Agent': 'WB-Assist-GoogleSheets/1.0', 'Accept': 'application/json'}
+    });
+    if (response.getResponseCode() !== 200) throw new Error(`Ошибка API: ${response.getResponseCode()}`);
+    const data = JSON.parse(response.getContentText());
+    if (data.data && data.data.length > 0) {
+      const stocksSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('📦 Склад');
+      if (!stocksSheet) throw new Error('Лист "Склад" не найден');
+      const lastRow = stocksSheet.getLastRow();
+      if (lastRow > 1) stocksSheet.getRange(2, 1, lastRow - 1, stocksSheet.getLastColumn()).clear();
+      const values = data.data.map(row => [
+        row.article || '', row.name || '', row.brand || '', row.size || '', row.warehouse_name || '',
+        row.quantity || 0, row.in_way_to_client || 0, row.in_way_from_client || 0,
+        row.price || 0, row.discount || 0, row.last_updated || ''
+      ]);
+      if (values.length > 0) stocksSheet.getRange(2, 1, values.length, values[0].length).setValues(values);
+      console.log(`Обновлено остатков: ${values.length}`);
+    }
+  } catch (error) {
+    console.error('Ошибка обновления остатков:', error);
+    throw error;
+  }
+}
+
+function updateReviews(settings) {
+  try {
+    const url = `${API_BASE_URL}/api/export/reviews/${settings.cabinetId}?token=${settings.token}&limit=1000`;
+    const response = UrlFetchApp.fetch(url, {
+      method: 'GET',
+      headers: {'User-Agent': 'WB-Assist-GoogleSheets/1.0', 'Accept': 'application/json'}
+    });
+    if (response.getResponseCode() !== 200) throw new Error(`Ошибка API: ${response.getResponseCode()}`);
+    const data = JSON.parse(response.getContentText());
+    if (data.data && data.data.length > 0) {
+      const reviewsSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('⭐ Отзывы');
+      if (!reviewsSheet) throw new Error('Лист "Отзывы" не найден');
+      const lastRow = reviewsSheet.getLastRow();
+      if (lastRow > 1) reviewsSheet.getRange(2, 1, lastRow - 1, reviewsSheet.getLastColumn()).clear();
+      const values = data.data.map(row => [
+        row.review_id || '', row.nm_id || '', row.product_name || '',
+        row.rating || 0, row.text || '', row.pros || '', row.cons || '',
+        row.user_name || '', row.color || '', row.matching_size || '',
+        row.created_date || '', row.is_answered || false, row.was_viewed || false
+      ]);
+      if (values.length > 0) reviewsSheet.getRange(2, 1, values.length, values[0].length).setValues(values);
+      console.log(`Обновлено отзывов: ${values.length}`);
+    }
+  } catch (error) {
+    console.error('Ошибка обновления отзывов:', error);
+    throw error;
+  }
+}
+
+function updateConnectionStatus(status, timestamp) {
+  try {
+    const settingsSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('⚙️ Настройки');
+    if (settingsSheet) {
+      settingsSheet.getRange('B3').setValue(status);
+      settingsSheet.getRange('B4').setValue(timestamp);
+    }
+  } catch (error) {
+    console.error('Ошибка обновления статуса:', error);
+  }
+}
+
+function showSettings() {
+  const ui = SpreadsheetApp.getUi();
+  const settings = getSettings();
+  ui.alert(
+    'Настройки WB Assist',
+    `ID кабинета: ${settings.cabinetId || 'Не заполнено'}\n` +
+    `Token Export: ${settings.token ? 'Заполнен' : 'Не заполнен'}\n\n` +
+    'Для изменения настроек отредактируйте ячейки B1 и B2 в листе "Настройки"',
+    ui.ButtonSet.OK
+  );
+}
+
+function showHelp() {
+  const ui = SpreadsheetApp.getUi();
+  ui.alert(
+    'Справка WB Assist',
+    '📋 Инструкция по использованию:\n\n' +
+    '1. Заполните ID кабинета и Token Export в листе "Настройки"\n' +
+    '2. Нажмите "Обновить данные" для получения данных\n' +
+    '3. Данные обновляются автоматически с интервалом из SYNC_INTERVAL\n' +
+    '4. При проблемах используйте "Проверить подключение"\n\n' +
+    '🔧 Поддержка: @wb_assist_bot',
+    ui.ButtonSet.OK
+  );
+}
+
+function createTrigger() {
+  try {
+    deleteTrigger();
+    const syncInterval = getSyncInterval();
+    if (syncInterval) {
+      ScriptApp.newTrigger('updateAllData').timeBased().everyMinutes(syncInterval).create();
+      console.log(`Триггер создан с интервалом ${syncInterval} минут`);
+    } else {
+      ScriptApp.newTrigger('updateAllData').timeBased().everyHours(6).create();
+      console.log('Триггер создан с интервалом 6 часов (fallback)');
+    }
+  } catch (error) {
+    console.error('Ошибка создания триггера:', error);
+  }
+}
+
+function getSyncInterval() {
+  try {
+    const response = UrlFetchApp.fetch(API_BASE_URL + '/api/export/sync-interval', {
+      method: 'GET',
+      headers: {'User-Agent': 'WB-Assist-GoogleSheets/1.0', 'Accept': 'application/json'}
+    });
+    if (response.getResponseCode() === 200) {
+      const data = JSON.parse(response.getContentText());
+      return Math.max(1, Math.floor(data.sync_interval_seconds / 60));
+    }
+  } catch (error) {
+    console.error('Ошибка получения интервала:', error);
+  }
+  return null;
+}
+
+function deleteTrigger() {
+  try {
+    const triggers = ScriptApp.getProjectTriggers();
+    triggers.forEach(trigger => {
+      if (trigger.getHandlerFunction() === 'updateAllData') ScriptApp.deleteTrigger(trigger);
+    });
+    console.log('Старые триггеры удалены');
+  } catch (error) {
+    console.error('Ошибка удаления триггеров:', error);
+  }
+}
+
+function initialize() {
+  try {
+    createTrigger();
+    checkConnection();
+    console.log('WB Assist инициализирован');
+  } catch (error) {
+    console.error('Ошибка инициализации:', error);
+  }
+}
+
+═══════════════════════════════════════════════════════════════
+                   КОНЕЦ КОДА ДЛЯ ВСТАВКИ
+═══════════════════════════════════════════════════════════════
+

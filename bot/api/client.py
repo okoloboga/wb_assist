@@ -120,19 +120,29 @@ class BotAPIClient:
         """Обработка HTTP ответа с детальным логированием"""
         try:
             data = await response.json()
+            logger.info(f"🔍 DEBUG: _handle_response получил data = {data}")
             
             if response.status == 200:
-                return BotAPIResponse(
-                    success=True,
-                    data=data.get("data"),
-                    telegram_text=data.get("telegram_text"),
-                    status_code=response.status,
-                    # Единообразная структура - поля в корне ответа
-                    orders=data.get("orders"),
-                    pagination=data.get("pagination"),
-                    order=data.get("order"),
-                    stocks=data.get("stocks")
-                )
+                # Для dashboard эндпоинта данные находятся в корне ответа
+                if "dashboard" in data:
+                    return BotAPIResponse(
+                        success=True,
+                        data=data,  # Передаем весь ответ как data
+                        telegram_text=data.get("telegram_text"),
+                        status_code=response.status
+                    )
+                else:
+                    return BotAPIResponse(
+                        success=True,
+                        data=data.get("data"),
+                        telegram_text=data.get("telegram_text"),
+                        status_code=response.status,
+                        # Единообразная структура - поля в корне ответа
+                        orders=data.get("orders"),
+                        pagination=data.get("pagination"),
+                        order=data.get("order"),
+                        stocks=data.get("stocks")
+                    )
             elif response.status == 404:
                 logger.warning(f"🔍 Resource not found: {response.url}")
                 return BotAPIResponse(
@@ -335,7 +345,9 @@ class BotAPIClient:
     # Dashboard и общая информация
     async def get_dashboard(self, user_id: int) -> BotAPIResponse:
         """Получить общую сводку по кабинету WB"""
+        logger.info(f"🔍 DEBUG: get_dashboard вызван с user_id={user_id}")
         params = {"telegram_id": user_id}
+        logger.info(f"🔍 DEBUG: Отправляем запрос с params={params}")
         return await self._make_request_with_retry("GET", "/dashboard", params=params)
 
     # Заказы
@@ -546,6 +558,177 @@ class BotAPIClient:
         params = {"telegram_id": user_id}
         return await self._make_request("GET", "/cabinets/status", params=params)
 
+    # ===== МЕТОДЫ ЭКСПОРТА В GOOGLE SHEETS (S4) =====
+
+    async def set_cabinet_spreadsheet(self, cabinet_id: int, spreadsheet_url: str) -> BotAPIResponse:
+        """Сохраняет spreadsheet_id для кабинета"""
+        logger.info(f"📊 Сохранение spreadsheet для кабинета {cabinet_id}")
+        
+        url = f"{SERVER_HOST}/api/export/cabinet/{cabinet_id}/spreadsheet"
+        params = {"spreadsheet_url": spreadsheet_url}
+        
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    url,
+                    params=params,
+                    headers=self.headers,
+                    timeout=aiohttp.ClientTimeout(total=self.timeout)
+                ) as resp:
+                    response_data = await resp.json()
+                    
+                    if resp.status == 200:
+                        logger.info(f"✅ Spreadsheet сохранен: {response_data.get('spreadsheet_id', 'N/A')}")
+                        return BotAPIResponse(
+                            success=True,
+                            data=response_data,
+                            status_code=resp.status
+                        )
+                    else:
+                        error_msg = response_data.get("detail", "Ошибка сохранения spreadsheet")
+                        logger.error(f"❌ Ошибка сохранения spreadsheet: {error_msg}")
+                        return BotAPIResponse(
+                            success=False,
+                            error=error_msg,
+                            status_code=resp.status
+                        )
+                        
+        except Exception as e:
+            logger.error(f"💥 Ошибка сохранения spreadsheet: {e}")
+            return BotAPIResponse(
+                success=False,
+                error=f"Ошибка сохранения: {str(e)}",
+                status_code=500
+            )
+
+    async def update_cabinet_spreadsheet(self, cabinet_id: int) -> BotAPIResponse:
+        """Обновляет Google Sheets таблицу кабинета"""
+        logger.info(f"🔄 Обновление таблицы кабинета {cabinet_id}")
+        
+        url = f"{SERVER_HOST}/api/export/cabinet/{cabinet_id}/update"
+        
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    url,
+                    headers=self.headers,
+                    timeout=aiohttp.ClientTimeout(total=self.timeout)
+                ) as resp:
+                    response_data = await resp.json()
+                    
+                    if resp.status == 200:
+                        logger.info(f"✅ Таблица обновлена для кабинета {cabinet_id}")
+                        return BotAPIResponse(
+                            success=True,
+                            data=response_data,
+                            status_code=resp.status
+                        )
+                    else:
+                        error_msg = response_data.get("detail", "Ошибка обновления таблицы")
+                        logger.error(f"❌ Ошибка обновления таблицы: {error_msg}")
+                        return BotAPIResponse(
+                            success=False,
+                            error=error_msg,
+                            status_code=resp.status
+                        )
+                        
+        except Exception as e:
+            logger.error(f"💥 Ошибка обновления таблицы: {e}")
+            return BotAPIResponse(
+                success=False,
+                error=f"Ошибка обновления: {str(e)}",
+                status_code=500
+            )
+
+    async def create_export_token(self, user_id: int, cabinet_id: int) -> BotAPIResponse:
+        """Создает токен экспорта для кабинета"""
+        logger.info(f"🔑 Создание токена экспорта для кабинета {cabinet_id}, пользователя {user_id}")
+        
+        # Используем правильный URL и метод
+        url = f"{SERVER_HOST}/api/export/token"
+        json_data = {
+            "user_id": user_id,
+            "cabinet_id": cabinet_id
+        }
+        
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    url,
+                    json=json_data,
+                    headers=self.headers,
+                    timeout=aiohttp.ClientTimeout(total=self.timeout)
+                ) as resp:
+                    response_data = await resp.json()
+                    
+                    if resp.status == 200:
+                        logger.info(f"✅ Токен экспорта создан: {response_data.get('token', 'N/A')}")
+                        return BotAPIResponse(
+                            success=True,
+                            data=response_data,
+                            status_code=resp.status
+                        )
+                    else:
+                        error_msg = response_data.get("detail", "Ошибка создания токена")
+                        logger.error(f"❌ Ошибка создания токена: {error_msg}")
+                        return BotAPIResponse(
+                            success=False,
+                            error=error_msg,
+                            status_code=resp.status
+                        )
+                        
+        except Exception as e:
+            logger.error(f"💥 Ошибка создания токена экспорта: {e}")
+            return BotAPIResponse(
+                success=False,
+                error=f"Ошибка создания токена: {str(e)}",
+                status_code=500
+            )
+
+    async def create_google_sheets_template(self, cabinet_name: str) -> BotAPIResponse:
+        """Создает шаблон Google Sheets"""
+        logger.info(f"📊 Создание шаблона Google Sheets для {cabinet_name}")
+        
+        # Используем правильный URL и метод
+        url = f"{SERVER_HOST}/api/export/template/create"
+        params = {
+            "template_name": f"WB Assist - {cabinet_name}"
+        }
+        
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    url,
+                    params=params,
+                    headers=self.headers,
+                    timeout=aiohttp.ClientTimeout(total=self.timeout)
+                ) as resp:
+                    response_data = await resp.json()
+                    
+                    if resp.status == 200:
+                        logger.info(f"✅ Шаблон создан: {response_data.get('template_id', 'N/A')}")
+                        return BotAPIResponse(
+                            success=True,
+                            data=response_data,
+                            status_code=resp.status
+                        )
+                    else:
+                        error_msg = response_data.get("detail", "Ошибка создания шаблона")
+                        logger.error(f"❌ Ошибка создания шаблона: {error_msg}")
+                        return BotAPIResponse(
+                            success=False,
+                            error=error_msg,
+                            status_code=resp.status
+                        )
+                        
+        except Exception as e:
+            logger.error(f"💥 Ошибка создания шаблона Google Sheets: {e}")
+            return BotAPIResponse(
+                success=False,
+                error=f"Ошибка создания шаблона: {str(e)}",
+                status_code=500
+            )
+
 
 # Создаем глобальный экземпляр клиента
 bot_api_client = BotAPIClient()
@@ -583,3 +766,34 @@ async def register_user_on_server(payload: Dict[str, Any]) -> Tuple[int, Optiona
     except Exception as e:
         logger.error(f"Непредвиденная ошибка при запросе к API: {e}")
         return 500, {"error": "Internal client error"}
+
+    async def get_cabinet_id(self, user_id: int) -> BotAPIResponse:
+        """Получает ID кабинета пользователя"""
+        try:
+            url = f"{SERVER_HOST}/api/v1/wb/cabinets/status"
+            params = {"telegram_id": user_id}
+            
+            logger.info(f"🔍 Получение ID кабинета для пользователя {user_id}")
+            
+            status_code, response_data = await self._make_request_with_retry("GET", url, params=params)
+            
+            if status_code == 200:
+                return BotAPIResponse(
+                    success=True,
+                    data=response_data,
+                    cabinet_id=response_data.get("cabinet_id")
+                )
+            else:
+                return BotAPIResponse(
+                    success=False,
+                    error=response_data.get("detail", "Ошибка получения ID кабинета"),
+                    status_code=status_code
+                )
+                
+        except Exception as e:
+            logger.error(f"Ошибка получения ID кабинета: {e}")
+            return BotAPIResponse(
+                success=False,
+                error=f"Ошибка получения ID кабинета: {str(e)}",
+                status_code=500
+            )

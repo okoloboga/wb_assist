@@ -809,7 +809,7 @@ class BotAPIService:
             # Создаем новый кабинет
             cabinet = WBCabinet(
                 api_key=api_key,
-                name=f"WB Cabinet {user['telegram_id']}",
+                name="WB Кабинет",
                 is_active=True
             )
             

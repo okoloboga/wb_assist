@@ -17,6 +17,9 @@ if not sync_interval_env:
     raise ValueError("SYNC_INTERVAL environment variable is required but not set")
 sync_interval = int(sync_interval_env)
 
+# Получаем интервал экспорта в Google Sheets (используем тот же что и для синхронизации)
+export_interval = sync_interval
+
 # Получаем время проверки алертов из переменной окружения
 stock_alert_check_time = os.getenv("STOCK_ALERT_CHECK_TIME")
 if not stock_alert_check_time:
@@ -34,6 +37,7 @@ logger.info(f"Redis configuration:")
 logger.info(f"  Redis URL: {redis_url}")
 logger.info(f"Sync configuration:")
 logger.info(f"  Sync interval: {sync_interval} seconds ({sync_interval/60:.1f} minutes)")
+logger.info(f"  Export interval (same as sync): {export_interval} seconds ({export_interval/60:.1f} minutes)")
 logger.info(f"Stock alerts configuration:")
 logger.info(f"  Check time: {stock_alert_check_time} MSK")
 
@@ -45,6 +49,7 @@ celery_app = Celery(
     include=[
         "app.features.sync.tasks",
         "app.features.stock_alerts.tasks",
+        "app.features.export.tasks",
     ]
 )
 
@@ -72,6 +77,10 @@ celery_app.conf.update(
         "app.features.stock_alerts.tasks.aggregate_daily_sales_all_cabinets": {"queue": "alerts_queue"},
         "app.features.stock_alerts.tasks.check_stock_alerts_task": {"queue": "alerts_queue"},
         "app.features.stock_alerts.tasks.cleanup_old_analytics_task": {"queue": "alerts_queue"},
+        
+        # Экспорт в Google Sheets
+        "app.features.export.tasks.export_all_to_spreadsheets": {"queue": "export_queue"},
+        "app.features.export.tasks.export_cabinet_to_spreadsheet": {"queue": "export_queue"},
     },
     
     # Настройки для периодических задач
@@ -87,6 +96,10 @@ celery_app.conf.update(
         "cleanup-old-analytics": {
             "task": "app.features.stock_alerts.tasks.cleanup_old_analytics_task",
             "schedule": crontab(hour=3, minute=0, day_of_week=0),  # Воскресенье 03:00
+        },
+        "export-all-to-sheets": {
+            "task": "app.features.export.tasks.export_all_to_spreadsheets",
+            "schedule": float(export_interval),  # Экспорт в Google Sheets (использует SYNC_INTERVAL)
         },
     },
     

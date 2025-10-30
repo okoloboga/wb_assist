@@ -244,6 +244,16 @@ async def wb_menu_callback(callback: CallbackQuery):
     await callback.answer()
 
 
+@router.callback_query(F.data == "export_sheets")
+@handle_telegram_errors
+async def handle_export_sheets_button(callback: CallbackQuery, state: FSMContext):
+    """Обработка кнопки экспорта в Google Sheets"""
+    user_id = callback.from_user.id
+    logger.info(f"🔍 DEBUG: Получен callback для export_sheets от пользователя {user_id}")
+    await export_to_sheets_from_callback(callback.message, user_id, state)
+    await callback.answer()
+
+
 @router.callback_query(F.data.in_(["prices", "content", "ai_assistant", "settings"]))
 async def menu_callback(callback: CallbackQuery):
     data = callback.data
@@ -257,7 +267,7 @@ async def menu_callback(callback: CallbackQuery):
             user_id=callback.from_user.id
         )
         await callback.answer()
-
+        
     elif data.startswith("back_"):
         target_menu = navigation.get(data.replace("back_", ""), "main")
         logger.info(f"🔍 DEBUG: Обработка back_ для {data}, target_menu: {target_menu}")
@@ -297,3 +307,480 @@ async def menu_callback(callback: CallbackQuery):
 
 
 # Команда /webhook перенесена в handlers/webhook.py
+
+
+async def export_to_sheets_from_callback(message: Message, user_id: int, state: FSMContext):
+    """Экспорт данных в Google Sheets из callback"""
+    logger.info(f"🔍 DEBUG: Запуск экспорта для пользователя {user_id} (из callback)")
+    
+    try:
+        from api.client import bot_api_client
+        
+        logger.info(f"🔍 DEBUG: Вызываем get_dashboard с user_id={user_id}")
+        # Получаем информацию о кабинетах пользователя
+        dashboard_response = await bot_api_client.get_dashboard(user_id=user_id)
+        logger.info(f"🔍 DEBUG: get_dashboard вернул success={dashboard_response.success}")
+        logger.info(f"🔍 DEBUG: dashboard_response.data = {dashboard_response.data}")
+        
+        if not dashboard_response.success or not dashboard_response.data or not dashboard_response.data.get('dashboard'):
+            await safe_send_message(
+                message=message,
+                text="❌ У вас нет активных кабинетов WB. Сначала добавьте кабинет через команду /start",
+                user_id=user_id
+            )
+            return
+        
+        # У пользователя только один кабинет - создаем экспорт
+        # Получаем ID кабинета из API
+        cabinet_status_response = await bot_api_client.get_cabinet_status(user_id=user_id)
+        if not cabinet_status_response.success:
+            await safe_send_message(
+                message=message,
+                text="❌ Ошибка получения ID кабинета. Попробуйте позже.",
+                user_id=user_id
+            )
+            return
+        
+        # Получаем информацию о кабинете из dashboard
+        dashboard_data = dashboard_response.data.get('dashboard', {})
+        
+        # Извлекаем числовой ID кабинета из строки "cabinet_1" -> 1
+        cabinet_id_str = cabinet_status_response.data.get('cabinets', [{}])[0].get('id', 'cabinet_1')
+        cabinet_id = int(cabinet_id_str.replace('cabinet_', '')) if cabinet_id_str.startswith('cabinet_') else 1
+        
+        cabinet = type('Cabinet', (), {
+            'id': cabinet_id,  # Числовой ID из API
+            'name': dashboard_data.get('cabinet_name', 'Неизвестный кабинет')
+        })()
+        
+        await create_export_for_cabinet(message, cabinet, user_id, state)
+            
+    except Exception as e:
+        logger.error(f"Ошибка в export_to_sheets_from_callback: {e}")
+        await safe_send_message(
+            message=message,
+            text="❌ Произошла ошибка при создании экспорта. Попробуйте позже.",
+            user_id=user_id
+        )
+
+
+@router.message(Command("export_sheets"))
+@handle_telegram_errors
+async def export_to_sheets(message: Message, state: FSMContext):
+    """Команда экспорта данных в Google Sheets"""
+    user_id = message.from_user.id
+    logger.info(f"🔍 DEBUG: Запуск экспорта для пользователя {user_id}")
+    
+    try:
+        from api.client import bot_api_client
+        
+        logger.info(f"🔍 DEBUG: Вызываем get_dashboard с user_id={user_id}")
+        # Получаем информацию о кабинетах пользователя
+        dashboard_response = await bot_api_client.get_dashboard(user_id=user_id)
+        logger.info(f"🔍 DEBUG: get_dashboard вернул success={dashboard_response.success}")
+        logger.info(f"🔍 DEBUG: dashboard_response.data = {dashboard_response.data}")
+        
+        if not dashboard_response.success or not dashboard_response.data or not dashboard_response.data.get('dashboard'):
+            await safe_send_message(
+                message=message,
+                text="❌ У вас нет активных кабинетов WB. Сначала добавьте кабинет через команду /start",
+                user_id=user_id
+            )
+            return
+        
+        # У пользователя только один кабинет - создаем экспорт
+        # Получаем ID кабинета из API
+        cabinet_status_response = await bot_api_client.get_cabinet_status(user_id=user_id)
+        if not cabinet_status_response.success:
+            await safe_send_message(
+                message=message,
+                text="❌ Ошибка получения ID кабинета. Попробуйте позже.",
+                user_id=user_id
+            )
+            return
+        
+        # Получаем информацию о кабинете из dashboard
+        dashboard_data = dashboard_response.data.get('dashboard', {})
+        
+        # Извлекаем числовой ID кабинета из строки "cabinet_1" -> 1
+        cabinet_id_str = cabinet_status_response.data.get('cabinets', [{}])[0].get('id', 'cabinet_1')
+        cabinet_id = int(cabinet_id_str.replace('cabinet_', '')) if cabinet_id_str.startswith('cabinet_') else 1
+        
+        cabinet = type('Cabinet', (), {
+            'id': cabinet_id,  # Числовой ID из API
+            'name': dashboard_data.get('cabinet_name', 'Неизвестный кабинет')
+        })()
+        
+        await create_export_for_cabinet(message, cabinet, user_id, state)
+            
+    except Exception as e:
+        logger.error(f"Ошибка в команде export_sheets: {e}")
+        await safe_send_message(
+            message=message,
+            text="❌ Произошла ошибка при создании экспорта. Попробуйте позже.",
+            user_id=user_id
+        )
+
+
+async def create_export_for_cabinet(message: Message, cabinet, user_id: int, state: FSMContext = None):
+    """Настраивает экспорт для конкретного кабинета"""
+    try:
+        import os
+        
+        # Получаем ID шаблона из переменных окружения
+        template_id = os.getenv('GOOGLE_TEMPLATE_SPREADSHEET_ID')
+        
+        if not template_id:
+            await safe_send_message(
+                message=message,
+                text="❌ Шаблон Google Sheets не настроен. Обратитесь к администратору.",
+                user_id=user_id
+            )
+            return
+        
+        # Формируем ссылку на копирование шаблона
+        template_url = f"https://docs.google.com/spreadsheets/d/{template_id}/copy"
+        
+        # Сохраняем cabinet_id в состоянии
+        if state:
+            await state.update_data(cabinet_id=cabinet.id)
+            from core.states import ExportStates
+            await state.set_state(ExportStates.waiting_for_spreadsheet_url)
+        
+        # Отправляем пользователю инструкции
+        text = f"""📊 Экспорт в Google Sheets
+
+🏪 Кабинет: {cabinet.name or f'ID {cabinet.id}'}
+
+📋 Инструкция:
+
+1️⃣ Откройте ссылку и скопируйте таблицу:
+{template_url}
+
+2️⃣ Дайте доступ боту:
+   • Нажмите "Настроить доступ"
+   • Добавьте: wb-assist-sheets@wb-assist.iam.gserviceaccount.com
+   • Дайте права "Редактор"
+
+3️⃣ Отправьте мне ссылку на вашу скопированную таблицу
+
+✨ После этого данные будут обновляться автоматически!
+
+💡 Поддержка: @wb_assist_bot"""
+        
+        await safe_send_message(
+            message=message,
+            text=text,
+            user_id=user_id
+        )
+        
+    except Exception as e:
+        logger.error(f"Ошибка настройки экспорта для кабинета {cabinet.id}: {e}")
+        await safe_send_message(
+            message=message,
+            text="❌ Произошла ошибка. Попробуйте позже.",
+            user_id=user_id
+        )
+
+
+async def show_cabinet_selection(message: Message, cabinets, user_id: int):
+    """Показывает выбор кабинета для экспорта"""
+    from keyboards.keyboards import InlineKeyboardMarkup, InlineKeyboardButton
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[])
+    
+    for cabinet in cabinets:
+        cabinet_name = cabinet.name or f"Кабинет {cabinet.id}"
+        keyboard.inline_keyboard.append([
+            InlineKeyboardButton(
+                text=f"📊 {cabinet_name}",
+                callback_data=f"export_cabinet_{cabinet.id}"
+            )
+        ])
+    
+    keyboard.inline_keyboard.append([
+        InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_export")
+    ])
+    
+    await safe_send_message(
+        message=message,
+        text="📊 **Выберите кабинет для экспорта в Google Sheets:**",
+        reply_markup=keyboard,
+        user_id=user_id
+    )
+
+
+@router.callback_query(F.data.startswith("export_cabinet_"))
+@handle_telegram_errors
+async def handle_cabinet_export_selection(callback: CallbackQuery, state: FSMContext):
+    """Обработка выбора кабинета для экспорта"""
+    try:
+        cabinet_id = int(callback.data.replace("export_cabinet_", ""))
+        user_id = callback.from_user.id
+        
+        from api.client import bot_api_client
+        
+        # Получаем информацию о кабинете
+        dashboard_response = await bot_api_client.get_dashboard(user_id=user_id)
+        cabinet = None
+        
+        if dashboard_response.success and dashboard_response.cabinets:
+            cabinet = next((c for c in dashboard_response.cabinets if c.id == cabinet_id), None)
+        
+        if not cabinet:
+            await callback.answer("❌ Кабинет не найден", show_alert=True)
+            return
+        
+        await callback.answer()
+        await create_export_for_cabinet(callback.message, cabinet, user_id, state)
+        
+    except Exception as e:
+        logger.error(f"Ошибка обработки выбора кабинета: {e}")
+        await callback.answer("❌ Произошла ошибка", show_alert=True)
+
+
+@router.callback_query(F.data == "cancel_export")
+@handle_telegram_errors
+async def handle_cancel_export(callback: CallbackQuery, state: FSMContext):
+    """Отмена экспорта"""
+    await callback.answer("❌ Экспорт отменен")
+    await state.clear()
+    await safe_edit_message(
+        callback=callback,
+        text="❌ Экспорт отменен",
+        user_id=callback.from_user.id
+    )
+
+
+@router.message(F.text.startswith("http"))
+@handle_telegram_errors
+async def check_export_state(message: Message, state: FSMContext):
+    """Проверяет состояние для экспорта при получении ссылки"""
+    from core.states import ExportStates
+    
+    # Проверяем, что это ссылка на Google Sheets
+    if 'docs.google.com/spreadsheets' not in message.text:
+        return  # Не обрабатываем, пропускаем другим handlers
+    
+    current_state = await state.get_state()
+    
+    logger.info(f"🔍 Received Google Sheets URL. Current state: {current_state}")
+    
+    if current_state == ExportStates.waiting_for_spreadsheet_url:
+        logger.info(f"✅ State matches, processing spreadsheet URL")
+        await process_spreadsheet_url(message, state)
+    else:
+        # Состояние не совпадает - возможно пользователь просто отправил ссылку
+        # Пытаемся найти кабинет пользователя и использовать его
+        logger.info(f"⚠️ State does not match. Trying to find cabinet automatically")
+        await process_spreadsheet_url_auto(message, state)
+
+
+# Функция для обработки ссылки
+async def process_spreadsheet_url(message: Message, state: FSMContext):
+    """Обрабатывает ссылку на Google Sheets от пользователя"""
+    user_id = message.from_user.id
+    spreadsheet_url = message.text.strip()
+    
+    logger.info(f"🔍 Processing spreadsheet URL: {spreadsheet_url[:50]}...")
+    
+    try:
+        from api.client import bot_api_client
+        from core.states import ExportStates
+        
+        # Получаем cabinet_id из состояния
+        data = await state.get_data()
+        cabinet_id = data.get('cabinet_id')
+        
+        if not cabinet_id:
+            await safe_send_message(
+                message=message,
+                text="❌ Ошибка: не найден ID кабинета. Попробуйте еще раз.",
+                user_id=user_id
+            )
+            await state.clear()
+            return
+        
+        # Проверяем, что это похоже на URL Google Sheets
+        if 'docs.google.com/spreadsheets' not in spreadsheet_url:
+            await safe_send_message(
+                message=message,
+                text="❌ Неверный формат ссылки. Отправьте корректную ссылку на Google Sheets таблицу.",
+                user_id=user_id
+            )
+            return
+        
+        # Сохраняем spreadsheet_id через API
+        response = await bot_api_client.set_cabinet_spreadsheet(
+            cabinet_id=cabinet_id,
+            spreadsheet_url=spreadsheet_url
+        )
+        
+        if response.success:
+            # Очищаем состояние
+            await state.clear()
+            
+            # Отправляем успешное сообщение
+            text = """✅ Таблица успешно привязана!
+
+📊 Ваши данные будут обновляться автоматически.
+
+🔄 Хотите обновить таблицу прямо сейчас?"""
+            
+            from keyboards.keyboards import InlineKeyboardMarkup, InlineKeyboardButton
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(
+                    text="🔄 Обновить сейчас",
+                    callback_data=f"manual_export_update_{cabinet_id}"
+                )],
+                [InlineKeyboardButton(
+                    text="❌ Пропустить",
+                    callback_data="cancel_export"
+                )]
+            ])
+            
+            await safe_send_message(
+                message=message,
+                text=text,
+                reply_markup=keyboard,
+                user_id=user_id
+            )
+        else:
+            await safe_send_message(
+                message=message,
+                text=f"❌ Ошибка привязки таблицы: {response.error}\n\nПопробуйте еще раз или проверьте, что вы дали доступ боту.",
+                user_id=user_id
+            )
+            
+    except Exception as e:
+        logger.error(f"Ошибка обработки ссылки на таблицу: {e}")
+        await safe_send_message(
+            message=message,
+            text="❌ Произошла ошибка. Попробуйте позже.",
+            user_id=user_id
+        )
+        await state.clear()
+
+
+@router.callback_query(F.data.startswith("manual_export_update_"))
+@handle_telegram_errors
+async def handle_manual_export_update(callback: CallbackQuery):
+    """Обработка ручного обновления таблицы"""
+    try:
+        from api.client import bot_api_client
+        
+        cabinet_id = int(callback.data.replace("manual_export_update_", ""))
+        user_id = callback.from_user.id
+        
+        # Показываем сообщение о запуске обновления
+        await callback.answer("⏳ Обновляю таблицу...", show_alert=False)
+        
+        await safe_edit_message(
+            callback=callback,
+            text="⏳ Обновление таблицы...\nЭто может занять несколько секунд.",
+            user_id=user_id
+        )
+        
+        # Запускаем обновление
+        response = await bot_api_client.update_cabinet_spreadsheet(cabinet_id)
+        
+        if response.success:
+            await safe_edit_message(
+                callback=callback,
+                text="✅ Таблица успешно обновлена!\n\nДанные обновлены и готовы к использованию.",
+                user_id=user_id
+            )
+        else:
+            await safe_edit_message(
+                callback=callback,
+                text=f"❌ Ошибка обновления таблицы: {response.error}",
+                user_id=user_id
+            )
+            
+    except Exception as e:
+        logger.error(f"Ошибка ручного обновления таблицы: {e}")
+        await callback.answer("❌ Произошла ошибка", show_alert=True)
+
+
+async def process_spreadsheet_url_auto(message: Message, state: FSMContext):
+    """Автоматическая обработка ссылки без состояния"""
+    user_id = message.from_user.id
+    spreadsheet_url = message.text.strip()
+    
+    logger.info(f"🔍 Auto-processing spreadsheet URL for user {user_id}")
+    
+    try:
+        from api.client import bot_api_client
+        
+        # Пытаемся получить кабинеты пользователя
+        cabinets_response = await bot_api_client.get_user_cabinets(user_id)
+        
+        if not cabinets_response.success or not cabinets_response.data:
+            await safe_send_message(
+                message=message,
+                text="❌ У вас нет подключенных кабинетов. Сначала подключите кабинет через /start",
+                user_id=user_id
+            )
+            return
+        
+        cabinets = cabinets_response.data if isinstance(cabinets_response.data, list) else []
+        
+        if not cabinets:
+            await safe_send_message(
+                message=message,
+                text="❌ У вас нет подключенных кабинетов",
+                user_id=user_id
+            )
+            return
+        
+        # Берем первый кабинет
+        cabinet_id = cabinets[0].get('id') if isinstance(cabinets[0], dict) else cabinets[0].id
+        
+        logger.info(f"📊 Using cabinet {cabinet_id} for auto-processing")
+        
+        # Сохраняем spreadsheet_id через API
+        response = await bot_api_client.set_cabinet_spreadsheet(
+            cabinet_id=cabinet_id,
+            spreadsheet_url=spreadsheet_url
+        )
+        
+        if response.success:
+            # Отправляем успешное сообщение
+            text = f"""✅ Таблица успешно привязана к кабинету!
+
+📊 Ваши данные будут обновляться автоматически.
+
+🔄 Хотите обновить таблицу прямо сейчас?"""
+            
+            from keyboards.keyboards import InlineKeyboardMarkup, InlineKeyboardButton
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(
+                    text="🔄 Обновить сейчас",
+                    callback_data=f"manual_export_update_{cabinet_id}"
+                )],
+                [InlineKeyboardButton(
+                    text="❌ Пропустить",
+                    callback_data="cancel_export"
+                )]
+            ])
+            
+            await safe_send_message(
+                message=message,
+                text=text,
+                reply_markup=keyboard,
+                user_id=user_id
+            )
+        else:
+            await safe_send_message(
+                message=message,
+                text=f"❌ Ошибка привязки таблицы: {response.error}\n\nУбедитесь, что вы дали доступ боту.",
+                user_id=user_id
+            )
+            
+    except Exception as e:
+        logger.error(f"Ошибка автоматической обработки ссылки: {e}")
+        await safe_send_message(
+            message=message,
+            text="❌ Произошла ошибка. Попробуйте позже.",
+            user_id=user_id
+        )

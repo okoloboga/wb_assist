@@ -61,7 +61,7 @@ async def create_wb_cabinet(
             # Создаем новый кабинет
             cabinet = WBCabinet(
                 api_key=api_key,
-                name=name or f"WB Cabinet {user_id}"
+                name=name or "WB Кабинет"
             )
             
             db.add(cabinet)
