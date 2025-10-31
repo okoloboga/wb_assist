@@ -601,6 +601,25 @@ class BotAPIClient:
                 status_code=500
             )
 
+    async def get_cabinet_spreadsheet(self, cabinet_id: int) -> BotAPIResponse:
+        """Получить привязанную Google Sheet кабинета"""
+        url = f"{SERVER_HOST}/api/export/cabinet/{cabinet_id}/spreadsheet"
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    url,
+                    headers=self.headers,
+                    timeout=aiohttp.ClientTimeout(total=self.timeout)
+                ) as resp:
+                    data = await resp.json()
+                    if resp.status == 200:
+                        return BotAPIResponse(success=True, data=data, status_code=resp.status)
+                    else:
+                        return BotAPIResponse(success=False, error=data.get("detail", "Not found"), status_code=resp.status)
+        except Exception as e:
+            logger.error(f"Ошибка получения spreadsheet: {e}")
+            return BotAPIResponse(success=False, error=str(e), status_code=500)
+
     async def update_cabinet_spreadsheet(self, cabinet_id: int) -> BotAPIResponse:
         """Обновляет Google Sheets таблицу кабинета"""
         logger.info(f"🔄 Обновление таблицы кабинета {cabinet_id}")
@@ -612,7 +631,8 @@ class BotAPIClient:
                 async with session.post(
                     url,
                     headers=self.headers,
-                    timeout=aiohttp.ClientTimeout(total=self.timeout)
+                    # Даем серверу достаточно времени на экспорт больших таблиц
+                    timeout=aiohttp.ClientTimeout(total=300)
                 ) as resp:
                     response_data = await resp.json()
                     
@@ -632,6 +652,15 @@ class BotAPIClient:
                             status_code=resp.status
                         )
                         
+        except asyncio.TimeoutError:
+            # Сервер продолжает обновление, но клиент дождаться не смог
+            msg = "Таймаут ожидания ответа. Экспорт на сервере продолжится — проверьте таблицу через минуту."
+            logger.warning(f"⏰ {msg}")
+            return BotAPIResponse(
+                success=False,
+                error=msg,
+                status_code=408
+            )
         except Exception as e:
             logger.error(f"💥 Ошибка обновления таблицы: {e}")
             return BotAPIResponse(

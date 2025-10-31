@@ -380,6 +380,27 @@ async def set_cabinet_spreadsheet(
         raise HTTPException(status_code=500, detail="Внутренняя ошибка сервера")
 
 
+@router.get("/cabinet/{cabinet_id}/spreadsheet")
+async def get_cabinet_spreadsheet(
+    cabinet_id: int,
+    service: ExportService = Depends(get_export_service)
+):
+    """Возвращает spreadsheet_id/URL, если таблица привязана к кабинету"""
+    try:
+        spreadsheet_id = service.get_cabinet_spreadsheet(cabinet_id)
+        if not spreadsheet_id:
+            raise HTTPException(status_code=404, detail="Spreadsheet not set")
+        return {
+            "cabinet_id": cabinet_id,
+            "spreadsheet_id": spreadsheet_id,
+            "spreadsheet_url": f"https://docs.google.com/spreadsheets/d/{spreadsheet_id}"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Ошибка получения spreadsheet для кабинета {cabinet_id}: {e}")
+        raise HTTPException(status_code=500, detail="Внутренняя ошибка сервера")
+
 @router.post("/cabinet/{cabinet_id}/update")
 async def update_cabinet_spreadsheet(
     cabinet_id: int,

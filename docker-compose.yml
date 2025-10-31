@@ -66,7 +66,7 @@ services:
     build:
       context: ./server
       dockerfile: Dockerfile
-    command: celery -A app.core.celery_app worker --loglevel=info --queues=sync_queue,alerts_queue
+    command: celery -A app.core.celery_app worker --loglevel=info --queues=sync_queue,alerts_queue,export_queue
     depends_on:
       db:
         condition: service_healthy
@@ -80,6 +80,9 @@ services:
       - STOCK_ALERT_CHECK_TIME=${STOCK_ALERT_CHECK_TIME}
       - STOCK_ALERT_LOOKBACK_HOURS=${STOCK_ALERT_LOOKBACK_HOURS}
       - STOCK_ALERT_COOLDOWN_HOURS=${STOCK_ALERT_COOLDOWN_HOURS}
+      - GOOGLE_SERVICE_ACCOUNT_FILE=${GOOGLE_SERVICE_ACCOUNT_FILE}
+      - GOOGLE_TEMPLATE_SPREADSHEET_ID=${GOOGLE_TEMPLATE_SPREADSHEET_ID}
+      - GOOGLE_SCOPES=${GOOGLE_SCOPES}
     networks:
       - app-network
 

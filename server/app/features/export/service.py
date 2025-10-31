@@ -49,6 +49,11 @@ class ExportService:
                 raise
         return self._sheets_service
 
+    def get_cabinet_spreadsheet(self, cabinet_id: int) -> Optional[str]:
+        """Возвращает spreadsheet_id привязанной таблицы кабинета или None"""
+        cabinet = self.db.query(WBCabinet).filter(WBCabinet.id == cabinet_id).first()
+        return cabinet.spreadsheet_id if cabinet and cabinet.spreadsheet_id else None
+
     def create_export_token(self, user_id: int, cabinet_id: int) -> ExportToken:
         """Создает или возвращает существующий токен экспорта для кабинета"""
         # Проверяем, что кабинет существует и принадлежит пользователю
