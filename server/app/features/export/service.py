@@ -55,6 +55,293 @@ class ExportService:
         cabinet = self.db.query(WBCabinet).filter(WBCabinet.id == cabinet_id).first()
         return cabinet.spreadsheet_id if cabinet and cabinet.spreadsheet_id else None
 
+    def _format_total_rows(self, service, spreadsheet_id: str, stocks_data: List[Dict[str, Any]]) -> bool:
+        """
+        Форматирует строки -total голубым фоном
+        """
+        try:
+            # Получаем sheetId для листа "📦 Склад"
+            spreadsheet_info = service.spreadsheets().get(spreadsheetId=spreadsheet_id).execute()
+            sheets = spreadsheet_info.get('sheets', [])
+            
+            sheet_id = None
+            for sheet in sheets:
+                if sheet['properties']['title'] == '📦 Склад':
+                    sheet_id = sheet['properties']['sheetId']
+                    break
+            
+            if sheet_id is None:
+                logger.warning("Лист '📦 Склад' не найден для форматирования")
+                return False
+            
+            # Находим индексы строк с -total (начинаются со строки 2, индекс 1)
+            format_requests = []
+            for idx, stock in enumerate(stocks_data):
+                if stock.get('is_total_row', False):
+                    row_index = idx + 1  # +1 потому что данные начинаются со строки 2 (индекс 1)
+                    
+                    # Форматирование: голубой фон (RGB: 204, 229, 255 = светло-голубой)
+                    format_requests.append({
+                        "repeatCell": {
+                            "range": {
+                                "sheetId": sheet_id,
+                                "startRowIndex": row_index,
+                                "endRowIndex": row_index + 1,  # Одна строка
+                                "startColumnIndex": 0,
+                                "endColumnIndex": 16  # Все колонки A-P (0-15)
+                            },
+                            "cell": {
+                                "userEnteredFormat": {
+                                    "backgroundColor": {
+                                        "red": 0.8,    # 204/255
+                                        "green": 0.9,  # 229/255
+                                        "blue": 1.0    # 255/255
+                                    }
+                                }
+                            },
+                            "fields": "userEnteredFormat.backgroundColor"
+                        }
+                    })
+            
+            if not format_requests:
+                logger.info("Нет строк -total для форматирования")
+                return True
+            
+            # Применяем форматирование
+            logger.info(f"Применяем голубой фон к {len(format_requests)} строкам -total")
+            body = {'requests': format_requests}
+            service.spreadsheets().batchUpdate(
+                spreadsheetId=spreadsheet_id,
+                body=body
+            ).execute()
+            
+            logger.info(f"Форматирование {len(format_requests)} строк -total завершено")
+            return True
+            
+        except HttpError as e:
+            logger.error(f"HTTP ошибка при форматировании строк -total: {e}")
+            return False
+        except Exception as e:
+            logger.error(f"Ошибка форматирования строк -total: {e}")
+            return False
+
+    def _group_stocks_by_nm_id(self, service, spreadsheet_id: str) -> bool:
+        """
+        Группирует строки в листе "📦 Склад" по значению в колонке B (nm_id)
+        """
+        try:
+            # Получаем информацию о таблице для получения sheetId
+            spreadsheet_info = service.spreadsheets().get(spreadsheetId=spreadsheet_id).execute()
+            sheets = spreadsheet_info.get('sheets', [])
+            
+            # Находим sheetId для листа "📦 Склад"
+            sheet_id = None
+            for sheet in sheets:
+                if sheet['properties']['title'] == '📦 Склад':
+                    sheet_id = sheet['properties']['sheetId']
+                    break
+            
+            if sheet_id is None:
+                logger.warning("Лист '📦 Склад' не найден в таблице")
+                return False
+            
+            # Считываем все значения из колонки B (со строки 2, пропускаем заголовок)
+            result = service.spreadsheets().values().get(
+                spreadsheetId=spreadsheet_id,
+                range='📦 Склад!B2:B'
+            ).execute()
+            
+            values = result.get('values', [])
+            
+            logger.info(f"Получено {len(values)} значений из колонки B для группировки")
+            if len(values) > 0:
+                sample_values = [v[0] if v and len(v) > 0 else None for v in values[:min(10, len(values))]]
+                logger.debug(f"Первые значения nm_id: {sample_values}")
+                if len(values) > 10:
+                    sample_values_end = [v[0] if v and len(v) > 0 else None for v in values[-10:]]
+                    logger.debug(f"Последние значения nm_id: {sample_values_end}")
+            
+            if not values:
+                logger.info("Нет данных для группировки в листе '📦 Склад'")
+                return True
+            
+            # Сначала удаляем все существующие группы строк более точным способом
+            try:
+                # Получаем информацию о таблице для поиска существующих групп
+                spreadsheet_info = service.spreadsheets().get(
+                    spreadsheetId=spreadsheet_id,
+                    fields='sheets.properties.title,sheets.properties.sheetId,sheets.rowGroups'
+                ).execute()
+                
+                # Ищем лист "📦 Склад" и его группы
+                delete_requests = []
+                for sheet_info in spreadsheet_info.get('sheets', []):
+                    if sheet_info['properties']['title'] == '📦 Склад':
+                        sheet_id_found = sheet_info['properties']['sheetId']
+                        if sheet_id_found == sheet_id and 'rowGroups' in sheet_info:
+                            # Находим все группы строк в листе
+                            for group in sheet_info.get('rowGroups', []):
+                                group_range = group.get('range', {})
+                                if group_range.get('dimension') == 'ROWS':
+                                    delete_requests.append({
+                                        "deleteDimensionGroup": {
+                                            "range": {
+                                                "sheetId": sheet_id,
+                                                "dimension": "ROWS",
+                                                "startIndex": group_range['startIndex'],
+                                                "endIndex": group_range['endIndex']
+                                            }
+                                        }
+                                    })
+                
+                # Удаляем найденные группы
+                if delete_requests:
+                    logger.info(f"Найдено {len(delete_requests)} старых групп для удаления")
+                    body = {'requests': delete_requests}
+                    service.spreadsheets().batchUpdate(
+                        spreadsheetId=spreadsheet_id,
+                        body=body
+                    ).execute()
+                    logger.info("Старые группы строк удалены")
+                else:
+                    logger.debug("Старые группы не найдены")
+            except HttpError as http_err:
+                # Если групп нет или ошибка доступа, это нормально
+                if http_err.resp.status == 400 or http_err.resp.status == 404:
+                    logger.debug("Группы не найдены для удаления (это нормально)")
+                else:
+                    logger.warning(f"HTTP ошибка при удалении старых групп: {http_err.resp.status}")
+            except Exception as e:
+                logger.warning(f"Не удалось удалить старые группы (возможно, их нет): {e}")
+            
+            # Обнаруживаем диапазоны одинаковых значений nm_id
+            # Учитываем, что данные начинаются со строки 2 (индекс 0 в массиве = строка 2)
+            # Строки -total автоматически разделят группы, так как имеют уникальное значение
+            ranges_to_group = []
+            start_idx = 0
+            
+            logger.info(f"Начинаем анализ {len(values)} строк для группировки по nm_id")
+            
+            for i in range(1, len(values)):
+                current_value = values[i][0] if values[i] and len(values[i]) > 0 else None
+                start_value = values[start_idx][0] if values[start_idx] and len(values[start_idx]) > 0 else None
+                
+                # Если значение изменилось
+                if current_value != start_value:
+                    # Количество строк в диапазоне от start_idx до i-1 включительно
+                    num_rows_in_range = i - start_idx
+                    
+                    logger.debug(f"Строка {i+2} (индекс {i}): изменение '{start_value}' -> '{current_value}', "
+                                f"диапазон [{start_idx}:{i-1}] содержит {num_rows_in_range} строк")
+                    
+                    # Группируем только если в диапазоне 2 или больше строк
+                    if num_rows_in_range >= 2:
+                        # В API индексация строк начинается с 0
+                        # values[0] = строка 2 в Google Sheets = API индекс 1
+                        # Поэтому: API startIndex = array index + 1
+                        # API endIndex не включительно, поэтому: API endIndex = i + 1
+                        api_range = (start_idx + 1, i + 1)
+                        ranges_to_group.append(api_range)
+                        logger.info(f"  -> Группируем строки {start_idx+2} до {i+1} в GS (API индексы {api_range})")
+                    else:
+                        logger.debug(f"  -> Пропускаем группировку (только {num_rows_in_range} строка)")
+                    
+                    # ВСЕГДА начинаем новый диапазон с текущей позиции i
+                    # (даже если предыдущий диапазон был уникальным и мы не создали группу)
+                    start_idx = i
+            
+            # Обрабатываем последний диапазон
+            num_rows_in_last_range = len(values) - start_idx
+            logger.debug(f"Последний диапазон: start_idx={start_idx}, строк={num_rows_in_last_range}")
+            if num_rows_in_last_range >= 2:
+                last_range = (start_idx + 1, len(values) + 1)
+                ranges_to_group.append(last_range)
+                logger.info(f"  -> Группируем последние строки {start_idx+2} до {len(values)+1} в GS (API индексы {last_range})")
+            
+            # Формируем запросы на группировку
+            logger.info(f"Всего найдено {len(ranges_to_group)} диапазонов для группировки")
+            requests = []
+            for start, end in ranges_to_group:
+                requests.append({
+                    "addDimensionGroup": {
+                        "range": {
+                            "sheetId": sheet_id,
+                            "dimension": "ROWS",
+                            "startIndex": start,  # Строка 2 = индекс 1
+                            "endIndex": end       # Не включительно
+                        }
+                    }
+                })
+            
+            if not requests:
+                logger.info("Нет групп для создания (все строки уникальны или по одной строке на группу)")
+                return True
+            
+            # Логируем первые несколько запросов для отладки
+            logger.info(f"Сформировано {len(requests)} запросов на группировку")
+            if len(requests) <= 10:
+                for idx, req in enumerate(requests, 1):
+                    range_info = req['addDimensionGroup']['range']
+                    logger.debug(f"  Запрос {idx}: строки {range_info['startIndex']} до {range_info['endIndex']} "
+                                f"(в Google Sheets: строки {range_info['startIndex']+1} до {range_info['endIndex']+1})")
+            else:
+                logger.debug(f"  Первые 5 запросов:")
+                for idx, req in enumerate(requests[:5], 1):
+                    range_info = req['addDimensionGroup']['range']
+                    logger.debug(f"    Запрос {idx}: GS строки {range_info['startIndex']+1} до {range_info['endIndex']+1}")
+                logger.debug(f"  ... и еще {len(requests) - 5} запросов")
+            
+            # Выполняем batchUpdate - отправляем запросы батчами по 50 штук
+            # (Google Sheets API имеет ограничения на размер batchUpdate)
+            BATCH_SIZE = 50
+            total_applied = 0
+            
+            for batch_start in range(0, len(requests), BATCH_SIZE):
+                batch_end = min(batch_start + BATCH_SIZE, len(requests))
+                batch_requests = requests[batch_start:batch_end]
+                
+                logger.debug(f"Отправляем batch {batch_start//BATCH_SIZE + 1}: запросы {batch_start+1}-{batch_end} из {len(requests)}")
+                body = {'requests': batch_requests}
+                
+                try:
+                    response = service.spreadsheets().batchUpdate(
+                        spreadsheetId=spreadsheet_id,
+                        body=body
+                    ).execute()
+                    
+                    # Проверяем ответ API
+                    if 'replies' in response:
+                        replies_count = len(response['replies'])
+                        total_applied += replies_count
+                        if replies_count != len(batch_requests):
+                            logger.warning(f"Батч {batch_start//BATCH_SIZE + 1}: отправлено {len(batch_requests)} запросов, "
+                                         f"получено {replies_count} ответов")
+                        else:
+                            logger.debug(f"Батч {batch_start//BATCH_SIZE + 1}: все {replies_count} запросов обработаны")
+                    
+                    # Проверяем на ошибки
+                    if 'error' in str(response).lower() or 'error' in response:
+                        logger.error(f"ОШИБКА в ответе API батча {batch_start//BATCH_SIZE + 1}: {response}")
+                        
+                except HttpError as e:
+                    logger.error(f"HTTP ошибка при выполнении батча {batch_start//BATCH_SIZE + 1}: {e}")
+                    # Продолжаем с следующим батчем
+                    continue
+            
+            logger.info(f"BatchUpdate завершен. Всего применено {total_applied} из {len(requests)} запросов")
+            if total_applied != len(requests):
+                logger.warning(f"ВНИМАНИЕ: Не все запросы были применены! Отправлено {len(requests)}, применено {total_applied}")
+            
+            logger.info(f"Создано {len(requests)} групп строк по nm_id в листе '📦 Склад'")
+            return True
+            
+        except HttpError as e:
+            logger.error(f"HTTP ошибка при группировке строк по nm_id: {e}")
+            return False
+        except Exception as e:
+            logger.error(f"Ошибка группировки строк по nm_id: {e}")
+            return False
+
     def create_export_token(self, user_id: int, cabinet_id: int) -> ExportToken:
         """Создает или возвращает существующий токен экспорта для кабинета"""
         # Проверяем, что кабинет существует и принадлежит пользователю
@@ -466,33 +753,77 @@ class ExportService:
                 "return_percent": return_percent
             }
         
-        # Преобразуем в список и форматируем даты
-        data = []
+        # Группируем по nm_id для создания строк -total и детальных строк
+        grouped_by_nm_id = {}
         for key, item in aggregated.items():
             nm_id = item["nm_id"]
+            if nm_id not in grouped_by_nm_id:
+                grouped_by_nm_id[nm_id] = []
+            grouped_by_nm_id[nm_id].append(item)
+        
+        # Формируем данные с строками -total
+        data = []
+        for nm_id in sorted(grouped_by_nm_id.keys()):
+            items = grouped_by_nm_id[nm_id]
             stats = product_stats.get(nm_id, {})
             
+            # Вычисляем суммы и средние для строки -total
+            total_quantity = sum(item["quantity"] for item in items)
+            total_in_way_to_client = sum(item["in_way_to_client"] for item in items)
+            total_in_way_from_client = sum(item["in_way_from_client"] for item in items)
+            
+            # Средняя цена и скидка (взвешенная по количеству)
+            total_price_weighted = sum(item["price"] * item["quantity"] for item in items if item["quantity"] > 0)
+            total_discount_weighted = sum(item["discount"] * item["quantity"] for item in items if item["quantity"] > 0)
+            avg_price = (total_price_weighted / total_quantity) if total_quantity > 0 else 0
+            avg_discount = (total_discount_weighted / total_quantity) if total_quantity > 0 else 0
+            
+            # Берем фото, название и бренд из первого элемента
+            first_item = items[0]
+            
+            # Создаем строку -total (первая в группе)
             data.append({
-                "photo": item["photo"],                              # A - photo (formula)
-                "nm_id": item["nm_id"],                              # B - nm_id
-                "product_name": item["product_name"],                # C - product.name
-                "brand": item["brand"],                               # D - brand
-                "warehouse_name": item["warehouse_name"],            # E - warehouse_name (size убран!)
-                "quantity": item["quantity"],                        # F - quantity (суммировано)
-                "in_way_to_client": item["in_way_to_client"],       # G - in_way_to_client (суммировано)
-                "in_way_from_client": item["in_way_from_client"],   # H - in_way_from_client (суммировано)
-                "orders_buyouts_7d": f"{stats.get('orders_7d', 0)} / {stats.get('buyouts_7d', 0)}",  # I - Заказ/Выкуп Неделя
-                "orders_buyouts_14d": f"{stats.get('orders_14d', 0)} / {stats.get('buyouts_14d', 0)}",  # J - Заказ/Выкуп 2 Недели
-                "orders_buyouts_30d": f"{stats.get('orders_30d', 0)} / {stats.get('buyouts_30d', 0)}",  # K - Заказ/Выкуп Месяц
-                "price": item["price"],                              # L - price
-                "discount": item["discount"],                        # M - discount
-                "rating": stats.get('rating'),                       # N - Рейтинг (last_updated убран!)
+                "photo": first_item["photo"],                        # A - photo (formula)
+                "nm_id": f"{nm_id}-total",                          # B - nm_id с суффиксом -total
+                "product_name": first_item["product_name"],         # C - product.name
+                "brand": first_item["brand"],                        # D - brand
+                "warehouse_name": "Все склады",                      # E - "Все склады"
+                "quantity": total_quantity,                          # F - сумма по всем складам
+                "in_way_to_client": total_in_way_to_client,        # G - сумма по всем складам
+                "in_way_from_client": total_in_way_from_client,    # H - сумма по всем складам
+                "orders_buyouts_7d": f"{stats.get('orders_7d', 0)} / {stats.get('buyouts_7d', 0)}",  # I - статистика
+                "orders_buyouts_14d": f"{stats.get('orders_14d', 0)} / {stats.get('buyouts_14d', 0)}",  # J - статистика
+                "orders_buyouts_30d": f"{stats.get('orders_30d', 0)} / {stats.get('buyouts_30d', 0)}",  # K - статистика
+                "price": round(avg_price, 2),                        # L - средняя цена
+                "discount": round(avg_discount, 2),                  # M - средняя скидка
+                "rating": stats.get('rating'),                       # N - рейтинг
                 "buyout_percent": round(stats.get('buyout_percent', 0), 2),  # O - % выкуп
-                "return_percent": round(stats.get('return_percent', 0), 2)   # P - % возврат
+                "return_percent": round(stats.get('return_percent', 0), 2),   # P - % возврат
+                "is_total_row": True  # Маркер для форматирования
             })
+            
+            # Добавляем детальные строки для каждого склада (сортируем по названию склада)
+            for item in sorted(items, key=lambda x: x["warehouse_name"]):
+                data.append({
+                    "photo": item["photo"],                          # A - photo (formula)
+                    "nm_id": item["nm_id"],                          # B - nm_id (обычный)
+                    "product_name": item["product_name"],            # C - product.name
+                    "brand": item["brand"],                          # D - brand
+                    "warehouse_name": item["warehouse_name"],        # E - warehouse_name
+                    "quantity": item["quantity"],                    # F - quantity
+                    "in_way_to_client": item["in_way_to_client"],   # G - in_way_to_client
+                    "in_way_from_client": item["in_way_from_client"], # H - in_way_from_client
+                    "orders_buyouts_7d": "",                         # I - пусто
+                    "orders_buyouts_14d": "",                        # J - пусто
+                    "orders_buyouts_30d": "",                        # K - пусто
+                    "price": item["price"],                          # L - price
+                    "discount": item["discount"],                    # M - discount
+                    "rating": None,                                  # N - пусто
+                    "buyout_percent": None,                          # O - пусто
+                    "return_percent": None,                          # P - пусто
+                    "is_total_row": False  # Обычная строка
+                })
         
-        # Сортируем и ограничиваем результат
-        data.sort(key=lambda x: (x["nm_id"], x["warehouse_name"]))
         return data[:limit]
 
     def get_reviews_data(self, cabinet_id: int, limit: int = 1000) -> List[Dict[str, Any]]:
@@ -860,6 +1191,14 @@ class ExportService:
                         body={'values': values}
                     ).execute()
                     logger.info("Лист Склад успешно обновлен")
+                    
+                    # Форматируем строки -total (голубой фон)
+                    logger.info("Применяем форматирование для строк -total...")
+                    self._format_total_rows(service, spreadsheet_id, stocks_data)
+                    
+                    # Группируем строки по nm_id (колонка B)
+                    logger.info("Группируем строки по nm_id в листе '📦 Склад'...")
+                    self._group_stocks_by_nm_id(service, spreadsheet_id)
             
             # Обновляем отзывы
             if reviews_data:

@@ -458,7 +458,7 @@ async def create_export_for_cabinet(message: Message, cabinet, user_id: int, sta
             ])
             await safe_send_message(message=message, text=text, reply_markup=kb, user_id=user_id)
             return
-
+        
         # 2) Если таблица не привязана — поведение как раньше (инструкция + ожидание URL)
         if state:
             await state.update_data(cabinet_id=cabinet.id)
@@ -482,7 +482,7 @@ async def create_export_for_cabinet(message: Message, cabinet, user_id: int, sta
 ✨ После этого данные будут обновляться автоматически!
 
 💡 Поддержка: @wb_assist_bot"""
-
+        
         await safe_send_message(message=message, text=text, user_id=user_id)
         
     except Exception as e:
@@ -832,4 +832,4 @@ async def process_spreadsheet_url_auto(message: Message, state: FSMContext):
             message=message,
             text="❌ Произошла ошибка. Попробуйте позже.",
             user_id=user_id
-        )
+    )
