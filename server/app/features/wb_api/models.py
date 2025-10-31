@@ -166,9 +166,9 @@ class WBStock(Base):
 
     # Индексы и ограничения
     __table_args__ = (
-        UniqueConstraint('cabinet_id', 'nm_id', 'warehouse_id', name='uq_cabinet_nm_warehouse'),
+        UniqueConstraint('cabinet_id', 'nm_id', 'warehouse_name', 'size', name='uq_cabinet_nm_warehouse_size'),
         Index('idx_quantity', 'quantity'),
-        Index('idx_warehouse', 'warehouse_id'),
+        Index('idx_warehouse_name', 'warehouse_name'),
         Index('idx_last_updated', 'last_updated'),
     )
 

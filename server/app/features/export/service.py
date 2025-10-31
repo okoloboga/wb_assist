@@ -16,6 +16,7 @@ from googleapiclient.errors import HttpError
 
 from ...core.database import get_db
 from ..wb_api.models import WBCabinet, WBOrder, WBStock, WBReview, WBProduct
+from ..wb_api.models_sales import WBSales
 from .models import ExportToken, ExportLog
 from .schemas import ExportStatus, ExportDataType
 from .schemas import ExportDataResponse, ExportStatsResponse, CabinetValidationResponse
@@ -168,6 +169,58 @@ class ExportService:
             WBOrder.cabinet_id == cabinet_id
         ).order_by(desc(WBOrder.order_date)).limit(limit).all()
         
+        # Получаем уникальные nm_id из заказов для сбора статистики
+        unique_nm_ids = list(set(order.nm_id for order, _ in orders))
+        
+        # Собираем статистику для всех товаров оптимизированными запросами
+        product_stats = {}
+        if unique_nm_ids:
+            # Получаем рейтинги товаров одним запросом
+            products = self.db.query(WBProduct.nm_id, WBProduct.rating).filter(
+                and_(
+                    WBProduct.cabinet_id == cabinet_id,
+                    WBProduct.nm_id.in_(unique_nm_ids)
+                )
+            ).all()
+            ratings_dict = {nm_id: rating for nm_id, rating in products}
+            
+            # Общее количество заказов, выкупов и возвратов одним запросом с группировкой
+            total_orders = self.db.query(
+                WBOrder.nm_id,
+                func.count(WBOrder.id).label('count')
+            ).filter(
+                and_(
+                    WBOrder.cabinet_id == cabinet_id,
+                    WBOrder.nm_id.in_(unique_nm_ids)
+                )
+            ).group_by(WBOrder.nm_id).all()
+            total_orders_dict = {nm_id: count for nm_id, count in total_orders}
+            
+            total_buyouts = self.db.query(
+                WBSales.nm_id,
+                func.count(WBSales.id).label('count')
+            ).filter(
+                and_(
+                    WBSales.cabinet_id == cabinet_id,
+                    WBSales.nm_id.in_(unique_nm_ids),
+                    WBSales.type == 'buyout',
+                    WBSales.is_cancel == False
+                )
+            ).group_by(WBSales.nm_id).all()
+            total_buyouts_dict = {nm_id: count for nm_id, count in total_buyouts}
+            
+            # Формируем словарь статистики для всех товаров
+            for nm_id in unique_nm_ids:
+                total_orders_count = total_orders_dict.get(nm_id, 0)
+                total_buyouts_count = total_buyouts_dict.get(nm_id, 0)
+                
+                buyout_percent = (total_buyouts_count / total_orders_count * 100) if total_orders_count > 0 else 0.0
+                
+                product_stats[nm_id] = {
+                    "rating": ratings_dict.get(nm_id),
+                    "buyout_percent": buyout_percent
+                }
+        
         data = []
         for order, product in orders:
             image_url = product.image_url if product else None
@@ -180,29 +233,33 @@ class ExportService:
             }
             status_ru = status_map.get(order.status.lower() if order.status else "", order.status or "")
             
+            # Получаем статистику для товара
+            stats = product_stats.get(order.nm_id, {})
+            
             data.append({
                 "photo": image_formula,                          # A - photo (formula)
                 "order_id": order.order_id,                     # B - order_id
                 "nm_id": order.nm_id,                           # C - nm_id
                 "product_name": product.name if product else None,  # D - product.name
                 "size": order.size,                             # E - size
-                "quantity": order.quantity,                     # F - quantity
-                "price": order.price,                           # G - price
-                "total_price": order.total_price,               # H - total_price
-                "status": status_ru,                            # I - status (русский)
-                "order_date": order.order_date.strftime("%Y-%m-%d %H:%M") if order.order_date else None,  # J - order_date
-                "warehouse_from": order.warehouse_from,         # K - warehouse_from
-                "warehouse_to": order.warehouse_to,             # L - warehouse_to
-                "commission_amount": order.commission_amount,   # M - commission_amount
-                "spp_percent": order.spp_percent,               # N - spp_percent
-                "customer_price": order.customer_price,         # O - customer_price
-                "discount_percent": order.discount_percent      # P - discount_percent
+                "status": status_ru,                            # F - status (русский)
+                "order_date": order.order_date.strftime("%Y-%m-%d %H:%M") if order.order_date else None,  # G - order_date
+                "warehouse_from": order.warehouse_from,         # H - warehouse_from
+                "warehouse_to": order.warehouse_to,             # I - warehouse_to
+                "total_price": order.total_price,               # J - total_price (перемещено после warehouse_to)
+                "commission_amount": order.commission_amount,   # K - commission_amount
+                "customer_price": order.customer_price,         # L - customer_price (поменяли с spp_percent)
+                "spp_percent": order.spp_percent,               # M - spp_percent (поменяли с customer_price)
+                "discount_percent": order.discount_percent,     # N - discount_percent
+                "buyout_percent": round(stats.get('buyout_percent', 0), 2),  # O - % выкуп
+                "rating": stats.get('rating')                   # P - Рейтинг
             })
         
         return data
 
     def get_stocks_data(self, cabinet_id: int, limit: int = 1000) -> List[Dict[str, Any]]:
-        """Получает данные остатков для экспорта с названием товара из WBProduct"""
+        """Получает данные остатков для экспорта с группировкой по складам (без размеров)"""
+        # Получаем все записи для корректной агрегации
         stocks = self.db.query(WBStock, WBProduct).join(
             WBProduct,
             and_(
@@ -212,29 +269,231 @@ class ExportService:
             isouter=True
         ).filter(
             WBStock.cabinet_id == cabinet_id
-        ).order_by(WBStock.nm_id, WBStock.warehouse_name).limit(limit).all()
+        ).order_by(WBStock.nm_id, WBStock.warehouse_name).all()
         
-        data = []
+        # Группируем по nm_id + warehouse_name и суммируем количества
+        aggregated = {}
         for stock, product in stocks:
-            image_url = product.image_url if product else None
-            image_formula = f'=IMAGE("{image_url}")' if image_url else ''
+            key = (stock.nm_id, stock.warehouse_name)
+            
+            if key not in aggregated:
+                image_url = product.image_url if product else None
+                image_formula = f'=IMAGE("{image_url}")' if image_url else ''
+                
+                aggregated[key] = {
+                    "photo": image_formula,
+                    "nm_id": stock.nm_id,
+                    "product_name": product.name if product else None,
+                    "brand": stock.brand or "",
+                    "warehouse_name": stock.warehouse_name,
+                    "quantity": 0,
+                    "in_way_to_client": 0,
+                    "in_way_from_client": 0,
+                    "price": stock.price or 0,
+                    "discount": stock.discount or 0,
+                    "last_updated": stock.last_updated
+                }
+            
+            # Суммируем количества
+            aggregated[key]["quantity"] += stock.quantity or 0
+            aggregated[key]["in_way_to_client"] += stock.in_way_to_client or 0
+            aggregated[key]["in_way_from_client"] += stock.in_way_from_client or 0
+            
+            # Обновляем дату на самую свежую
+            if stock.last_updated and (not aggregated[key]["last_updated"] or stock.last_updated > aggregated[key]["last_updated"]):
+                aggregated[key]["last_updated"] = stock.last_updated
+        
+        # Получаем уникальные nm_id для сбора статистики
+        unique_nm_ids = list(set(item["nm_id"] for item in aggregated.values()))
+        
+        if not unique_nm_ids:
+            return []
+        
+        # Собираем статистику для всех товаров оптимизированными запросами
+        now = datetime.now(timezone.utc)
+        periods = {
+            "7_days": now - timedelta(days=7),
+            "14_days": now - timedelta(days=14),
+            "30_days": now - timedelta(days=30)
+        }
+        
+        # Получаем рейтинги товаров одним запросом
+        products = self.db.query(WBProduct.nm_id, WBProduct.rating).filter(
+            and_(
+                WBProduct.cabinet_id == cabinet_id,
+                WBProduct.nm_id.in_(unique_nm_ids)
+            )
+        ).all()
+        ratings_dict = {nm_id: rating for nm_id, rating in products}
+        
+        # Получаем заказы за периоды одним запросом с группировкой
+        orders_7d = self.db.query(
+            WBOrder.nm_id,
+            func.count(WBOrder.id).label('count')
+        ).filter(
+            and_(
+                WBOrder.cabinet_id == cabinet_id,
+                WBOrder.nm_id.in_(unique_nm_ids),
+                WBOrder.order_date >= periods["7_days"]
+            )
+        ).group_by(WBOrder.nm_id).all()
+        orders_7d_dict = {nm_id: count for nm_id, count in orders_7d}
+        
+        orders_14d = self.db.query(
+            WBOrder.nm_id,
+            func.count(WBOrder.id).label('count')
+        ).filter(
+            and_(
+                WBOrder.cabinet_id == cabinet_id,
+                WBOrder.nm_id.in_(unique_nm_ids),
+                WBOrder.order_date >= periods["14_days"]
+            )
+        ).group_by(WBOrder.nm_id).all()
+        orders_14d_dict = {nm_id: count for nm_id, count in orders_14d}
+        
+        orders_30d = self.db.query(
+            WBOrder.nm_id,
+            func.count(WBOrder.id).label('count')
+        ).filter(
+            and_(
+                WBOrder.cabinet_id == cabinet_id,
+                WBOrder.nm_id.in_(unique_nm_ids),
+                WBOrder.order_date >= periods["30_days"]
+            )
+        ).group_by(WBOrder.nm_id).all()
+        orders_30d_dict = {nm_id: count for nm_id, count in orders_30d}
+        
+        # Получаем выкупы за периоды одним запросом с группировкой
+        buyouts_7d = self.db.query(
+            WBSales.nm_id,
+            func.count(WBSales.id).label('count')
+        ).filter(
+            and_(
+                WBSales.cabinet_id == cabinet_id,
+                WBSales.nm_id.in_(unique_nm_ids),
+                WBSales.sale_date >= periods["7_days"],
+                WBSales.type == 'buyout',
+                WBSales.is_cancel == False
+            )
+        ).group_by(WBSales.nm_id).all()
+        buyouts_7d_dict = {nm_id: count for nm_id, count in buyouts_7d}
+        
+        buyouts_14d = self.db.query(
+            WBSales.nm_id,
+            func.count(WBSales.id).label('count')
+        ).filter(
+            and_(
+                WBSales.cabinet_id == cabinet_id,
+                WBSales.nm_id.in_(unique_nm_ids),
+                WBSales.sale_date >= periods["14_days"],
+                WBSales.type == 'buyout',
+                WBSales.is_cancel == False
+            )
+        ).group_by(WBSales.nm_id).all()
+        buyouts_14d_dict = {nm_id: count for nm_id, count in buyouts_14d}
+        
+        buyouts_30d = self.db.query(
+            WBSales.nm_id,
+            func.count(WBSales.id).label('count')
+        ).filter(
+            and_(
+                WBSales.cabinet_id == cabinet_id,
+                WBSales.nm_id.in_(unique_nm_ids),
+                WBSales.sale_date >= periods["30_days"],
+                WBSales.type == 'buyout',
+                WBSales.is_cancel == False
+            )
+        ).group_by(WBSales.nm_id).all()
+        buyouts_30d_dict = {nm_id: count for nm_id, count in buyouts_30d}
+        
+        # Общее количество заказов, выкупов и возвратов одним запросом с группировкой
+        total_orders = self.db.query(
+            WBOrder.nm_id,
+            func.count(WBOrder.id).label('count')
+        ).filter(
+            and_(
+                WBOrder.cabinet_id == cabinet_id,
+                WBOrder.nm_id.in_(unique_nm_ids)
+            )
+        ).group_by(WBOrder.nm_id).all()
+        total_orders_dict = {nm_id: count for nm_id, count in total_orders}
+        
+        total_buyouts = self.db.query(
+            WBSales.nm_id,
+            func.count(WBSales.id).label('count')
+        ).filter(
+            and_(
+                WBSales.cabinet_id == cabinet_id,
+                WBSales.nm_id.in_(unique_nm_ids),
+                WBSales.type == 'buyout',
+                WBSales.is_cancel == False
+            )
+        ).group_by(WBSales.nm_id).all()
+        total_buyouts_dict = {nm_id: count for nm_id, count in total_buyouts}
+        
+        total_returns = self.db.query(
+            WBSales.nm_id,
+            func.count(WBSales.id).label('count')
+        ).filter(
+            and_(
+                WBSales.cabinet_id == cabinet_id,
+                WBSales.nm_id.in_(unique_nm_ids),
+                WBSales.type == 'return',
+                WBSales.is_cancel == False
+            )
+        ).group_by(WBSales.nm_id).all()
+        total_returns_dict = {nm_id: count for nm_id, count in total_returns}
+        
+        # Формируем словарь статистики для всех товаров
+        product_stats = {}
+        for nm_id in unique_nm_ids:
+            total_orders_count = total_orders_dict.get(nm_id, 0)
+            total_buyouts_count = total_buyouts_dict.get(nm_id, 0)
+            total_returns_count = total_returns_dict.get(nm_id, 0)
+            
+            buyout_percent = (total_buyouts_count / total_orders_count * 100) if total_orders_count > 0 else 0.0
+            return_percent = (total_returns_count / total_orders_count * 100) if total_orders_count > 0 else 0.0
+            
+            product_stats[nm_id] = {
+                "orders_7d": orders_7d_dict.get(nm_id, 0),
+                "orders_14d": orders_14d_dict.get(nm_id, 0),
+                "orders_30d": orders_30d_dict.get(nm_id, 0),
+                "buyouts_7d": buyouts_7d_dict.get(nm_id, 0),
+                "buyouts_14d": buyouts_14d_dict.get(nm_id, 0),
+                "buyouts_30d": buyouts_30d_dict.get(nm_id, 0),
+                "rating": ratings_dict.get(nm_id),
+                "buyout_percent": buyout_percent,
+                "return_percent": return_percent
+            }
+        
+        # Преобразуем в список и форматируем даты
+        data = []
+        for key, item in aggregated.items():
+            nm_id = item["nm_id"]
+            stats = product_stats.get(nm_id, {})
             
             data.append({
-                "photo": image_formula,                       # A - photo (formula)
-                "nm_id": stock.nm_id,                         # B - nm_id
-                "product_name": product.name if product else None,  # C - product.name
-                "brand": stock.brand,                         # D - brand
-                "size": stock.size,                           # E - size
-                "warehouse_name": stock.warehouse_name,       # F - warehouse
-                "quantity": stock.quantity,                   # G - quantity
-                "in_way_to_client": stock.in_way_to_client,   # H - in_way_to_client
-                "in_way_from_client": stock.in_way_from_client,  # I - in_way_from_client
-                "price": stock.price,                         # J - price
-                "discount": stock.discount,                   # K - discount
-                "last_updated": stock.last_updated.strftime("%Y-%m-%d %H:%M") if stock.last_updated else None  # L - last_updated
+                "photo": item["photo"],                              # A - photo (formula)
+                "nm_id": item["nm_id"],                              # B - nm_id
+                "product_name": item["product_name"],                # C - product.name
+                "brand": item["brand"],                               # D - brand
+                "warehouse_name": item["warehouse_name"],            # E - warehouse_name (size убран!)
+                "quantity": item["quantity"],                        # F - quantity (суммировано)
+                "in_way_to_client": item["in_way_to_client"],       # G - in_way_to_client (суммировано)
+                "in_way_from_client": item["in_way_from_client"],   # H - in_way_from_client (суммировано)
+                "orders_buyouts_7d": f"{stats.get('orders_7d', 0)} / {stats.get('buyouts_7d', 0)}",  # I - Заказ/Выкуп Неделя
+                "orders_buyouts_14d": f"{stats.get('orders_14d', 0)} / {stats.get('buyouts_14d', 0)}",  # J - Заказ/Выкуп 2 Недели
+                "orders_buyouts_30d": f"{stats.get('orders_30d', 0)} / {stats.get('buyouts_30d', 0)}",  # K - Заказ/Выкуп Месяц
+                "price": item["price"],                              # L - price
+                "discount": item["discount"],                        # M - discount
+                "rating": stats.get('rating'),                       # N - Рейтинг (last_updated убран!)
+                "buyout_percent": round(stats.get('buyout_percent', 0), 2),  # O - % выкуп
+                "return_percent": round(stats.get('return_percent', 0), 2)   # P - % возврат
             })
         
-        return data
+        # Сортируем и ограничиваем результат
+        data.sort(key=lambda x: (x["nm_id"], x["warehouse_name"]))
+        return data[:limit]
 
     def get_reviews_data(self, cabinet_id: int, limit: int = 1000) -> List[Dict[str, Any]]:
         """Получает данные отзывов для экспорта с названием товара и размером из WBProduct и WBStock"""
@@ -531,24 +790,24 @@ class ExportService:
                     order.get('nm_id', ''),              # C - nm_id
                     order.get('product_name', ''),       # D - product.name
                     order.get('size', ''),               # E - size
-                    order.get('quantity', 0),            # F - quantity
-                    order.get('price', 0),               # G - price
-                    order.get('total_price', 0),         # H - total_price
-                    order.get('status', ''),             # I - status
-                    order.get('order_date', ''),         # J - order_date
-                    order.get('warehouse_from', ''),     # K - warehouse_from
-                    order.get('warehouse_to', ''),       # L - warehouse_to
-                    order.get('commission_amount', 0),   # M - commission_amount
-                    order.get('spp_percent', 0),         # N - spp_percent
-                    order.get('customer_price', 0),      # O - customer_price
-                    order.get('discount_percent', 0)     # P - discount_percent
+                    order.get('status', ''),             # F - status (quantity и price убраны)
+                    order.get('order_date', ''),         # G - order_date
+                    order.get('warehouse_from', ''),     # H - warehouse_from
+                    order.get('warehouse_to', ''),       # I - warehouse_to
+                    order.get('total_price', 0),         # J - total_price (перемещено после warehouse_to)
+                    order.get('commission_amount', 0),   # K - commission_amount
+                    order.get('customer_price', 0),      # L - customer_price (поменяли с spp_percent)
+                    order.get('spp_percent', 0),         # M - spp_percent (поменяли с customer_price)
+                    order.get('discount_percent', 0),    # N - discount_percent
+                    order.get('buyout_percent', 0),      # O - % выкуп
+                    order.get('rating')                  # P - Рейтинг
                 ] for order in orders_data]
                 
                 # Очищаем старые данные
                 logger.info("Очищаем старые данные в листе Заказы...")
                 service.spreadsheets().values().clear(
                     spreadsheetId=spreadsheet_id,
-                    range='🛒 Заказы!A2:P'
+                    range='🛒 Заказы!A2:P'  # Изменено с A2:N на A2:P (добавлены колонки % выкуп и Рейтинг)
                 ).execute()
                 
                 # Записываем новые данные
@@ -570,21 +829,25 @@ class ExportService:
                     stock.get('nm_id', ''),               # B - nm_id
                     stock.get('product_name', ''),        # C - product.name
                     stock.get('brand', ''),               # D - brand
-                    stock.get('size', ''),                # E - size
-                    stock.get('warehouse_name', ''),      # F - warehouse_name
-                    stock.get('quantity', 0),             # G - quantity
-                    stock.get('in_way_to_client', 0),     # H - in_way_to_client
-                    stock.get('in_way_from_client', 0),   # I - in_way_from_client
-                    stock.get('price', 0),                # J - price
-                    stock.get('discount', 0),             # K - discount
-                    stock.get('last_updated', '')         # L - last_updated
+                    stock.get('warehouse_name', ''),      # E - warehouse_name (size убран!)
+                    stock.get('quantity', 0),             # F - quantity (суммировано)
+                    stock.get('in_way_to_client', 0),     # G - in_way_to_client (суммировано)
+                    stock.get('in_way_from_client', 0),   # H - in_way_from_client (суммировано)
+                    stock.get('orders_buyouts_7d', ''),   # I - Заказ/Выкуп Неделя
+                    stock.get('orders_buyouts_14d', ''),  # J - Заказ/Выкуп 2 Недели
+                    stock.get('orders_buyouts_30d', ''),  # K - Заказ/Выкуп Месяц
+                    stock.get('price', 0),                # L - price
+                    stock.get('discount', 0),             # M - discount
+                    stock.get('rating'),                  # N - Рейтинг (last_updated убран!)
+                    stock.get('buyout_percent', 0),       # O - % выкуп
+                    stock.get('return_percent', 0)        # P - % возврат
                 ] for stock in stocks_data]
                 
                 # Очищаем старые данные
                 logger.info("Очищаем старые данные в листе Склад...")
                 service.spreadsheets().values().clear(
                     spreadsheetId=spreadsheet_id,
-                    range='📦 Склад!A2:L'
+                    range='📦 Склад!A2:P'  # Изменено с A2:Q на A2:P (убрана колонка last_updated)
                 ).execute()
                 
                 # Записываем новые данные
