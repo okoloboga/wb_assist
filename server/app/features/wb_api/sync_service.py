@@ -1560,6 +1560,7 @@ class WBSyncService:
                         "cabinet_id": cabinet.id,
                         "sale_id": str(sale_item.get("srid", "")),
                         "order_id": str(sale_item.get("saleID", "")),
+                        "g_number": str(sale_item.get("gNumber", "")) if sale_item.get("gNumber") else None,  # gNumber для сопоставления с заказами
                         "nm_id": sale_item.get("nmId", 0),
                         "product_name": sale_item.get("subject", ""),
                         "brand": sale_item.get("brand", ""),
@@ -1663,6 +1664,7 @@ class WBSyncService:
                         "cabinet_id": cabinet.id,
                         "sale_id": order_id,  # Используем читаемый order_id как sale_id
                         "order_id": order_id,  # Дублируем для совместимости
+                        "g_number": str(claim.get("gNumber", "")) if claim.get("gNumber") else None,  # gNumber для сопоставления с заказами (если есть в Claims API)
                         "nm_id": claim.get("nm_id", 0),
                         "product_name": claim.get("imt_name", ""),
                         "brand": "",  # В Claims API нет бренда

@@ -208,8 +208,16 @@ class ExportService:
                 # Если групп нет или ошибка доступа, это нормально
                 if http_err.resp.status == 400 or http_err.resp.status == 404:
                     logger.debug("Группы не найдены для удаления (это нормально)")
+                elif http_err.resp.status == 408 or http_err.resp.status == 504 or 'timeout' in str(http_err).lower() or 'timed out' in str(http_err).lower():
+                    # Таймаут при чтении групп строк - это нормально при большом объеме данных
+                    logger.warning(f"Таймаут при чтении групп строк (это нормально при большом объеме данных). Продолжаем создание новых групп: {http_err}")
+                    # Продолжаем выполнение без удаления старых групп
                 else:
-                    logger.warning(f"HTTP ошибка при удалении старых групп: {http_err.resp.status}")
+                    logger.warning(f"HTTP ошибка при удалении старых групп (продолжаем выполнение): {http_err.resp.status} - {http_err}")
+                    # Продолжаем выполнение даже при других HTTP ошибках
+            except TimeoutError as timeout_err:
+                # Явная обработка таймаутов
+                logger.warning(f"Таймаут при чтении групп строк (это нормально при большом объеме данных). Продолжаем создание новых групп: {timeout_err}")
             except Exception as e:
                 # Обрабатываем все исключения, включая таймауты
                 error_msg = str(e).lower()
@@ -439,6 +447,7 @@ class ExportService:
 
     def get_orders_data(self, cabinet_id: int, limit: int = 1000) -> List[Dict[str, Any]]:
         """Получает данные заказов для экспорта с названием товара из WBProduct"""
+        # Получаем заказы с JOIN по продуктам
         orders = self.db.query(WBOrder, WBProduct).join(
             WBProduct,
             and_(
@@ -449,6 +458,27 @@ class ExportService:
         ).filter(
             WBOrder.cabinet_id == cabinet_id
         ).order_by(desc(WBOrder.order_date)).limit(limit).all()
+        
+        # Получаем уникальные order_id для проверки статусов в WBSales
+        order_ids = [order.order_id for order, _ in orders if order.order_id]
+        
+        # Получаем все продажи (buyout и return) по g_number для сопоставления с заказами
+        sales_by_g_number = {}
+        if order_ids:
+            sales = self.db.query(WBSales).filter(
+                and_(
+                    WBSales.cabinet_id == cabinet_id,
+                    WBSales.g_number.in_(order_ids)
+                )
+            ).all()
+            
+            # Группируем по g_number, приоритет: return > buyout
+            for sale in sales:
+                g_number = sale.g_number
+                if g_number:
+                    if g_number not in sales_by_g_number:
+                        sales_by_g_number[g_number] = {}
+                    sales_by_g_number[g_number][sale.type] = sale
         
         # Получаем уникальные nm_id из заказов для сбора статистики
         unique_nm_ids = list(set(order.nm_id for order, _ in orders))
@@ -510,22 +540,40 @@ class ExportService:
             # Получаем статистику для товара
             stats = product_stats.get(order.nm_id, {})
             
+            # Определяем статус заказа на основе сопоставления с WBSales
+            order_status = "🧾Активный"  # По умолчанию
+            
+            # Проверяем, отменен ли заказ
+            if order.status == "canceled":
+                order_status = "↩️Отмена"
+            else:
+                # Проверяем продажи по g_number
+                g_number = order.order_id
+                if g_number and g_number in sales_by_g_number:
+                    sales_for_order = sales_by_g_number[g_number]
+                    # Приоритет: return > buyout
+                    if "return" in sales_for_order:
+                        order_status = "🔴Возврат"
+                    elif "buyout" in sales_for_order:
+                        order_status = "💰Выкуп"
+            
             data.append({
                 "photo": image_formula,                          # A - photo (formula)
                 "order_id": order.order_id,                     # B - order_id
                 "nm_id": order.nm_id,                           # C - nm_id
                 "product_name": product.name if product else None,  # D - product.name
-                "size": order.size,                             # E - size
-                "order_date": order.order_date.strftime("%Y-%m-%d %H:%M") if order.order_date else None,  # F - order_date
-                "warehouse_from": order.warehouse_from,         # G - warehouse_from
-                "warehouse_to": order.warehouse_to,             # H - warehouse_to
-                "total_price": order.total_price,               # I - total_price
-                "commission_amount": order.commission_amount,   # J - commission_amount
-                "customer_price": order.customer_price,         # K - customer_price
-                "spp_percent": order.spp_percent,               # L - spp_percent
-                "discount_percent": order.discount_percent,     # M - discount_percent
-                "buyout_percent": round(stats.get('buyout_percent', 0), 2),  # N - % выкуп
-                "rating": stats.get('rating')                   # O - Рейтинг
+                "status": order_status,                          # E - Статус (новое поле)
+                "size": order.size,                             # F - size
+                "order_date": order.order_date.strftime("%Y-%m-%d %H:%M") if order.order_date else None,  # G - order_date
+                "warehouse_from": order.warehouse_from,         # H - warehouse_from
+                "warehouse_to": order.warehouse_to,             # I - warehouse_to
+                "total_price": order.total_price,               # J - total_price
+                "commission_amount": order.commission_amount,   # K - commission_amount
+                "customer_price": order.customer_price,         # L - customer_price
+                "spp_percent": order.spp_percent,               # M - spp_percent
+                "discount_percent": order.discount_percent,     # N - discount_percent
+                "buyout_percent": round(stats.get('buyout_percent', 0), 2),  # O - % выкуп
+                "rating": stats.get('rating')                   # P - Рейтинг
             })
         
         return data
@@ -1124,24 +1172,25 @@ class ExportService:
                     order.get('order_id', ''),           # B - order_id
                     order.get('nm_id', ''),              # C - nm_id
                     order.get('product_name', ''),       # D - product.name
-                    order.get('size', ''),               # E - size
-                    order.get('order_date', ''),         # F - order_date
-                    order.get('warehouse_from', ''),     # G - warehouse_from
-                    order.get('warehouse_to', ''),       # H - warehouse_to
-                    order.get('total_price', 0),         # I - total_price
-                    order.get('commission_amount', 0),   # J - commission_amount
-                    order.get('customer_price', 0),      # K - customer_price
-                    order.get('spp_percent', 0),         # L - spp_percent
-                    order.get('discount_percent', 0),    # M - discount_percent
-                    order.get('buyout_percent', 0),      # N - % выкуп
-                    order.get('rating')                  # O - Рейтинг
+                    order.get('status', '🧾Активный'),   # E - Статус (новое поле)
+                    order.get('size', ''),               # F - size
+                    order.get('order_date', ''),         # G - order_date
+                    order.get('warehouse_from', ''),     # H - warehouse_from
+                    order.get('warehouse_to', ''),       # I - warehouse_to
+                    order.get('total_price', 0),         # J - total_price
+                    order.get('commission_amount', 0),   # K - commission_amount
+                    order.get('customer_price', 0),      # L - customer_price
+                    order.get('spp_percent', 0),         # M - spp_percent
+                    order.get('discount_percent', 0),    # N - discount_percent
+                    order.get('buyout_percent', 0),      # O - % выкуп
+                    order.get('rating')                  # P - Рейтинг
                 ] for order in orders_data]
                 
                 # Очищаем старые данные
                 logger.info("Очищаем старые данные в листе Заказы...")
                 service.spreadsheets().values().clear(
                     spreadsheetId=spreadsheet_id,
-                    range='🛒 Заказы!A2:O'  # Обновлено: удален столбец "Статус" (F), теперь A-O
+                    range='🛒 Заказы!A2:P'  # Обновлено: добавлен столбец "Статус" (E), теперь A-P
                 ).execute()
                 
                 # Записываем новые данные
