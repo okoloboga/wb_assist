@@ -456,7 +456,22 @@ async def create_export_for_cabinet(message: Message, cabinet, user_id: int, sta
                 [InlineKeyboardButton(text="♻️ Сменить таблицу", callback_data=f"change_spreadsheet_{cabinet.id}")],
                 [InlineKeyboardButton(text="⬅️ Назад", callback_data="back_wb_menu")]
             ])
-            await safe_send_message(message=message, text=text, reply_markup=kb, user_id=user_id)
+            
+            # Отправляем фото с текстом как подписью
+            try:
+                photo1_path = Path(__file__).parent.parent / "assets" / "1.png"
+                photo1 = FSInputFile(photo1_path)
+                
+                await message.bot.send_photo(
+                    chat_id=user_id,
+                    photo=photo1,
+                    caption=text,
+                    reply_markup=kb
+                )
+            except Exception as e:
+                logger.error(f"Ошибка отправки фото: {e}")
+                # Фолбэк - отправляем обычное сообщение
+                await safe_send_message(message=message, text=text, reply_markup=kb, user_id=user_id)
             return
         
         # 2) Если таблица не привязана — поведение как раньше (инструкция + ожидание URL)
@@ -479,11 +494,22 @@ async def create_export_for_cabinet(message: Message, cabinet, user_id: int, sta
 
 3️⃣ Отправьте мне ссылку на вашу скопированную таблицу
 
-✨ После этого данные будут обновляться автоматически!
-
-💡 Поддержка: @wb_assist_bot"""
+✨ После этого данные будут обновляться автоматически!"""
         
-        await safe_send_message(message=message, text=text, user_id=user_id)
+        # Отправляем фото с текстом как подписью
+        try:
+            photo1_path = Path(__file__).parent.parent / "assets" / "1.png"
+            photo1 = FSInputFile(photo1_path)
+            
+            await message.bot.send_photo(
+                chat_id=user_id,
+                photo=photo1,
+                caption=text
+            )
+        except Exception as e:
+            logger.error(f"Ошибка отправки фото: {e}")
+            # Фолбэк - отправляем обычное сообщение
+            await safe_send_message(message=message, text=text, user_id=user_id)
         
     except Exception as e:
         logger.error(f"Ошибка настройки экспорта для кабинета {cabinet.id}: {e}")
