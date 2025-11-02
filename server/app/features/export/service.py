@@ -57,7 +57,7 @@ class ExportService:
 
     def _format_total_rows(self, service, spreadsheet_id: str, stocks_data: List[Dict[str, Any]]) -> bool:
         """
-        Форматирует строки -total голубым фоном
+        Форматирует строки -total жирным шрифтом
         """
         try:
             # Получаем sheetId для листа "📦 Склад"
@@ -80,7 +80,7 @@ class ExportService:
                 if stock.get('is_total_row', False):
                     row_index = idx + 1  # +1 потому что данные начинаются со строки 2 (индекс 1)
                     
-                    # Форматирование: голубой фон (RGB: 204, 229, 255 = светло-голубой)
+                    # Форматирование: жирный шрифт
                     format_requests.append({
                         "repeatCell": {
                             "range": {
@@ -88,18 +88,16 @@ class ExportService:
                                 "startRowIndex": row_index,
                                 "endRowIndex": row_index + 1,  # Одна строка
                                 "startColumnIndex": 0,
-                                "endColumnIndex": 16  # Все колонки A-P (0-15)
+                                "endColumnIndex": 17  # Все колонки A-Q (0-16)
                             },
                             "cell": {
                                 "userEnteredFormat": {
-                                    "backgroundColor": {
-                                        "red": 0.8,    # 204/255
-                                        "green": 0.9,  # 229/255
-                                        "blue": 1.0    # 255/255
+                                    "textFormat": {
+                                        "bold": True
                                     }
                                 }
                             },
-                            "fields": "userEnteredFormat.backgroundColor"
+                            "fields": "userEnteredFormat.textFormat"
                         }
                     })
             
@@ -108,7 +106,7 @@ class ExportService:
                 return True
             
             # Применяем форматирование
-            logger.info(f"Применяем голубой фон к {len(format_requests)} строкам -total")
+            logger.info(f"Применяем жирный шрифт к {len(format_requests)} строкам -total")
             body = {'requests': format_requests}
             service.spreadsheets().batchUpdate(
                 spreadsheetId=spreadsheet_id,
@@ -166,6 +164,7 @@ class ExportService:
                 return True
             
             # Сначала удаляем все существующие группы строк более точным способом
+            # ВАЖНО: При большом количестве групп операция может таймаутить, поэтому делаем её опциональной
             try:
                 # Получаем информацию о таблице для поиска существующих групп
                 spreadsheet_info = service.spreadsheets().get(
@@ -212,15 +211,18 @@ class ExportService:
                 else:
                     logger.warning(f"HTTP ошибка при удалении старых групп: {http_err.resp.status}")
             except Exception as e:
-                logger.warning(f"Не удалось удалить старые группы (возможно, их нет): {e}")
+                # Обрабатываем все исключения, включая таймауты
+                error_msg = str(e).lower()
+                if 'timeout' in error_msg or 'timed out' in error_msg:
+                    logger.warning(f"Таймаут при чтении групп строк (это нормально при большом объеме данных). Продолжаем создание новых групп: {e}")
+                else:
+                    logger.warning(f"Не удалось удалить старые группы (это не критично, создадим новые): {e}")
             
             # Обнаруживаем диапазоны одинаковых значений nm_id
             # Учитываем, что данные начинаются со строки 2 (индекс 0 в массиве = строка 2)
             # Строки -total автоматически разделят группы, так как имеют уникальное значение
             ranges_to_group = []
             start_idx = 0
-            
-            logger.info(f"Начинаем анализ {len(values)} строк для группировки по nm_id")
             
             for i in range(1, len(values)):
                 current_value = values[i][0] if values[i] and len(values[i]) > 0 else None
@@ -242,7 +244,6 @@ class ExportService:
                         # API endIndex не включительно, поэтому: API endIndex = i + 1
                         api_range = (start_idx + 1, i + 1)
                         ranges_to_group.append(api_range)
-                        logger.info(f"  -> Группируем строки {start_idx+2} до {i+1} в GS (API индексы {api_range})")
                     else:
                         logger.debug(f"  -> Пропускаем группировку (только {num_rows_in_range} строка)")
                     
@@ -252,14 +253,11 @@ class ExportService:
             
             # Обрабатываем последний диапазон
             num_rows_in_last_range = len(values) - start_idx
-            logger.debug(f"Последний диапазон: start_idx={start_idx}, строк={num_rows_in_last_range}")
             if num_rows_in_last_range >= 2:
                 last_range = (start_idx + 1, len(values) + 1)
                 ranges_to_group.append(last_range)
-                logger.info(f"  -> Группируем последние строки {start_idx+2} до {len(values)+1} в GS (API индексы {last_range})")
             
             # Формируем запросы на группировку
-            logger.info(f"Всего найдено {len(ranges_to_group)} диапазонов для группировки")
             requests = []
             for start, end in ranges_to_group:
                 requests.append({
@@ -278,7 +276,6 @@ class ExportService:
                 return True
             
             # Логируем первые несколько запросов для отладки
-            logger.info(f"Сформировано {len(requests)} запросов на группировку")
             if len(requests) <= 10:
                 for idx, req in enumerate(requests, 1):
                     range_info = req['addDimensionGroup']['range']
@@ -328,11 +325,8 @@ class ExportService:
                     # Продолжаем с следующим батчем
                     continue
             
-            logger.info(f"BatchUpdate завершен. Всего применено {total_applied} из {len(requests)} запросов")
             if total_applied != len(requests):
                 logger.warning(f"ВНИМАНИЕ: Не все запросы были применены! Отправлено {len(requests)}, применено {total_applied}")
-            
-            logger.info(f"Создано {len(requests)} групп строк по nm_id в листе '📦 Склад'")
             return True
             
         except HttpError as e:
@@ -513,13 +507,6 @@ class ExportService:
             image_url = product.image_url if product else None
             image_formula = f'=IMAGE("{image_url}")' if image_url else ''
             
-            # Переводим статус на русский
-            status_map = {
-                "active": "Активный",
-                "canceled": "Отменен"
-            }
-            status_ru = status_map.get(order.status.lower() if order.status else "", order.status or "")
-            
             # Получаем статистику для товара
             stats = product_stats.get(order.nm_id, {})
             
@@ -529,17 +516,16 @@ class ExportService:
                 "nm_id": order.nm_id,                           # C - nm_id
                 "product_name": product.name if product else None,  # D - product.name
                 "size": order.size,                             # E - size
-                "status": status_ru,                            # F - status (русский)
-                "order_date": order.order_date.strftime("%Y-%m-%d %H:%M") if order.order_date else None,  # G - order_date
-                "warehouse_from": order.warehouse_from,         # H - warehouse_from
-                "warehouse_to": order.warehouse_to,             # I - warehouse_to
-                "total_price": order.total_price,               # J - total_price (перемещено после warehouse_to)
-                "commission_amount": order.commission_amount,   # K - commission_amount
-                "customer_price": order.customer_price,         # L - customer_price (поменяли с spp_percent)
-                "spp_percent": order.spp_percent,               # M - spp_percent (поменяли с customer_price)
-                "discount_percent": order.discount_percent,     # N - discount_percent
-                "buyout_percent": round(stats.get('buyout_percent', 0), 2),  # O - % выкуп
-                "rating": stats.get('rating')                   # P - Рейтинг
+                "order_date": order.order_date.strftime("%Y-%m-%d %H:%M") if order.order_date else None,  # F - order_date
+                "warehouse_from": order.warehouse_from,         # G - warehouse_from
+                "warehouse_to": order.warehouse_to,             # H - warehouse_to
+                "total_price": order.total_price,               # I - total_price
+                "commission_amount": order.commission_amount,   # J - commission_amount
+                "customer_price": order.customer_price,         # K - customer_price
+                "spp_percent": order.spp_percent,               # L - spp_percent
+                "discount_percent": order.discount_percent,     # M - discount_percent
+                "buyout_percent": round(stats.get('buyout_percent', 0), 2),  # N - % выкуп
+                "rating": stats.get('rating')                   # O - Рейтинг
             })
         
         return data
@@ -761,9 +747,16 @@ class ExportService:
                 grouped_by_nm_id[nm_id] = []
             grouped_by_nm_id[nm_id].append(item)
         
+        # Вычисляем заказы за месяц для каждого nm_id для сортировки
+        nm_id_orders_30d = {}
+        for nm_id, items in grouped_by_nm_id.items():
+            stats = product_stats.get(nm_id, {})
+            nm_id_orders_30d[nm_id] = stats.get('orders_30d', 0)
+        
         # Формируем данные с строками -total
+        # Сортируем nm_id по заказам за месяц по убыванию (от большего к меньшему)
         data = []
-        for nm_id in sorted(grouped_by_nm_id.keys()):
+        for nm_id in sorted(grouped_by_nm_id.keys(), key=lambda x: nm_id_orders_30d.get(x, 0), reverse=True):
             items = grouped_by_nm_id[nm_id]
             stats = product_stats.get(nm_id, {})
             
@@ -778,6 +771,11 @@ class ExportService:
             avg_price = (total_price_weighted / total_quantity) if total_quantity > 0 else 0
             avg_discount = (total_discount_weighted / total_quantity) if total_quantity > 0 else 0
             
+            # Вычисляем "Запас на Дней": остаток / (заказы за месяц / 30)
+            orders_30d = stats.get('orders_30d', 0)
+            orders_per_day = orders_30d / 30.0 if orders_30d > 0 else 0
+            stock_days_total = (total_quantity / orders_per_day) if orders_per_day > 0 else 0
+            
             # Берем фото, название и бренд из первого элемента
             first_item = items[0]
             
@@ -791,36 +789,42 @@ class ExportService:
                 "quantity": total_quantity,                          # F - сумма по всем складам
                 "in_way_to_client": total_in_way_to_client,        # G - сумма по всем складам
                 "in_way_from_client": total_in_way_from_client,    # H - сумма по всем складам
-                "orders_buyouts_7d": f"{stats.get('orders_7d', 0)} / {stats.get('buyouts_7d', 0)}",  # I - статистика
-                "orders_buyouts_14d": f"{stats.get('orders_14d', 0)} / {stats.get('buyouts_14d', 0)}",  # J - статистика
-                "orders_buyouts_30d": f"{stats.get('orders_30d', 0)} / {stats.get('buyouts_30d', 0)}",  # K - статистика
-                "price": round(avg_price, 2),                        # L - средняя цена
-                "discount": round(avg_discount, 2),                  # M - средняя скидка
-                "rating": stats.get('rating'),                       # N - рейтинг
-                "buyout_percent": round(stats.get('buyout_percent', 0), 2),  # O - % выкуп
-                "return_percent": round(stats.get('return_percent', 0), 2),   # P - % возврат
+                "orders_buyouts_7d": stats.get('orders_7d', 0),        # I - Заказы за неделю
+                "orders_buyouts_14d": stats.get('orders_14d', 0),    # J - Заказы за 2 недели
+                "orders_buyouts_30d": stats.get('orders_30d', 0),     # K - Заказы за месяц
+                "stock_days": round(stock_days_total, 1),            # L - Запас на Дней
+                "price": round(avg_price, 2),                        # M - средняя цена
+                "discount": round(avg_discount, 2),                  # N - средняя скидка
+                "rating": stats.get('rating'),                       # O - рейтинг
+                "buyout_percent": round(stats.get('buyout_percent', 0), 2),  # P - % выкуп
+                "return_percent": round(stats.get('return_percent', 0), 2),   # Q - % возврат
                 "is_total_row": True  # Маркер для форматирования
             })
             
-            # Добавляем детальные строки для каждого склада (сортируем по названию склада)
-            for item in sorted(items, key=lambda x: x["warehouse_name"]):
+            # Добавляем детальные строки для каждого склада (сортируем по остатку по убыванию)
+            # Для сортировки используем 0 если quantity отсутствует или None
+            for item in sorted(items, key=lambda x: x.get("quantity", 0) or 0, reverse=True):
+                # Для остатков: если 0 или None, не пишем, оставляем пустым
+                quantity_value = item["quantity"] if (item.get("quantity", 0) or 0) > 0 else None
+                
                 data.append({
                     "photo": item["photo"],                          # A - photo (formula)
                     "nm_id": item["nm_id"],                          # B - nm_id (обычный)
                     "product_name": item["product_name"],            # C - product.name
                     "brand": item["brand"],                          # D - brand
                     "warehouse_name": item["warehouse_name"],        # E - warehouse_name
-                    "quantity": item["quantity"],                    # F - quantity
+                    "quantity": quantity_value,                      # F - quantity (пусто если 0)
                     "in_way_to_client": item["in_way_to_client"],   # G - in_way_to_client
                     "in_way_from_client": item["in_way_from_client"], # H - in_way_from_client
                     "orders_buyouts_7d": "",                         # I - пусто
                     "orders_buyouts_14d": "",                        # J - пусто
                     "orders_buyouts_30d": "",                        # K - пусто
-                    "price": item["price"],                          # L - price
-                    "discount": item["discount"],                    # M - discount
-                    "rating": None,                                  # N - пусто
-                    "buyout_percent": None,                          # O - пусто
-                    "return_percent": None,                          # P - пусто
+                    "stock_days": None,                               # L - пусто (только для -total)
+                    "price": item["price"],                           # M - price
+                    "discount": item["discount"],                    # N - discount
+                    "rating": None,                                  # O - пусто
+                    "buyout_percent": None,                          # P - пусто
+                    "return_percent": None,                          # Q - пусто
                     "is_total_row": False  # Обычная строка
                 })
         
@@ -1121,24 +1125,23 @@ class ExportService:
                     order.get('nm_id', ''),              # C - nm_id
                     order.get('product_name', ''),       # D - product.name
                     order.get('size', ''),               # E - size
-                    order.get('status', ''),             # F - status (quantity и price убраны)
-                    order.get('order_date', ''),         # G - order_date
-                    order.get('warehouse_from', ''),     # H - warehouse_from
-                    order.get('warehouse_to', ''),       # I - warehouse_to
-                    order.get('total_price', 0),         # J - total_price (перемещено после warehouse_to)
-                    order.get('commission_amount', 0),   # K - commission_amount
-                    order.get('customer_price', 0),      # L - customer_price (поменяли с spp_percent)
-                    order.get('spp_percent', 0),         # M - spp_percent (поменяли с customer_price)
-                    order.get('discount_percent', 0),    # N - discount_percent
-                    order.get('buyout_percent', 0),      # O - % выкуп
-                    order.get('rating')                  # P - Рейтинг
+                    order.get('order_date', ''),         # F - order_date
+                    order.get('warehouse_from', ''),     # G - warehouse_from
+                    order.get('warehouse_to', ''),       # H - warehouse_to
+                    order.get('total_price', 0),         # I - total_price
+                    order.get('commission_amount', 0),   # J - commission_amount
+                    order.get('customer_price', 0),      # K - customer_price
+                    order.get('spp_percent', 0),         # L - spp_percent
+                    order.get('discount_percent', 0),    # M - discount_percent
+                    order.get('buyout_percent', 0),      # N - % выкуп
+                    order.get('rating')                  # O - Рейтинг
                 ] for order in orders_data]
                 
                 # Очищаем старые данные
                 logger.info("Очищаем старые данные в листе Заказы...")
                 service.spreadsheets().values().clear(
                     spreadsheetId=spreadsheet_id,
-                    range='🛒 Заказы!A2:P'  # Изменено с A2:N на A2:P (добавлены колонки % выкуп и Рейтинг)
+                    range='🛒 Заказы!A2:O'  # Обновлено: удален столбец "Статус" (F), теперь A-O
                 ).execute()
                 
                 # Записываем новые данные
@@ -1155,30 +1158,41 @@ class ExportService:
             # Обновляем остатки
             if stocks_data:
                 logger.info("Формируем данные для листа Склад...")
-                values = [[
-                    stock.get('photo', ''),               # A - photo (formula)
-                    stock.get('nm_id', ''),               # B - nm_id
-                    stock.get('product_name', ''),        # C - product.name
-                    stock.get('brand', ''),               # D - brand
-                    stock.get('warehouse_name', ''),      # E - warehouse_name (size убран!)
-                    stock.get('quantity', 0),             # F - quantity (суммировано)
-                    stock.get('in_way_to_client', 0),     # G - in_way_to_client (суммировано)
-                    stock.get('in_way_from_client', 0),   # H - in_way_from_client (суммировано)
-                    stock.get('orders_buyouts_7d', ''),   # I - Заказ/Выкуп Неделя
-                    stock.get('orders_buyouts_14d', ''),  # J - Заказ/Выкуп 2 Недели
-                    stock.get('orders_buyouts_30d', ''),  # K - Заказ/Выкуп Месяц
-                    stock.get('price', 0),                # L - price
-                    stock.get('discount', 0),             # M - discount
-                    stock.get('rating'),                  # N - Рейтинг (last_updated убран!)
-                    stock.get('buyout_percent', 0),       # O - % выкуп
-                    stock.get('return_percent', 0)        # P - % возврат
-                ] for stock in stocks_data]
+                values = []
+                for stock in stocks_data:
+                    # Для остатков: если 0 или None и не -total строка, не пишем 0
+                    quantity = stock.get('quantity')
+                    if not stock.get('is_total_row', False) and (quantity == 0 or quantity is None):
+                        quantity = ''
+                    
+                    # Для stock_days: заполняем только для -total строк
+                    stock_days = stock.get('stock_days') if (stock.get('is_total_row', False) and stock.get('stock_days') is not None) else ''
+                    
+                    values.append([
+                        stock.get('photo', ''),               # A - photo (formula)
+                        stock.get('nm_id', ''),               # B - nm_id
+                        stock.get('product_name', ''),        # C - product.name
+                        stock.get('brand', ''),               # D - brand
+                        stock.get('warehouse_name', ''),      # E - warehouse_name
+                        quantity,                             # F - quantity (пусто если 0 и не -total)
+                        stock.get('in_way_to_client', 0),     # G - in_way_to_client
+                        stock.get('in_way_from_client', 0),   # H - in_way_from_client
+                        stock.get('orders_buyouts_7d', ''),    # I - Заказы за неделю
+                        stock.get('orders_buyouts_14d', ''),  # J - Заказы за 2 недели
+                        stock.get('orders_buyouts_30d', ''),  # K - Заказы за месяц
+                        stock_days,                            # L - Запас на Дней (только для -total)
+                        stock.get('price', 0),                # M - price
+                        stock.get('discount', 0),             # N - discount
+                        stock.get('rating'),                  # O - Рейтинг
+                        stock.get('buyout_percent'),          # P - % выкуп
+                        stock.get('return_percent')           # Q - % возврат
+                    ])
                 
                 # Очищаем старые данные
                 logger.info("Очищаем старые данные в листе Склад...")
                 service.spreadsheets().values().clear(
                     spreadsheetId=spreadsheet_id,
-                    range='📦 Склад!A2:P'  # Изменено с A2:Q на A2:P (убрана колонка last_updated)
+                    range='📦 Склад!A2:Q'  # Обновлено: добавлена колонка "Запас на Дней" (L)
                 ).execute()
                 
                 # Записываем новые данные
@@ -1197,12 +1211,10 @@ class ExportService:
                     self._format_total_rows(service, spreadsheet_id, stocks_data)
                     
                     # Группируем строки по nm_id (колонка B)
-                    logger.info("Группируем строки по nm_id в листе '📦 Склад'...")
                     self._group_stocks_by_nm_id(service, spreadsheet_id)
             
             # Обновляем отзывы
             if reviews_data:
-                logger.info("Формируем данные для листа Отзывы...")
                 values = [[
                     review.get('photo', ''),                # A - photo (formula)
                     review.get('review_id', ''),            # B - review_id
@@ -1221,7 +1233,6 @@ class ExportService:
                 ] for review in reviews_data]
                 
                 # Очищаем старые данные
-                logger.info("Очищаем старые данные в листе Отзывы...")
                 service.spreadsheets().values().clear(
                     spreadsheetId=spreadsheet_id,
                     range='⭐ Отзывы!A2:N'
@@ -1229,14 +1240,12 @@ class ExportService:
                 
                 # Записываем новые данные
                 if values:
-                    logger.info(f"Записываем {len(values)} строк в лист Отзывы...")
                     service.spreadsheets().values().update(
                         spreadsheetId=spreadsheet_id,
                         range='⭐ Отзывы!A2',
                         valueInputOption='USER_ENTERED',
                         body={'values': values}
                     ).execute()
-                    logger.info("Лист Отзывы успешно обновлен")
             
             logger.info(f"Таблица {spreadsheet_id} успешно обновлена для кабинета {cabinet_id}")
             return True

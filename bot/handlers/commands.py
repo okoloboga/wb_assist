@@ -6,7 +6,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from aiogram import Router, F
-from aiogram.types import CallbackQuery, User, InlineKeyboardMarkup, InlineKeyboardButton, Message
+from aiogram.types import CallbackQuery, User, InlineKeyboardMarkup, InlineKeyboardButton, Message, FSInputFile
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from utils.formatters import safe_edit_message, safe_send_message, handle_telegram_errors
@@ -594,7 +594,32 @@ async def handle_change_spreadsheet(callback: CallbackQuery, state: FSMContext):
             [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_export")]
         ])
         
-        await safe_edit_message(callback=callback, text=text, reply_markup=kb, user_id=callback.from_user.id)
+        # Отправляем фото с текстом как подписью
+        try:
+            photo1_path = Path(__file__).parent.parent / "assets" / "1.png"
+            photo1 = FSInputFile(photo1_path)
+            
+            # Удаляем предыдущее сообщение и отправляем фото
+            await callback.message.delete()
+            
+            # Отправляем фото с текстом как подписью
+            await callback.message.bot.send_photo(
+                chat_id=callback.from_user.id,
+                photo=photo1,
+                caption=text,
+                reply_markup=kb
+            )
+                
+        except Exception as e:
+            logger.error(f"Ошибка отправки фото: {e}")
+            # Фолбэк - отправляем обычное сообщение
+            await safe_send_message(
+                message=callback.message,
+                text=text,
+                reply_markup=kb,
+                user_id=callback.from_user.id
+            )
+        
         await callback.answer()
         
     except Exception as e:
@@ -734,11 +759,33 @@ async def handle_manual_export_update(callback: CallbackQuery):
         response = await bot_api_client.update_cabinet_spreadsheet(cabinet_id)
         
         if response.success:
-            await safe_edit_message(
-                callback=callback,
-                text="✅ Таблица успешно обновлена!\n\nДанные обновлены и готовы к использованию.",
-                user_id=user_id
+            text = (
+                "✅ Таблица успешно обновлена!\n\n"
+                "Данные обновлены и готовы к использованию.\n\n"
+                "ℹ️ Для отображения изображений - разрешите доступ третьим сторонам. "
+                "Третья сторона - Wildberries, откуда таблица получает фото товара"
             )
+            
+            # Отправляем фото с текстом
+            try:
+                photo3_path = Path(__file__).parent.parent / "assets" / "3.png"
+                photo3 = FSInputFile(photo3_path)
+                
+                # Удаляем предыдущее сообщение и отправляем фото с текстом
+                await callback.message.delete()
+                await callback.message.bot.send_photo(
+                    chat_id=callback.from_user.id,
+                    photo=photo3,
+                    caption=text
+                )
+            except Exception as e:
+                logger.error(f"Ошибка отправки фото: {e}")
+                # Фолбэк - отправляем обычное сообщение
+                await safe_edit_message(
+                    callback=callback,
+                    text=text,
+                    user_id=user_id
+                )
         else:
             await safe_edit_message(
                 callback=callback,
