@@ -21,6 +21,9 @@ async def register_user(message: Message, state: FSMContext):
     Обрабатывает команду /start, собирает данные пользователя,
     регистрирует на сервере и проверяет наличие WB API ключа.
     """
+    # Очищаем состояние FSM при перезапуске бота
+    await state.clear()
+    
     first_name = message.from_user.first_name or ""
     user_id = message.from_user.id
     

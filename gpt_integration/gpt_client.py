@@ -129,6 +129,48 @@ class GPTClient:
                 break
             except Exception as e:
                 last_error = e
+                # Check for regional restriction error (403)
+                error_str = str(e)
+                error_code = None
+                error_message = None
+                
+                # Try to extract error details from OpenAI exception
+                if hasattr(e, 'response') and hasattr(e.response, 'json'):
+                    try:
+                        error_data = e.response.json()
+                        if isinstance(error_data, dict) and 'error' in error_data:
+                            error_info = error_data['error']
+                            error_code = error_info.get('code')
+                            error_message = error_info.get('message', '')
+                    except Exception:
+                        pass
+                
+                # Also check status code
+                status_code = None
+                if hasattr(e, 'status_code'):
+                    status_code = e.status_code
+                elif hasattr(e, 'response') and hasattr(e.response, 'status_code'):
+                    status_code = e.response.status_code
+                
+                # If it's a regional restriction, don't retry - it won't help
+                is_regional_error = (
+                    status_code == 403 and 
+                    (error_code == 'unsupported_country_region_territory' or 
+                     'unsupported_country' in error_str.lower() or
+                     'region' in error_str.lower() and 'not supported' in error_str.lower())
+                )
+                
+                if is_regional_error:
+                    # Return immediately with helpful message
+                    return (
+                        f"ERROR: LLM request failed: OpenAI API is not available in your region.\n"
+                        f"Error code: 403 - {error_code or 'unsupported_country_region_territory'}\n"
+                        f"Message: {error_message or 'Country, region, or territory not supported'}\n\n"
+                        f"Решение: Настройте OPENAI_BASE_URL для использования альтернативного API endpoint "
+                        f"(например, прокси-сервер или OpenAI-совместимый провайдер)."
+                    )
+                
+                # For other errors, retry if attempts remain
                 if attempt < self.max_retries:
                     time.sleep(delay_ms / 1000.0)
                     delay_ms = int(delay_ms * self.retry_backoff)
@@ -137,5 +179,19 @@ class GPTClient:
                 break
 
         if last_error is not None:
-            return f"ERROR: LLM request failed after {self.max_retries + 1} attempts: {last_error}"
+            # Format error message
+            error_str = str(last_error)
+            # Try to extract error details
+            if hasattr(last_error, 'response') and hasattr(last_error.response, 'json'):
+                try:
+                    error_data = last_error.response.json()
+                    if isinstance(error_data, dict) and 'error' in error_data:
+                        error_info = error_data['error']
+                        error_code = error_info.get('code', '')
+                        error_message = error_info.get('message', '')
+                        if error_code or error_message:
+                            return f"ERROR: LLM request failed after {self.max_retries + 1} attempts: Error code: {error_code} - {error_message}"
+                except Exception:
+                    pass
+            return f"ERROR: LLM request failed after {self.max_retries + 1} attempts: {error_str}"
         return "ERROR: LLM returned empty response after retries"

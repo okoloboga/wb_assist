@@ -46,3 +46,11 @@ class GPTStates(StatesGroup):
 class ExportStates(StatesGroup):
     """Состояния для экспорта в Google Sheets"""
     waiting_for_spreadsheet_url = State()
+
+
+class CardGenerationStates(StatesGroup):
+    """Состояния для генерации карточек товаров"""
+    waiting_for_photo = State()
+    waiting_for_characteristics = State()
+    waiting_for_audience = State()
+    waiting_for_selling_points = State()

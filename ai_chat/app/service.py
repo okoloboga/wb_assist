@@ -284,9 +284,47 @@ async def send_message(
     messages.append({"role": "user", "content": message})
     
     # Stage 1: Call internal agent (LLM + tools in next stage)
-    agent_result = await run_agent(messages)
-    response_text = agent_result.get("final", "")
-    tokens_used = agent_result.get("tokens_used", 0)
+    try:
+        agent_result = await run_agent(messages)
+        response_text = agent_result.get("final", "")
+        tokens_used = agent_result.get("tokens_used", 0)
+    except RuntimeError as e:
+        # Handle regional restriction and other runtime errors
+        error_msg = str(e)
+        if "недоступен в вашем регионе" in error_msg or "unsupported_country" in error_msg.lower():
+            logger.error(f"❌ Regional restriction error for telegram_id={telegram_id}: {error_msg}")
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "error": "OpenAI API unavailable",
+                    "message": (
+                        "⚠️ OpenAI API недоступен в вашем регионе.\n\n"
+                        "Для решения проблемы необходимо настроить альтернативный API endpoint:\n"
+                        "1. Используйте прокси-сервер для OpenAI API\n"
+                        "2. Или используйте OpenAI-совместимый провайдер (Azure OpenAI, Anyscale и др.)\n"
+                        "3. Установите переменную окружения OPENAI_BASE_URL с адресом альтернативного endpoint\n\n"
+                        f"Технические детали: {error_msg}"
+                    )
+                }
+            )
+        else:
+            logger.error(f"❌ Runtime error for telegram_id={telegram_id}: {error_msg}")
+            raise HTTPException(
+                status_code=500,
+                detail={
+                    "error": "LLM request failed",
+                    "message": f"⚠️ Ошибка запроса к LLM: {error_msg}"
+                }
+            )
+    except Exception as e:
+        logger.error(f"❌ Unexpected error for telegram_id={telegram_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": "Internal server error",
+                "message": "⚠️ Произошла внутренняя ошибка. Пожалуйста, повторите попытку позже."
+            }
+        )
     
     # Save to database
     crud.save_chat_request(

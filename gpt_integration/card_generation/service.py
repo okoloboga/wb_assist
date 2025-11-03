@@ -1,0 +1,81 @@
+"""
+Card Generation service endpoints.
+"""
+
+import logging
+from typing import Dict, Any
+
+from gpt_integration.gpt_client import GPTClient
+from gpt_integration.card_generation.prompt_generator import (
+    create_card_prompt,
+    format_card_response,
+)
+
+logger = logging.getLogger(__name__)
+
+
+def generate_card(
+    characteristics: Dict[str, str],
+    target_audience: str,
+    selling_points: str
+) -> Dict[str, Any]:
+    """
+    Генерация карточки товара через GPT.
+    
+    Args:
+        characteristics: Характеристики товара (name, brand, category)
+        target_audience: Целевая аудитория
+        selling_points: Уникальные преимущества
+        
+    Returns:
+        Dict с сгенерированной карточкой
+    """
+    try:
+        logger.info(f"🎨 Starting card generation for: {characteristics.get('name', 'Unknown')}")
+        
+        # Формируем промпт для GPT
+        prompt = create_card_prompt(
+            characteristics=characteristics,
+            target_audience=target_audience,
+            selling_points=selling_points
+        )
+        
+        # Создаем системное сообщение для GPT
+        system_message = (
+            "Ты — эксперт по созданию карточек товаров для Wildberries. "
+            "Ты умеешь создавать привлекательные, SEO-оптимизированные описания товаров, "
+            "которые помогают продавцам увеличить продажи на маркетплейсе. "
+            "Твои описания точные, убедительные и ориентированы на целевую аудиторию."
+        )
+        
+        # Подготавливаем сообщения для GPT
+        messages = [
+            {"role": "system", "content": system_message},
+            {"role": "user", "content": prompt}
+        ]
+        
+        # Вызываем GPT
+        client = GPTClient.from_env()
+        logger.info(f"🤖 Calling GPT with model={client.model}, max_tokens={client.max_tokens}")
+        
+        response_text = client.complete_messages(messages)
+        
+        logger.info(f"✅ GPT response received, length={len(response_text)} chars")
+        
+        # Форматируем ответ
+        card_text = format_card_response(response_text)
+        
+        logger.info(f"✅ Card generated successfully")
+        
+        return {
+            "status": "success",
+            "card": card_text
+        }
+    
+    except Exception as e:
+        logger.error(f"❌ Card generation failed: {e}", exc_info=True)
+        return {
+            "status": "error",
+            "message": f"Ошибка генерации карточки: {str(e)}"
+        }
+

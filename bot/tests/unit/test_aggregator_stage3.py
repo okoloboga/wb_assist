@@ -1,6 +1,6 @@
 from typing import Any, Dict
 
-from gpt_integration.aggregator import aggregate, build_from_sources
+from gpt_integration.analysis.aggregator import aggregate, build_from_sources
 
 
 def test_aggregate_includes_known_keys_and_extra():

@@ -2,7 +2,7 @@ import json
 from typing import Any, Dict, List, Optional
 
 from gpt_integration.gpt_client import GPTClient
-from gpt_integration.template_loader import (
+from gpt_integration.analysis.template_loader import (
     get_system_prompt,
     get_tasks,
     get_output_json_schema,
@@ -106,25 +106,46 @@ def _safe_json_extract(text: str) -> Optional[Dict[str, Any]]:
 
 
 def _prepare_telegram_from_text(text: str) -> Dict[str, Any]:
-    escaped = escape_markdown_v2(text)
-    chunks = split_telegram_message(escaped)
+    # Remove MarkdownV2 escaping if present (bot sends without parse_mode)
+    # This handles cases where LLM accidentally escaped text
+    unescaped = _unescape_markdown_v2(text)
+    chunks = split_telegram_message(unescaped)
     character_count = sum(len(c) for c in chunks)
     return {"chunks": chunks, "character_count": character_count}
+
+
+def _unescape_markdown_v2(text: str) -> str:
+    """Remove MarkdownV2 escaping characters."""
+    if not text:
+        return ""
+    # Remove backslashes before special characters
+    import re
+    # Pattern matches backslash followed by special MarkdownV2 characters
+    specials = r"_\[\]()~`>#+-=|{}.!*\\"
+    # Replace \X with X (where X is a special character)
+    return re.sub(r'\\([' + re.escape(specials) + r'])', r'\1', text)
 
 
 def _normalize_telegram(block: Any) -> Dict[str, Any]:
     if isinstance(block, dict):
         chunks = block.get("chunks") or []
         if isinstance(chunks, list) and all(isinstance(c, str) for c in chunks) and chunks:
-            escaped_chunks = [escape_markdown_v2(c) for c in chunks]
-            character_count = sum(len(c) for c in escaped_chunks)
-            return {"chunks": escaped_chunks, "character_count": character_count}
+            # Remove MarkdownV2 escaping since bot sends without parse_mode
+            unescaped_chunks = [_unescape_markdown_v2(c) for c in chunks]
+            # Split each chunk if it's too long, then flatten
+            final_chunks = []
+            for chunk in unescaped_chunks:
+                split_chunks = split_telegram_message(chunk)
+                final_chunks.extend(split_chunks)
+            character_count = sum(len(c) for c in final_chunks)
+            return {"chunks": final_chunks, "character_count": character_count}
         
         # Check for mdv2 field (MarkdownV2 text from OpenAI)
         mdv2 = block.get("mdv2")
         if isinstance(mdv2, str) and mdv2.strip():
-            # mdv2 is already escaped markdown, just split into chunks
-            chunks = split_telegram_message(mdv2)
+            # Remove escaping and split into chunks
+            unescaped = _unescape_markdown_v2(mdv2)
+            chunks = split_telegram_message(unescaped)
             character_count = sum(len(c) for c in chunks)
             return {"chunks": chunks, "character_count": character_count}
         
@@ -196,9 +217,21 @@ def run_analysis(
 
     # If still empty, and we have an LLM error, return a readable warning for TG
     if not telegram["chunks"] and result_error:
-        telegram = _prepare_telegram_from_text(
-            "⚠️ Ошибка запроса к LLM. Пожалуйста, повторите попытку позже.\n" + result_error
-        )
+        # Check if it's a regional restriction error
+        error_text = result_error
+        if "unsupported_country_region_territory" in error_text or "не available in your region" in error_text.lower():
+            error_text = (
+                "⚠️ OpenAI API недоступен в вашем регионе.\n\n"
+                "Для решения проблемы необходимо настроить альтернативный API endpoint:\n"
+                "1. Используйте прокси-сервер для OpenAI API\n"
+                "2. Или используйте OpenAI-совместимый провайдер (например, Azure OpenAI, Anyscale и др.)\n"
+                "3. Установите переменную окружения OPENAI_BASE_URL с адресом альтернативного endpoint\n\n"
+                f"Технические детали:\n{result_error}"
+            )
+        else:
+            error_text = f"⚠️ Ошибка запроса к LLM. Пожалуйста, повторите попытку позже.\n\n{result_error}"
+        
+        telegram = _prepare_telegram_from_text(error_text)
 
     sheets = parsed.get("sheets") if isinstance(parsed, dict) else None
     if not isinstance(sheets, dict):
