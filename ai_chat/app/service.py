@@ -27,6 +27,8 @@ from .schemas import (
 )
 from .crud import AIChatCRUD, DAILY_LIMIT
 from .prompts import SYSTEM_PROMPT
+from ..agent import run_agent
+from ..tools.db_pool import init_pool as init_asyncpg_pool, close_pool as close_asyncpg_pool
 
 
 # ============================================================================
@@ -75,12 +77,23 @@ async def lifespan(app: FastAPI):
             logger.error(f"❌ Failed to create database tables: {e}")
             raise
     
+    # Initialize asyncpg pool if Postgres available
+    try:
+        await init_asyncpg_pool()
+        logger.info("✅ asyncpg pool initialized (if Postgres configured)")
+    except Exception as e:
+        logger.warning(f"⚠️  asyncpg pool not initialized: {e}")
+
     logger.info(f"🎯 Service ready on port {AI_CHAT_PORT}")
     
     yield
     
     # Shutdown
     logger.info("👋 Shutting down AI Chat Service...")
+    try:
+        await close_asyncpg_pool()
+    except Exception:
+        pass
 
 
 # ============================================================================
@@ -270,8 +283,10 @@ async def send_message(
     # Add user message
     messages.append({"role": "user", "content": message})
     
-    # Call OpenAI
-    response_text, tokens_used = _call_openai(messages)
+    # Stage 1: Call internal agent (LLM + tools in next stage)
+    agent_result = await run_agent(messages)
+    response_text = agent_result.get("final", "")
+    tokens_used = agent_result.get("tokens_used", 0)
     
     # Save to database
     crud.save_chat_request(
