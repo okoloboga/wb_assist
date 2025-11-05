@@ -17,40 +17,18 @@ router = Router()
 
 @router.callback_query(F.data == "stock")
 async def show_stock_menu(callback: CallbackQuery):
-    """Показать меню склада с реальными данными"""
-    response = await bot_api_client.get_critical_stocks(
-        user_id=callback.from_user.id,
-        limit=20,
-        offset=0
+    """Показать меню склада с отчетом по динамике"""
+    response = await bot_api_client.get_dynamic_critical_stocks(
+        user_id=callback.from_user.id
     )
     
     if response.success:
-        # Используем новое поле stocks из response
-        stocks_data = response.stocks or {}
-        critical_products = stocks_data.get("critical_products", [])
-        zero_products = stocks_data.get("zero_products", [])
-        summary = stocks_data.get("summary", {})
-        
-        if critical_products or zero_products:
-            keyboard = create_stocks_keyboard(
-                has_more=len(critical_products) + len(zero_products) >= 20,
-                offset=0
-            )
-            
-            await safe_edit_message(
-                callback=callback,
-                text=response.telegram_text or "📦 Склад - Критичные остатки",
-                reply_markup=keyboard,
-                user_id=callback.from_user.id
-            )
-        else:
-            await safe_edit_message(
-                callback=callback,
-                text="✅ Все остатки в норме!\n\n"
-                     "Критичных остатков не обнаружено.",
-                reply_markup=wb_menu_keyboard(),
-                user_id=callback.from_user.id
-            )
+        await safe_edit_message(
+            callback=callback,
+            text=response.telegram_text or "⚠️ Критичные остатки",
+            reply_markup=create_stocks_keyboard(),
+            user_id=callback.from_user.id
+        )
     else:
         error_message = format_error_message(response.error, response.status_code)
         await safe_edit_message(

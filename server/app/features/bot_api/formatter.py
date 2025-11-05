@@ -169,6 +169,75 @@ class BotMessageFormatter:
             logger.error(f"Ошибка форматирования критичных остатков: {e}")
             return "❌ Ошибка форматирования данных остатков"
 
+    def format_dynamic_critical_stocks(self, data: Dict[str, Any]) -> str:
+        """Форматирование сообщения о критичных остатках на основе динамики"""
+        try:
+            at_risk_positions = data.get("at_risk_positions", [])
+            summary = data.get("summary", {})
+            recommendations = data.get("recommendations", [])
+            
+            message = "⚠️ КРИТИЧНЫЕ ОСТАТКИ\n\n"
+            
+            if not at_risk_positions:
+                message += "✅ Все остатки в норме!\n\n"
+                message += "Критичных остатков не обнаружено."
+                return message
+            
+            # Добавляем сводку
+            message += f"""📊 СВОДКА
+• Всего позиций в риске: {summary.get('total_positions', 0)}
+
+"""
+            
+            # Формируем список позиций с учетом лимита
+            max_positions = 50  # Максимальное количество позиций для отображения
+            positions_count = 0
+            remaining_length = self.max_length - len(message) - 200  # Резерв для завершения
+            
+            for position in at_risk_positions[:max_positions]:
+                # Формируем строку для позиции
+                nm_id = position.get("nm_id", "N/A")
+                name = position.get("name", "Неизвестно")
+                brand = position.get("brand", "")
+                warehouse_name = position.get("warehouse_name", "Неизвестный склад")
+                size = position.get("size", "N/A")
+                current_stock = position.get("current_stock", 0)
+                orders_last_24h = position.get("orders_last_24h", 0)
+                days_remaining = position.get("days_remaining", 0)
+                
+                # Формируем строку позиции
+                position_str = f"""⚠️ {name}"""
+                if brand:
+                    position_str += f" ({brand})"
+                position_str += f"""
+   🆔 {nm_id} | 📦 {warehouse_name} | 📏 {size}
+   📊 Остаток: {current_stock} шт | Заказов за 24ч: {orders_last_24h} шт
+   ⏰ Прогноз: {days_remaining:.1f} дн.
+
+"""
+                
+                # Проверяем, не превысим ли лимит
+                if len(message) + len(position_str) > remaining_length:
+                    message += f"\n... и еще {len(at_risk_positions) - positions_count} позиций"
+                    break
+                
+                message += position_str
+                positions_count += 1
+            
+            # Добавляем рекомендации
+            if recommendations:
+                message += "\n💡 РЕКОМЕНДАЦИИ\n"
+                for rec in recommendations[:3]:
+                    if rec:  # Пропускаем пустые строки
+                        message += f"• {rec}\n"
+            
+            # Обрезаем до лимита
+            return self._truncate_message(message)
+            
+        except Exception as e:
+            logger.error(f"Ошибка форматирования критичных остатков по динамике: {e}")
+            return "❌ Ошибка форматирования данных остатков"
+
     def format_reviews(self, data: Dict[str, Any]) -> str:
         """Форматирование сообщения об отзывах"""
         try:

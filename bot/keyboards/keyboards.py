@@ -52,10 +52,6 @@ def analytics_keyboard() -> InlineKeyboardMarkup:
 def stock_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text="📋 Остатки", callback_data="stock_list"),
-            InlineKeyboardButton(text="⏳ Прогноз остатков", callback_data="stock_forecast")
-        ],
-        [
             InlineKeyboardButton(text="🔔 Уведомления", callback_data="stock_notify"),
             InlineKeyboardButton(text="📤 Выгрузка в Google", callback_data="export_stock")
         ],

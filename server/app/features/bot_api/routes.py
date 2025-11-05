@@ -19,7 +19,7 @@ from app.features.notifications.schemas import (
 )
 from .service import BotAPIService
 from .schemas import (
-    DashboardResponse, OrdersResponse, CriticalStocksAPIResponse, 
+    DashboardResponse, OrdersResponse, CriticalStocksAPIResponse, DynamicCriticalStocksAPIResponse,
     ReviewsSummaryAPIResponse, AnalyticsSalesAPIResponse, SyncResponse, SyncStatusResponse,
     OrderDetailResponse, CabinetStatusResponse, CabinetConnectResponse, CabinetConnectRequest
 )
@@ -138,6 +138,40 @@ async def get_critical_stocks(
         raise
     except Exception as e:
         logger.error(f"Ошибка получения критичных остатков для telegram_id {telegram_id}: {e}")
+        raise HTTPException(status_code=500, detail="Ошибка сервера")
+
+
+@router.get("/stocks/dynamic-critical", response_model=DynamicCriticalStocksAPIResponse)
+async def get_dynamic_critical_stocks(
+    telegram_id: int = Query(..., description="Telegram ID пользователя"),
+    bot_service: BotAPIService = Depends(get_bot_service)
+):
+    """Получение критичных остатков на основе динамики затрат"""
+    try:
+        cabinet = await bot_service.get_user_cabinet(telegram_id)
+        if not cabinet:
+            raise HTTPException(status_code=404, detail="Кабинет WB не найден")
+        
+        # Получаем пользователя
+        user = await bot_service.get_user_by_telegram_id(telegram_id)
+        if not user:
+            raise HTTPException(status_code=500, detail="Ошибка создания пользователя")
+        
+        result = await bot_service.get_dynamic_critical_stocks(user)
+        
+        if not result["success"]:
+            raise HTTPException(status_code=500, detail=result["error"])
+        
+        return DynamicCriticalStocksAPIResponse(
+            status="success",
+            stocks=result["data"],
+            telegram_text=result["telegram_text"]
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Ошибка получения критичных остатков по динамике для telegram_id {telegram_id}: {e}")
         raise HTTPException(status_code=500, detail="Ошибка сервера")
 
 

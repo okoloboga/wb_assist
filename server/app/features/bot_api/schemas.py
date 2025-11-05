@@ -459,6 +459,40 @@ class CriticalStocksAPIResponse(BaseModel):
     telegram_text: Optional[str] = None
 
 
+class AtRiskPosition(BaseModel):
+    """Позиция с риском по динамике"""
+    nm_id: int
+    name: str
+    brand: Optional[str] = None
+    image_url: Optional[str] = None
+    warehouse_name: str
+    size: str
+    current_stock: int
+    orders_last_24h: int
+    days_remaining: float
+    risk_level: Optional[str] = None
+
+
+class DynamicStocksSummary(BaseModel):
+    """Сводка по динамическим остаткам"""
+    total_positions: int
+
+
+class DynamicCriticalStocksResponse(BaseModel):
+    """Ответ с динамическими критичными остатками"""
+    at_risk_positions: List[AtRiskPosition]
+    summary: DynamicStocksSummary
+    recommendations: List[str]
+
+
+class DynamicCriticalStocksAPIResponse(BaseModel):
+    """Ответ stocks/dynamic-critical endpoint"""
+    status: str
+    message: Optional[str] = None
+    stocks: Optional[DynamicCriticalStocksResponse] = None
+    telegram_text: Optional[str] = None
+
+
 class ReviewsSummaryAPIResponse(BaseModel):
     """Ответ reviews/summary endpoint"""
     status: str

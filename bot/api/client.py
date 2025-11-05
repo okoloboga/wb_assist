@@ -381,6 +381,15 @@ class BotAPIClient:
         params = {"telegram_id": user_id, "limit": limit, "offset": offset}
         return await self._make_request_with_retry("GET", "/stocks/critical", params=params)
 
+    # Остатки и товары
+    async def get_dynamic_critical_stocks(
+        self, 
+        user_id: int
+    ) -> BotAPIResponse:
+        """Получить критичные остатки на основе динамики затрат"""
+        params = {"telegram_id": user_id}
+        return await self._make_request_with_retry("GET", "/stocks/dynamic-critical", params=params)
+
     # Отзывы и аналитика
     async def get_reviews_summary(
         self, 

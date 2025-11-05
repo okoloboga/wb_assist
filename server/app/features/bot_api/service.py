@@ -12,6 +12,7 @@ from datetime import datetime, timezone, timedelta
 from app.features.wb_api.cache_manager import WBCacheManager
 from app.features.wb_api.sync_service import WBSyncService
 from app.utils.timezone import TimezoneUtils
+from app.features.stock_alerts.stock_analyzer import DynamicStockAnalyzer
 from .formatter import BotMessageFormatter
 
 logger = logging.getLogger(__name__)
@@ -583,6 +584,109 @@ class BotAPIService:
             return {
                 "success": False,
                 "error": str(e)
+            }
+
+    async def get_dynamic_critical_stocks(self, user) -> Dict[str, Any]:
+        """Получение критичных остатков на основе динамики затрат"""
+        try:
+            # Получаем telegram_id из объекта user
+            telegram_id = user.telegram_id if hasattr(user, 'telegram_id') else user["telegram_id"]
+            cabinet = await self.get_user_cabinet(telegram_id)
+            if not cabinet:
+                return {
+                    "success": False,
+                    "error": "Кабинет WB не найден"
+                }
+            
+            # Получаем данные из БД на основе динамики
+            stocks_data = await self._fetch_dynamic_critical_stocks_from_db(cabinet)
+            
+            # Форматируем Telegram сообщение (с учетом лимита 4096 символов)
+            telegram_text = self.formatter.format_dynamic_critical_stocks(stocks_data)
+            
+            return {
+                "success": True,
+                "data": stocks_data,
+                "telegram_text": telegram_text,
+                # Единообразные поля для всех эндпоинтов
+                "orders": [],
+                "pagination": {},
+                "statistics": {},
+                "stocks": stocks_data,
+                "reviews": {},
+                "analytics": {},
+                "order": None
+            }
+            
+        except Exception as e:
+            logger.error(f"Ошибка получения критичных остатков по динамике: {e}")
+            return {
+                "success": False,
+                "error": str(e)
+            }
+
+    async def _fetch_dynamic_critical_stocks_from_db(self, cabinet: WBCabinet) -> Dict[str, Any]:
+        """Получение критичных остатков на основе динамики затрат (days_remaining <= 1)"""
+        try:
+            # Используем DynamicStockAnalyzer для анализа остатков
+            analyzer = DynamicStockAnalyzer(self.db)
+            at_risk_positions = await analyzer.analyze_stock_positions(cabinet.id)
+            
+            logger.info(f"Получено {len(at_risk_positions)} позиций в риске из analyze_stock_positions")
+            
+            # Логируем примеры позиций для диагностики
+            if at_risk_positions:
+                sample = at_risk_positions[:3]
+                for pos in sample:
+                    logger.info(f"Пример позиции: nm_id={pos.get('nm_id')}, "
+                              f"stock={pos.get('current_stock')}, "
+                              f"orders_24h={pos.get('orders_last_24h')}, "
+                              f"days_remaining={pos.get('days_remaining')}")
+            
+            # Фильтруем только позиции с days_remaining <= 1
+            filtered_positions = []
+            for pos in at_risk_positions:
+                days_remaining = pos.get("days_remaining", float('inf'))
+                if days_remaining <= 1.0:
+                    filtered_positions.append(pos)
+                else:
+                    logger.debug(f"Позиция {pos.get('nm_id')} отфильтрована: days_remaining={days_remaining} > 1.0")
+            
+            logger.info(f"После фильтрации days_remaining <= 1.0: {len(filtered_positions)} позиций")
+            
+            if not filtered_positions:
+                return {
+                    "at_risk_positions": [],
+                    "summary": {
+                        "total_positions": 0
+                    },
+                    "recommendations": ["✅ Все остатки в норме!"]
+                }
+            
+            # Сортируем по дням остатка (от меньшего к большему)
+            filtered_positions.sort(key=lambda pos: pos.get("days_remaining", float('inf')))
+            
+            return {
+                "at_risk_positions": filtered_positions,
+                "summary": {
+                    "total_positions": len(filtered_positions)
+                },
+                "recommendations": [
+                    f"Срочно пополнить {len(filtered_positions)} позиций (остаток закончится в течение 1 дня)"
+                ] if filtered_positions else []
+            }
+            
+        except Exception as e:
+            logger.error(f"Ошибка получения критичных остатков по динамике: {e}")
+            return {
+                "at_risk_positions": [],
+                "summary": {
+                    "total_positions": 0,
+                    "high_risk": 0,
+                    "medium_risk": 0,
+                    "low_risk": 0
+                },
+                "recommendations": ["Ошибка получения данных"]
             }
 
     async def get_reviews_summary(self, user, limit: int = 10, offset: int = 0, rating_threshold: Optional[int] = None) -> Dict[str, Any]:
