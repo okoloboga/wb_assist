@@ -60,6 +60,32 @@ def generate_card(
         
         response_text = client.complete_messages(messages)
         
+        # Проверяем, не вернулась ли ошибка (начинается с "ERROR:")
+        if response_text.startswith("ERROR:"):
+            error_msg = response_text.replace("ERROR:", "").strip()
+            
+            # Проверяем на ошибку региона
+            if "unsupported_country_region_territory" in error_msg or "not available in your region" in error_msg.lower():
+                logger.error(f"❌ Regional restriction error: {error_msg}")
+                return {
+                    "status": "error",
+                    "error_type": "regional_restriction",
+                    "message": (
+                        "❌ OpenAI API недоступен в вашем регионе.\n\n"
+                        "🔧 Решение:\n"
+                        "Обратитесь к администратору для настройки альтернативного API endpoint "
+                        "(через OPENAI_BASE_URL).\n\n"
+                        "Это может быть прокси-сервер или OpenAI-совместимый провайдер."
+                    )
+                }
+            
+            # Другие ошибки
+            logger.error(f"❌ GPT error: {error_msg}")
+            return {
+                "status": "error",
+                "message": f"Ошибка при обращении к GPT: {error_msg}"
+            }
+        
         logger.info(f"✅ GPT response received, length={len(response_text)} chars")
         
         # Форматируем ответ
@@ -74,8 +100,24 @@ def generate_card(
     
     except Exception as e:
         logger.error(f"❌ Card generation failed: {e}", exc_info=True)
+        error_str = str(e)
+        
+        # Проверяем на ошибку региона в исключении
+        if "unsupported_country_region_territory" in error_str or "not available in your region" in error_str.lower():
+            return {
+                "status": "error",
+                "error_type": "regional_restriction",
+                "message": (
+                    "❌ OpenAI API недоступен в вашем регионе.\n\n"
+                    "🔧 Решение:\n"
+                    "Обратитесь к администратору для настройки альтернативного API endpoint "
+                    "(через OPENAI_BASE_URL).\n\n"
+                    "Это может быть прокси-сервер или OpenAI-совместимый провайдер."
+                )
+            }
+        
         return {
             "status": "error",
-            "message": f"Ошибка генерации карточки: {str(e)}"
+            "message": f"Ошибка генерации карточки: {error_str}"
         }
 

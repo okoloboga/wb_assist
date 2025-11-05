@@ -11,7 +11,7 @@ import re
 from typing import Optional, Dict, Any
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
-from aiogram.filters import StateFilter, Command, CommandStart
+from aiogram.filters import StateFilter, CommandStart
 from aiogram.fsm.context import FSMContext
 import aiohttp
 
@@ -158,7 +158,7 @@ async def process_card_photo_error(message: Message, state: FSMContext):
 # Обработка характеристик
 # ============================================================================
 
-@router.message(StateFilter(CardGenerationStates.waiting_for_characteristics), F.text, ~Command())
+@router.message(StateFilter(CardGenerationStates.waiting_for_characteristics), F.text)
 @handle_telegram_errors
 async def process_characteristics(message: Message, state: FSMContext):
     """Обработка ключевых характеристик - поочередно запрашиваем каждое поле."""
@@ -271,7 +271,7 @@ async def restart_flow_on_start(message: Message, state: FSMContext):
 # Обработка целевой аудитории
 # ============================================================================
 
-@router.message(StateFilter(CardGenerationStates.waiting_for_audience), F.text, ~Command())
+@router.message(StateFilter(CardGenerationStates.waiting_for_audience), F.text)
 @handle_telegram_errors
 async def process_target_audience(message: Message, state: FSMContext):
     """Обработка описания целевой аудитории."""
@@ -290,7 +290,7 @@ async def process_target_audience(message: Message, state: FSMContext):
     await safe_send_message(
         message,
         "✅ <b>Целевая аудитория сохранена!</b>\n\n"
-        "⭐ <b>Шаг 4:</b> Опишите уникальные selling points (чем товар лучше аналогов):\n\n"
+        "⭐ <b>Шаг 4:</b> Опишите ключевые преимущества:\n\n"
         "Пример: \"Премиальное качество материалов, уникальный дизайн, долговечность, "
         "экологичность производства\"",
         user_id=telegram_id,
@@ -316,7 +316,7 @@ async def process_target_audience_error(message: Message, state: FSMContext):
 # Обработка selling points
 # ============================================================================
 
-@router.message(StateFilter(CardGenerationStates.waiting_for_selling_points), F.text, ~Command())
+@router.message(StateFilter(CardGenerationStates.waiting_for_selling_points), F.text)
 @handle_telegram_errors
 async def process_selling_points(message: Message, state: FSMContext):
     """Обработка selling points и запуск генерации."""
@@ -411,19 +411,57 @@ async def generate_card_with_gpt(message: Message, state: FSMContext):
         timeout = aiohttp.ClientTimeout(total=120)  # 2 минуты для генерации
         async with aiohttp.ClientSession(timeout=timeout) as session:
             async with session.post(endpoint, json=payload, headers=headers) as resp:
+                success = False
                 
                 if resp.status == 200:
                     result = await resp.json()
                     card_text = result.get("card", "")
                     
+                    # Проверяем, не вернулась ли ошибка в теле успешного ответа
+                    if card_text.startswith("ERROR:"):
+                        error_msg = card_text.replace("ERROR:", "").strip()
+                        if "not available in your region" in error_msg.lower() or "unsupported_country" in error_msg.lower():
+                            await safe_send_message(
+                                message,
+                                "❌ <b>OpenAI API недоступен в вашем регионе</b>\n\n"
+                                "🔧 <b>Решение:</b>\n"
+                                "Обратитесь к администратору для настройки альтернативного API endpoint.\n\n"
+                                "Это может быть прокси-сервер или OpenAI-совместимый провайдер.",
+                                user_id=telegram_id,
+                                parse_mode="HTML"
+                            )
+                        else:
+                            await safe_send_message(
+                                message,
+                                f"❌ <b>Ошибка генерации:</b>\n\n{error_msg}",
+                                user_id=telegram_id,
+                                parse_mode="HTML"
+                            )
+                    else:
+                        await safe_send_message(
+                            message,
+                            f"✅ <b>Карточка товара сгенерирована!</b>\n\n{card_text}",
+                            user_id=telegram_id,
+                            parse_mode="HTML"
+                        )
+                        success = True
+                    
+                    logger.info(f"✅ Card generated for user {telegram_id}")
+                elif resp.status == 403:
+                    # Ошибка доступа (региональное ограничение)
+                    try:
+                        error_data = await resp.json()
+                        error_detail = error_data.get("detail", "Ошибка доступа к API")
+                    except:
+                        error_detail = "OpenAI API недоступен в вашем регионе"
+                    
                     await safe_send_message(
                         message,
-                        f"✅ <b>Карточка товара сгенерирована!</b>\n\n{card_text}",
+                        f"❌ <b>{error_detail}</b>",
                         user_id=telegram_id,
                         parse_mode="HTML"
                     )
-                    
-                    logger.info(f"✅ Card generated for user {telegram_id}")
+                    logger.error(f"❌ GPT Service regional restriction error for user {telegram_id}")
                 else:
                     error_body = await resp.text()
                     logger.error(f"❌ GPT Service error {resp.status}: {error_body}")
@@ -434,18 +472,28 @@ async def generate_card_with_gpt(message: Message, state: FSMContext):
                         "Попробуйте позже или обратитесь к администратору.",
                         user_id=telegram_id
                     )
-        
-        # Очищаем состояние
-        await state.clear()
-        
-        # Возвращаем в меню
-        await safe_send_message(
-            message,
-            "🎨 <b>Генерация завершена</b>\n\nВыберите действие:",
-            user_id=telegram_id,
-            parse_mode="HTML",
-            reply_markup=ai_assistant_keyboard()
-        )
+                
+                # Очищаем состояние
+                await state.clear()
+                
+                # Возвращаем в меню только при успехе
+                if success:
+                    await safe_send_message(
+                        message,
+                        "🎨 <b>Генерация завершена</b>\n\nВыберите действие:",
+                        user_id=telegram_id,
+                        parse_mode="HTML",
+                        reply_markup=ai_assistant_keyboard()
+                    )
+                else:
+                    # При ошибке просто возвращаем в меню без дополнительного сообщения
+                    await safe_send_message(
+                        message,
+                        "Выберите действие:",
+                        user_id=telegram_id,
+                        parse_mode="HTML",
+                        reply_markup=ai_assistant_keyboard()
+                    )
     
     except aiohttp.ClientError as e:
         logger.error(f"❌ Network error calling GPT Service: {e}")

@@ -139,10 +139,20 @@ async def card_generate(
         )
         
         if result.get("status") == "error":
-            logger.error(f"❌ Card generation failed: {result.get('message', 'Unknown error')}")
+            error_message = result.get("message", "Unknown error")
+            error_type = result.get("error_type")
+            logger.error(f"❌ Card generation failed: {error_message}")
+            
+            # Для ошибки региона возвращаем 403 с понятным сообщением
+            if error_type == "regional_restriction":
+                raise HTTPException(
+                    status_code=403,
+                    detail=error_message
+                )
+            
             raise HTTPException(
                 status_code=500,
-                detail=result.get("message", "Card generation failed")
+                detail=error_message
             )
         
         return {
