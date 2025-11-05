@@ -43,7 +43,7 @@
 
 ---
 
-### **2. 📦 Склад (детализированный по складам)**
+### **2. 📦 Склад (детализированный по складам, без размеров)**
 
 | Колонка | Описание | Источник данных | Поле БД | Тип данных |
 |---------|----------|-----------------|---------|------------|
@@ -51,32 +51,55 @@
 | B | Артикул (nm_id) | WBStock | `nm_id` | Integer |
 | C | Название товара | WBProduct | `name` | String(500) |
 | D | Бренд | WBStock | `brand` | String(255) |
-| E | Размер | WBStock | `size` | String(50) |
-| F | Склад | WBStock | `warehouse_name` | String(255) |
-| G | Количество | WBStock | `quantity` | Integer |
-| H | В пути к клиенту | WBStock | `in_way_to_client` | Integer |
-| I | В пути от клиента | WBStock | `in_way_from_client` | Integer |
-| J | Цена | WBStock | `price` | Float |
-| K | Скидка | WBStock | `discount` | Float |
-| L | Последнее обновление | WBStock | `last_updated` | DateTime |
+| E | Склад | WBStock | `warehouse_name` | String(255) |
+| F | Количество | WBStock | `quantity` | Integer (суммировано по всем размерам) |
+| G | В пути к клиенту | WBStock | `in_way_to_client` | Integer (суммировано) |
+| H | В пути от клиента | WBStock | `in_way_from_client` | Integer (суммировано) |
+| I | Заказ/Выкуп Неделя | WBOrder + WBSales | `orders_7d / buyouts_7d` | String (формат: "X / Y") |
+| J | Заказ/Выкуп 2 Недели | WBOrder + WBSales | `orders_14d / buyouts_14d` | String (формат: "X / Y") |
+| K | Заказ/Выкуп Месяц | WBOrder + WBSales | `orders_30d / buyouts_30d` | String (формат: "X / Y") |
+| L | Цена | WBStock | `price` | Float |
+| M | Скидка | WBStock | `discount` | Float |
+| N | Рейтинг | WBProduct | `rating` | Float |
+| O | % выкуп | WBOrder + WBSales | `(buyouts / orders) * 100` | Float |
+| P | % возврат | WBOrder + WBSales | `(returns / orders) * 100` | Float |
 
-**Источник данных:** Таблицы `wb_stocks` + `wb_products` (LEFT JOIN)
+**Источник данных:** Таблицы `wb_stocks` + `wb_products` + `wb_orders` + `wb_sales` (JOIN)
 **Особенности:**
-- Одна строка = один товар на одном складе
+- Одна строка = один товар на одном складе (без размеров)
 - Название товара берется из `wb_products` по `nm_id`
-- Группировка по `nm_id` + `warehouse_id`
-- Уникальное ограничение: `uq_cabinet_nm_warehouse`
+- Группировка по `nm_id` + `warehouse_name` (размеры объединены)
+- Количества (`quantity`, `in_way_to_client`, `in_way_from_client`) суммируются по всем размерам
+- **Статистика (колонки I, J, K, N, O, P):** Рассчитывается по товару в целом (nm_id), одинаковые значения для всех складов одного товара
 
-**SQL запрос:**
+**Колонки статистики:**
+- **Заказ/Выкуп (I, J, K):** Формат "X / Y", где X - количество заказов за период, Y - количество выкупов за период
+  - Неделя: заказы и выкупы за последние 7 дней
+  - 2 Недели: заказы и выкупы за последние 14 дней
+  - Месяц: заказы и выкупы за последние 30 дней
+- **Рейтинг (N):** Рейтинг товара из `wb_products.rating`
+- **% выкуп (O):** Процент выкупов от общего количества заказов: `(buyouts / orders) * 100`
+- **% возврат (P):** Процент возвратов от общего количества заказов: `(returns / orders) * 100`
+
+**SQL запрос (концептуальный):**
 ```sql
+-- Основные данные остатков
 SELECT 
-    p.image_url, s.nm_id, p.name, s.brand, s.size, s.warehouse_name,
-    s.quantity, s.in_way_to_client, s.in_way_from_client,
-    s.price, s.discount, s.last_updated
+    p.image_url, s.nm_id, p.name, s.brand, s.warehouse_name,
+    SUM(s.quantity) as quantity,
+    SUM(s.in_way_to_client) as in_way_to_client,
+    SUM(s.in_way_from_client) as in_way_from_client,
+    s.price, s.discount, p.rating
 FROM wb_stocks s
 LEFT JOIN wb_products p ON s.nm_id = p.nm_id AND s.cabinet_id = p.cabinet_id
 WHERE s.cabinet_id = ? 
+GROUP BY s.nm_id, s.warehouse_name, p.image_url, p.name, s.brand, s.price, s.discount, p.rating
 ORDER BY s.nm_id, s.warehouse_name
+
+-- Дополнительные запросы для статистики (для каждого nm_id):
+-- Заказы за 7/14/30 дней: SELECT COUNT(*) FROM wb_orders WHERE nm_id = ? AND order_date >= ?
+-- Выкупы за 7/14/30 дней: SELECT COUNT(*) FROM wb_sales WHERE nm_id = ? AND sale_date >= ? AND type = 'buyout'
+-- Общие заказы/выкупы/возвраты: для расчета процентов
 ```
 
 ---
@@ -87,34 +110,43 @@ ORDER BY s.nm_id, s.warehouse_name
 |---------|----------|-----------------|---------|------------|
 | A | Фото | WBProduct | `image_url` | =IMAGE() |
 | B | Номер заказа | WBOrder | `order_id` | String(100) |
-| C | Артикул (nm_id) | WBOrder | `nm_id` | Integer |
+| C | Номенклатура (nm_id) | WBOrder | `nm_id` | Integer |
 | D | Название | WBProduct | `name` | String(500) |
 | E | Размер | WBOrder | `size` | String(50) |
-| F | Количество | WBOrder | `quantity` | Integer |
-| G | Цена | WBOrder | `price` | Float |
-| H | Общая сумма | WBOrder | `total_price` | Float |
-| I | Статус | WBOrder | `status` | String(50) |
-| J | Дата заказа | WBOrder | `order_date` | DateTime |
-| K | Склад отправки | WBOrder | `warehouse_from` | String(255) |
-| L | Регион доставки | WBOrder | `warehouse_to` | String(255) |
-| M | Комиссия WB | WBOrder | `commission_amount` | Float |
-| N | СПП % | WBOrder | `spp_percent` | Float |
-| O | Цена клиента | WBOrder | `customer_price` | Float |
-| P | Скидка % | WBOrder | `discount_percent` | Float |
+| F | Статус | WBOrder | `status` | String(50) |
+| G | Дата заказа | WBOrder | `order_date` | DateTime |
+| H | Склад отправки | WBOrder | `warehouse_from` | String(255) |
+| I | Регион доставки | WBOrder | `warehouse_to` | String(255) |
+| J | Общая сумма | WBOrder | `total_price` | Float |
+| K | Комиссия WB | WBOrder | `commission_amount` | Float |
+| L | Цена клиента | WBOrder | `customer_price` | Float |
+| M | СПП % | WBOrder | `spp_percent` | Float |
+| N | Скидка % | WBOrder | `discount_percent` | Float |
+| O | % выкуп | WBOrder + WBSales | `(buyouts / orders) * 100` | Float |
+| P | Рейтинг | WBProduct | `rating` | Float |
 
-**Источник данных:** Таблицы `wb_orders` + `wb_products` (LEFT JOIN)
+**Источник данных:** Таблицы `wb_orders` + `wb_products` + `wb_sales` (JOIN)
 **Статусы:**
-- `Заказ` - новый заказ
-- `Выкуп` - товар выкуплен  
-- `Отмена` - заказ отменен
-- `Возврат` - товар возвращен
+- `Активный` - активный заказ
+- `Отменен` - заказ отменен
+
+**Изменения:**
+- Убраны колонки "Количество" (F) и "Цена" (G)
+- Колонка "Общая сумма" перемещена после "Регион доставки"
+- Колонки "Цена клиента" и "СПП %" поменяны местами
+- Добавлены колонки "% выкуп" (O) и "Рейтинг" (P)
+
+**Колонки статистики:**
+- **% выкуп (O):** Процент выкупов от общего количества заказов товара: `(buyouts / orders) * 100`
+- **Рейтинг (P):** Рейтинг товара из `wb_products.rating`
+- Статистика рассчитывается по товару в целом (nm_id), одинаковые значения для всех заказов одного товара
 
 **SQL запрос:**
 ```sql
 SELECT 
-    p.image_url, o.order_id, o.nm_id, p.name, o.size, o.quantity, o.price, o.total_price,
+    p.image_url, o.order_id, o.nm_id, p.name, o.size,
     o.status, o.order_date, o.warehouse_from, o.warehouse_to,
-    o.commission_amount, o.spp_percent, o.customer_price, o.discount_percent
+    o.total_price, o.commission_amount, o.customer_price, o.spp_percent, o.discount_percent
 FROM wb_orders o
 LEFT JOIN wb_products p ON o.nm_id = p.nm_id AND o.cabinet_id = p.cabinet_id
 WHERE o.cabinet_id = ? 
