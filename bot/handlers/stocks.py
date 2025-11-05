@@ -153,64 +153,6 @@ async def show_stocks_page(callback: CallbackQuery):
     await callback.answer()
 
 
-@router.callback_query(F.data == "refresh_stocks")
-async def refresh_stocks(callback: CallbackQuery):
-    """Обновить данные об остатках"""
-    await safe_edit_message(
-        callback=callback,
-        text="⏳ Обновляю данные об остатках...",
-        user_id=callback.from_user.id
-    )
-    
-    response = await bot_api_client.get_critical_stocks(
-        user_id=callback.from_user.id,
-        limit=20,
-        offset=0
-    )
-    
-    if response.success and response.data:
-        stocks_data = response.data.get("stocks", {})
-        critical_products = stocks_data.get("critical_products", [])
-        zero_products = stocks_data.get("zero_products", [])
-        
-        keyboard = create_stocks_keyboard(
-            has_more=len(critical_products) + len(zero_products) >= 20,
-            offset=0
-        )
-        
-        await safe_edit_message(
-            callback=callback,
-            text=response.telegram_text or "📦 Остатки обновлены",
-            reply_markup=keyboard,
-            user_id=callback.from_user.id
-        )
-    else:
-        error_message = format_error_message(response.error, response.status_code)
-        await safe_edit_message(
-            callback=callback,
-            text=f"❌ Ошибка обновления остатков:\n\n{error_message}",
-            reply_markup=wb_menu_keyboard(),
-            user_id=callback.from_user.id
-        )
-    
-    await callback.answer("✅ Данные обновлены")
-
-
-@router.callback_query(F.data == "stock_forecast")
-async def show_stock_forecast(callback: CallbackQuery):
-    """Показать прогноз остатков"""
-    # TODO: Реализовать прогноз остатков через API
-    await safe_edit_message(
-        callback=callback,
-        text="📊 ПРОГНОЗ ОСТАТКОВ\n\n"
-             "⚠️ Функция прогноза остатков будет доступна в следующей версии.\n\n"
-             "Сейчас доступен просмотр текущих критичных остатков.",
-        reply_markup=create_stocks_keyboard(),
-        user_id=callback.from_user.id
-    )
-    await callback.answer()
-
-
 @router.callback_query(F.data == "stock_notify")
 async def show_stock_notifications(callback: CallbackQuery):
     """Показать настройки уведомлений об остатках"""

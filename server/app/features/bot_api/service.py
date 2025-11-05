@@ -585,7 +585,7 @@ class BotAPIService:
                 "error": str(e)
             }
 
-    async def get_reviews_summary(self, user, limit: int = 10, offset: int = 0) -> Dict[str, Any]:
+    async def get_reviews_summary(self, user, limit: int = 10, offset: int = 0, rating_threshold: Optional[int] = None) -> Dict[str, Any]:
         """Получение сводки по отзывам"""
         try:
             # Получаем telegram_id из объекта user
@@ -597,8 +597,8 @@ class BotAPIService:
                     "error": "Кабинет WB не найден"
                 }
             
-            # Получаем данные из БД
-            reviews_data = await self._fetch_reviews_from_db(cabinet, limit, offset)
+            # Получаем данные из БД с фильтром по рейтингу
+            reviews_data = await self._fetch_reviews_from_db(cabinet, limit, offset, rating_threshold)
             
             # Форматируем Telegram сообщение
             telegram_text = self.formatter.format_reviews(reviews_data)
@@ -1341,13 +1341,19 @@ class BotAPIService:
                 "recommendations": ["Ошибка получения данных"]
             }
 
-    async def _fetch_reviews_from_db(self, cabinet: WBCabinet, limit: int, offset: int) -> Dict[str, Any]:
-        """Получение отзывов из БД"""
+    async def _fetch_reviews_from_db(self, cabinet: WBCabinet, limit: int, offset: int, rating_threshold: Optional[int] = None) -> Dict[str, Any]:
+        """Получение отзывов из БД с фильтрацией по рейтингу"""
         try:
             # Получаем отзывы
             reviews_query = self.db.query(WBReview).filter(
                 WBReview.cabinet_id == cabinet.id
-            ).order_by(WBReview.created_date.desc())
+            )
+            
+            # Добавляем фильтр по рейтингу, если указан (≤ threshold)
+            if rating_threshold is not None:
+                reviews_query = reviews_query.filter(WBReview.rating <= rating_threshold)
+            
+            reviews_query = reviews_query.order_by(WBReview.created_date.desc())
             
             total_reviews = reviews_query.count()
             reviews = reviews_query.offset(offset).limit(limit).all()
@@ -1384,23 +1390,29 @@ class BotAPIService:
                     "supplier_product_valuation": review.supplier_product_valuation
                 })
             
-            # Статистика
-            new_reviews = len([r for r in reviews if r.created_date and r.created_date >= datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)])
-            unanswered_reviews = len([r for r in reviews if not r.is_answered])
-            avg_rating = sum(r.rating or 0 for r in reviews) / len(reviews) if reviews else 0.0
+            # Статистика рассчитывается для всех отзывов (без фильтра), а не только для отображаемых
+            all_reviews_query = self.db.query(WBReview).filter(
+                WBReview.cabinet_id == cabinet.id
+            )
+            all_reviews = all_reviews_query.all()
+            
+            new_reviews = len([r for r in all_reviews if r.created_date and r.created_date >= datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)])
+            unanswered_reviews = len([r for r in all_reviews if not r.is_answered])
+            avg_rating = sum(r.rating or 0 for r in all_reviews) / len(all_reviews) if all_reviews else 0.0
             
             return {
-                "new_reviews": reviews_list,  # Список отзывов
+                "new_reviews": reviews_list,  # Список отзывов (с фильтром)
                 "unanswered_questions": [],  # Пока пустой список вопросов
                 "statistics": {
-                    "total_reviews": total_reviews,
+                    "total_reviews": total_reviews,  # Количество отзывов с учетом фильтра
+                    "total_all_reviews": len(all_reviews),  # Общее количество всех отзывов
+                    "rating_threshold": rating_threshold,  # Примененный фильтр
                     "new_today": new_reviews,
                     "unanswered": unanswered_reviews,
                     "average_rating": round(avg_rating, 1),
-                    "answered_count": total_reviews - unanswered_reviews,
-                    "answered_percent": round((total_reviews - unanswered_reviews) / total_reviews * 100, 1) if total_reviews > 0 else 0.0,
-                    "attention_needed": len([r for r in reviews if r.rating and r.rating <= 3])
-                    # Убрали дублирование "new_today"
+                    "answered_count": len(all_reviews) - unanswered_reviews,
+                    "answered_percent": round((len(all_reviews) - unanswered_reviews) / len(all_reviews) * 100, 1) if all_reviews else 0.0,
+                    "attention_needed": len([r for r in all_reviews if r.rating and r.rating <= 3])
                 },
                 "recommendations": ["Все отзывы обработаны"] if unanswered_reviews == 0 else [f"Требуют ответа: {unanswered_reviews} отзывов"]
             }

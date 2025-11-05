@@ -146,6 +146,7 @@ async def get_reviews_summary(
     telegram_id: int = Query(..., description="Telegram ID пользователя"),
     limit: int = Query(10, ge=1, le=100, description="Количество отзывов"),
     offset: int = Query(0, ge=0, description="Смещение для пагинации"),
+    rating_threshold: Optional[int] = Query(None, ge=1, le=5, description="Фильтр по рейтингу (≤N звезд)"),
     bot_service: BotAPIService = Depends(get_bot_service)
 ):
     """Получение новых и проблемных отзывов"""
@@ -159,7 +160,7 @@ async def get_reviews_summary(
         if not user:
             raise HTTPException(status_code=500, detail="Ошибка создания пользователя")
         
-        result = await bot_service.get_reviews_summary(user, limit, offset)
+        result = await bot_service.get_reviews_summary(user, limit, offset, rating_threshold)
         
         if not result["success"]:
             raise HTTPException(status_code=500, detail=result["error"])

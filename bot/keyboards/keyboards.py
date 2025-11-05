@@ -1,5 +1,5 @@
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from utils.formatters import format_currency
 
 
@@ -198,14 +198,6 @@ def create_stocks_keyboard(has_more: bool = False, offset: int = 0) -> InlineKey
     # Кнопки действий
     buttons.extend([
         [InlineKeyboardButton(
-            text="🔄 Обновить",
-            callback_data="refresh_stocks"
-        )],
-        [InlineKeyboardButton(
-            text="📊 Прогноз остатков",
-            callback_data="stock_forecast"
-        )],
-        [InlineKeyboardButton(
             text="🔙 Назад к меню",
             callback_data="main_menu"
         )]
@@ -214,23 +206,41 @@ def create_stocks_keyboard(has_more: bool = False, offset: int = 0) -> InlineKey
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-def create_reviews_keyboard(has_more: bool = False, offset: int = 0) -> InlineKeyboardMarkup:
-    """Создать клавиатуру для отзывов"""
+def create_reviews_keyboard(has_more: bool = False, offset: int = 0, rating_threshold: Optional[int] = None) -> InlineKeyboardMarkup:
+    """Создать клавиатуру для отзывов с фильтрацией по рейтингу"""
     buttons = []
+    
+    # Кнопка фильтрации по рейтингу (аналогично уведомлениям)
+    def review_filter_text(threshold: Optional[int]) -> str:
+        """Форматирование фильтра отзывов"""
+        if threshold is None:
+            return "⭐ Все отзывы (≤5★)"
+        else:
+            stars = "⭐" * threshold
+            return f"{stars} (≤{threshold}★)"
+    
+    # Для кнопки фильтра: если None (все отзывы), то передаем 5 в callback_data
+    # чтобы цикл был: 1→2→3→4→5→1 (5 = все отзывы)
+    filter_callback_value = rating_threshold if rating_threshold is not None else 5
+    buttons.append([InlineKeyboardButton(
+        text=f"🔍 Фильтр: {review_filter_text(rating_threshold)}",
+        callback_data=f"reviews_filter_toggle_{filter_callback_value}"
+    )])
     
     # Навигационные кнопки
     if offset > 0 or has_more:
         nav_buttons = []
+        threshold_str = str(rating_threshold) if rating_threshold is not None else "all"
         if offset > 0:
             nav_buttons.append(InlineKeyboardButton(
                 text="⬅️ Назад",
-                callback_data=f"reviews_page_{max(0, offset-10)}"
+                callback_data=f"reviews_page_{max(0, offset-10)}_{threshold_str}"
             ))
         
         if has_more:
             nav_buttons.append(InlineKeyboardButton(
                 text="Вперед ➡️",
-                callback_data=f"reviews_page_{offset+10}"
+                callback_data=f"reviews_page_{offset+10}_{threshold_str}"
             ))
         
         if nav_buttons:
@@ -238,10 +248,6 @@ def create_reviews_keyboard(has_more: bool = False, offset: int = 0) -> InlineKe
     
     # Кнопки действий
     buttons.extend([
-        [InlineKeyboardButton(
-            text="🔄 Обновить",
-            callback_data="refresh_reviews"
-        )],
         [InlineKeyboardButton(
             text="🤖 Автоответы",
             callback_data="auto_answers"
@@ -365,7 +371,7 @@ def create_notification_keyboard(settings: Dict[str, Any]) -> InlineKeyboardMark
     cancellations = settings.get("order_cancellations_enabled", True)
     returns = settings.get("order_returns_enabled", True)
     negative_reviews = settings.get("negative_reviews_enabled", True)
-    review_threshold = settings.get("review_rating_threshold", 3)  # НОВОЕ ПОЛЕ
+    review_threshold = settings.get("review_rating_threshold", 3)
     critical_stocks = settings.get("critical_stocks_enabled", True)
 
     return InlineKeyboardMarkup(inline_keyboard=[

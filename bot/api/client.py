@@ -386,10 +386,13 @@ class BotAPIClient:
         self, 
         user_id: int, 
         limit: int = 10, 
-        offset: int = 0
+        offset: int = 0,
+        rating_threshold: Optional[int] = None
     ) -> BotAPIResponse:
-        """Получить новые и проблемные отзывы"""
+        """Получить новые и проблемные отзывы с фильтрацией по рейтингу"""
         params = {"telegram_id": user_id, "limit": limit, "offset": offset}
+        if rating_threshold is not None:
+            params["rating_threshold"] = rating_threshold
         return await self._make_request("GET", "/reviews/summary", params=params)
 
     async def get_analytics_sales(
