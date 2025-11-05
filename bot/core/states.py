@@ -54,3 +54,9 @@ class CardGenerationStates(StatesGroup):
     waiting_for_characteristics = State()
     waiting_for_audience = State()
     waiting_for_selling_points = State()
+
+
+class PhotoProcessingStates(StatesGroup):
+    """Состояния для обработки фотографий"""
+    waiting_for_photo = State()
+    waiting_for_prompt = State()

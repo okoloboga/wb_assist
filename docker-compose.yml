@@ -147,6 +147,14 @@ services:
       - OPENAI_MAX_RETRIES=${OPENAI_MAX_RETRIES:-2}
       - OPENAI_RETRY_DELAY_MS=${OPENAI_RETRY_DELAY_MS:-500}
       - OPENAI_RETRY_BACKOFF=${OPENAI_RETRY_BACKOFF:-2}
+      # Photo Processing - API генерации изображений
+      - IMAGE_GEN_API_KEY=${IMAGE_GEN_API_KEY:-}
+      - IMAGE_GEN_BASE_URL=${IMAGE_GEN_BASE_URL:-}
+      - IMAGE_GEN_TIMEOUT=${IMAGE_GEN_TIMEOUT:-60}
+      - IMAGE_GEN_MAX_RETRIES=${IMAGE_GEN_MAX_RETRIES:-3}
+      # Photo Processing - Хранение результатов
+      - PHOTO_STORAGE_TYPE=${PHOTO_STORAGE_TYPE:-url}
+      - PHOTO_PROCESSING_DATABASE_URL=${PHOTO_PROCESSING_DATABASE_URL:-}
     volumes:
       - ./gpt_integration:/app/gpt_integration
       - ./bot/utils:/app/utils
@@ -156,7 +164,7 @@ services:
   ai_chat:
     build:
       context: .
-      dockerfile: ai_chat/Dockerfile
+      dockerfile: gpt_integration/ai_chat/Dockerfile
     ports:
       - "9001:9001"
     environment:
