@@ -3,7 +3,7 @@ from typing import Any, Dict
 
 import pytest
 
-from gpt_integration.pipeline import compose_messages, run_analysis
+from gpt_integration.analysis.pipeline import compose_messages, run_analysis
 
 
 def _sample_data() -> Dict[str, Any]:

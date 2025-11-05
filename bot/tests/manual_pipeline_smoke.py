@@ -9,7 +9,7 @@ sys.path.insert(0, str(Path(__file__).parents[2]))
 load_dotenv()
 load_dotenv(dotenv_path=Path(__file__).parents[1] / ".env")
 
-from gpt_integration.pipeline import compose_messages, run_analysis
+from gpt_integration.analysis.pipeline import compose_messages, run_analysis
 
 
 def _sample_data():

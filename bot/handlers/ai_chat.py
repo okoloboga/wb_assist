@@ -199,6 +199,17 @@ async def callback_cancel_chat(callback: CallbackQuery, state: FSMContext):
         "✅ Чат с AI завершен.\n\nВыберите действие:",
         reply_markup=ai_assistant_keyboard()
     )
+    
+    # Отправляем отдельное сообщение о завершении диалога
+    await safe_send_message(
+        callback.message,
+        "✅ <b>Диалог завершен</b>\n\n"
+        "Спасибо за использование AI ассистента! Если понадобится помощь, "
+        "вы всегда можете начать новый диалог.",
+        user_id=telegram_id,
+        parse_mode="HTML"
+    )
+    
     await callback.answer()
 
 
@@ -293,6 +304,16 @@ async def process_ai_message(message: Message, state: FSMContext):
                     
                     # Выходим из режима чата
                     await state.clear()
+                    
+                    # Отправляем сообщение о завершении диалога
+                    await safe_send_message(
+                        message,
+                        "✅ <b>Диалог завершен</b>\n\n"
+                        "Лимит запросов исчерпан. Диалог с AI завершен.\n"
+                        "Вы можете начать новый диалог завтра после сброса лимита.",
+                        user_id=telegram_id,
+                        parse_mode="HTML"
+                    )
                     
                     logger.warning(f"⛔ Rate limit exceeded for user {telegram_id}")
                 
