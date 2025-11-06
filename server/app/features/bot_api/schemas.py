@@ -482,7 +482,9 @@ class DynamicCriticalStocksResponse(BaseModel):
     """Ответ с динамическими критичными остатками"""
     at_risk_positions: List[AtRiskPosition]
     summary: DynamicStocksSummary
-    recommendations: List[str]
+    pagination: Optional[PaginationData] = None  # Данные пагинации
+    recommendations: Optional[List[str]] = None  # Опциональное поле, убрано из форматирования
+    lookback_days: Optional[int] = None  # Период анализа для форматтера
 
 
 class DynamicCriticalStocksAPIResponse(BaseModel):

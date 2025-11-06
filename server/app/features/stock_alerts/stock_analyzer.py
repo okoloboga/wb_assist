@@ -7,7 +7,6 @@ from sqlalchemy import and_, func
 from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional
 import logging
-import os
 
 from app.features.wb_api.models import WBStock, WBProduct, WBOrder
 
@@ -19,11 +18,11 @@ class DynamicStockAnalyzer:
     
     def __init__(self, db: Session):
         self.db = db
-        self.lookback_hours = int(os.getenv("STOCK_ALERT_LOOKBACK_HOURS", "24"))
     
     async def analyze_stock_positions(
         self, 
-        cabinet_id: int
+        cabinet_id: int,
+        lookback_days: int = 3
     ) -> List[Dict[str, Any]]:
         """
         Анализирует все позиции остатков для кабинета
@@ -31,19 +30,20 @@ class DynamicStockAnalyzer:
         Логика:
         1. Получить все текущие остатки из WBStock
         2. Для каждой позиции (nm_id, warehouse_name, size):
-           - Получить количество заказов за lookback_hours
+           - Получить количество заказов за lookback_days
            - Сравнить с текущим остатком
-           - Если current_stock < orders_last_24h → добавить в риск-лист
+           - Если current_stock < orders_last_period → добавить в риск-лист
         3. Рассчитать days_remaining для каждой рисковой позиции
         
         Args:
             cabinet_id: ID кабинета для анализа
+            lookback_days: Количество дней для анализа динамики (по умолчанию 3)
         
         Returns:
             Список рисковых позиций с прогнозами
         """
         try:
-            logger.info(f"Starting stock analysis for cabinet {cabinet_id}")
+            logger.info(f"Starting stock analysis for cabinet {cabinet_id}, lookback_days={lookback_days}")
             
             # Получаем все текущие остатки
             stocks = self.db.query(WBStock).filter(
@@ -59,13 +59,14 @@ class DynamicStockAnalyzer:
             
             at_risk_positions = []
             
-            # Вычисляем временную границу для запроса заказов
-            time_threshold = datetime.utcnow() - timedelta(hours=self.lookback_hours)
+            # Вычисляем временную границу для запроса заказов (конвертируем дни в часы)
+            lookback_hours = lookback_days * 24
+            time_threshold = datetime.utcnow() - timedelta(hours=lookback_hours)
             
             # Анализируем каждую позицию
             for stock in stocks:
                 try:
-                    # Получаем количество заказов за последние lookback_hours напрямую из wb_orders
+                    # Получаем количество заказов за последние lookback_days напрямую из wb_orders
                     warehouse_name = stock.warehouse_name or "Неизвестный склад"
                     size = stock.size or "ONE SIZE"
                     
@@ -82,8 +83,7 @@ class DynamicStockAnalyzer:
                     current_stock = stock.quantity or 0
                     
                     # Рассчитываем avg_per_day (заказов за период / дни)
-                    days_in_period = self.lookback_hours / 24.0
-                    avg_per_day = orders_last_period / days_in_period if days_in_period > 0 else 0
+                    avg_per_day = orders_last_period / lookback_days if lookback_days > 0 else 0
                     
                     # Проверяем условие риска: остаток < заказов за период
                     if current_stock < orders_last_period and orders_last_period > 0:
@@ -111,7 +111,7 @@ class DynamicStockAnalyzer:
                             "warehouse_name": warehouse_name,
                             "size": size,
                             "current_stock": current_stock,
-                            "orders_last_24h": orders_last_period,
+                            "orders_last_24h": orders_last_period,  # Название поля оставлено для совместимости, но содержит данные за lookback_days
                             "days_remaining": days_remaining,
                             "risk_level": risk_level
                         })

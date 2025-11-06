@@ -170,8 +170,22 @@ def create_orders_keyboard(orders: list, offset: int = 0, has_more: bool = False
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
+def create_stocks_menu_keyboard() -> InlineKeyboardMarkup:
+    """Создать клавиатуру для меню складов"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(
+            text="⚠️ Критические остатки",
+            callback_data="dynamic_critical_stocks"
+        )],
+        [InlineKeyboardButton(
+            text="🔙 Назад к меню",
+            callback_data="main_menu"
+        )]
+    ])
+
+
 def create_stocks_keyboard(has_more: bool = False, offset: int = 0) -> InlineKeyboardMarkup:
-    """Создать клавиатуру для остатков"""
+    """Создать клавиатуру для отчета критичных остатков с пагинацией"""
     buttons = []
     
     # Навигационные кнопки
@@ -180,13 +194,13 @@ def create_stocks_keyboard(has_more: bool = False, offset: int = 0) -> InlineKey
         if offset > 0:
             nav_buttons.append(InlineKeyboardButton(
                 text="⬅️ Назад",
-                callback_data=f"stocks_page_{max(0, offset-20)}"
+                callback_data=f"dynamic_stocks_page_{max(0, offset-20)}"
             ))
         
         if has_more:
             nav_buttons.append(InlineKeyboardButton(
                 text="Вперед ➡️",
-                callback_data=f"stocks_page_{offset+20}"
+                callback_data=f"dynamic_stocks_page_{offset+20}"
             ))
         
         if nav_buttons:
@@ -362,14 +376,18 @@ def create_notification_keyboard(settings: Dict[str, Any]) -> InlineKeyboardMark
         else:
             stars = "⭐" * threshold
             return f"{stars} (≤{threshold}★)"
+    
+    def stock_analysis_days_text(days: int) -> str:
+        """Форматирование дней для анализа остатков"""
+        return f"{days} дн."
 
     new_orders = settings.get("new_orders_enabled", True)
     buyouts = settings.get("order_buyouts_enabled", True)
     cancellations = settings.get("order_cancellations_enabled", True)
     returns = settings.get("order_returns_enabled", True)
-    negative_reviews = settings.get("negative_reviews_enabled", True)
     review_threshold = settings.get("review_rating_threshold", 3)
     critical_stocks = settings.get("critical_stocks_enabled", True)
+    stock_analysis_days = settings.get("stock_analysis_days", 3)
 
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(
@@ -389,12 +407,16 @@ def create_notification_keyboard(settings: Dict[str, Any]) -> InlineKeyboardMark
             callback_data="toggle_notif_returns"
         )],
         [InlineKeyboardButton(
+            text=f"⚠️ Критичные остатки: {flag_text(critical_stocks)}",
+            callback_data="toggle_notif_critical_stocks"
+        )],
+        [InlineKeyboardButton(
             text=f"⭐ Отзывы: {review_threshold_text(review_threshold)}",
             callback_data="toggle_notif_negative_reviews"
         )],
         [InlineKeyboardButton(
-            text=f"⚠️ Критичные остатки: {flag_text(critical_stocks)}",
-            callback_data="toggle_notif_critical_stocks"
+            text=f"📊 Динамика продаж за: {stock_analysis_days_text(stock_analysis_days)}",
+            callback_data="toggle_stock_analysis_days"
         )],
         [InlineKeyboardButton(
             text="🔙 Назад к меню",

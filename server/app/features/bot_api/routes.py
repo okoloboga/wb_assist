@@ -144,9 +144,11 @@ async def get_critical_stocks(
 @router.get("/stocks/dynamic-critical", response_model=DynamicCriticalStocksAPIResponse)
 async def get_dynamic_critical_stocks(
     telegram_id: int = Query(..., description="Telegram ID пользователя"),
+    limit: int = Query(20, ge=1, le=100, description="Количество позиций на странице"),
+    offset: int = Query(0, ge=0, description="Смещение для пагинации"),
     bot_service: BotAPIService = Depends(get_bot_service)
 ):
-    """Получение критичных остатков на основе динамики затрат"""
+    """Получение критичных остатков на основе динамики затрат с пагинацией"""
     try:
         cabinet = await bot_service.get_user_cabinet(telegram_id)
         if not cabinet:
@@ -157,7 +159,7 @@ async def get_dynamic_critical_stocks(
         if not user:
             raise HTTPException(status_code=500, detail="Ошибка создания пользователя")
         
-        result = await bot_service.get_dynamic_critical_stocks(user)
+        result = await bot_service.get_dynamic_critical_stocks(user, limit=limit, offset=offset)
         
         if not result["success"]:
             raise HTTPException(status_code=500, detail=result["error"])

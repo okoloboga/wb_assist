@@ -71,8 +71,11 @@ class StockAlertNotificationService:
                     "positions_analyzed": 0
                 }
             
-            # Получаем рисковые позиции
-            at_risk_positions = await self.analyzer.analyze_stock_positions(cabinet_id)
+            # Получаем период анализа из настроек пользователя (по умолчанию 3 дня)
+            lookback_days = getattr(user_settings, 'stock_analysis_days', 3)
+            
+            # Получаем рисковые позиции с учетом периода анализа пользователя
+            at_risk_positions = await self.analyzer.analyze_stock_positions(cabinet_id, lookback_days=lookback_days)
             
             if not at_risk_positions:
                 logger.info(f"No at-risk positions found for cabinet {cabinet_id}")
@@ -83,11 +86,31 @@ class StockAlertNotificationService:
                     "positions_analyzed": 0
                 }
             
+            # Фильтруем только позиции с days_remaining <= lookback_days (окно анализа пользователя)
+            filtered_positions = []
+            for position in at_risk_positions:
+                days_remaining = position.get("days_remaining", float('inf'))
+                if days_remaining <= lookback_days:
+                    filtered_positions.append(position)
+                else:
+                    logger.debug(f"Позиция {position.get('nm_id')} отфильтрована для уведомления: days_remaining={days_remaining} > {lookback_days}")
+            
+            logger.info(f"После фильтрации days_remaining <= {lookback_days}: {len(filtered_positions)} позиций для уведомлений")
+            
+            if not filtered_positions:
+                logger.info(f"No filtered positions for alerts (all filtered out by days_remaining <= {lookback_days})")
+                return {
+                    "status": "success",
+                    "alerts_sent": 0,
+                    "alerts_skipped": 0,
+                    "positions_analyzed": len(at_risk_positions)
+                }
+            
             alerts_sent = 0
             alerts_skipped = 0
             
-            # Обрабатываем каждую рисковую позицию
-            for position in at_risk_positions:
+            # Обрабатываем каждую отфильтрованную позицию
+            for position in filtered_positions:
                 try:
                     # Проверяем, нужно ли отправлять уведомление
                     if not await self.should_send_alert(
@@ -103,8 +126,8 @@ class StockAlertNotificationService:
                         )
                         continue
                     
-                    # Формируем уведомление
-                    notification_data = self._format_notification_data(position)
+                    # Формируем уведомление с учетом периода анализа
+                    notification_data = self._format_notification_data(position, lookback_days=lookback_days)
                     
                     # Отправляем через webhook
                     if bot_webhook_url:
@@ -196,16 +219,19 @@ class StockAlertNotificationService:
             logger.error(f"Error checking if should send alert: {e}")
             return False
     
-    def _format_notification_data(self, position: Dict[str, Any]) -> Dict[str, Any]:
+    def _format_notification_data(self, position: Dict[str, Any], lookback_days: int = 3) -> Dict[str, Any]:
         """
         Форматирование данных уведомления
         
         Args:
             position: Данные позиции из analyzer
+            lookback_days: Период анализа (по умолчанию 3 дня)
         
         Returns:
             Данные для webhook
         """
+        orders_last_period = position.get('orders_last_24h', 0)  # Название поля для совместимости, но содержит данные за lookback_days
+        
         telegram_text = f"""⚠️ КРИТИЧЕСКИЕ ОСТАТКИ
 
 👗 {position['name']} ({position['brand']})
@@ -213,10 +239,10 @@ class StockAlertNotificationService:
 📦 {position['warehouse_name']}
 📏 Размер: {position['size']}
 
-📊 Аналитика за 24ч:
-• Заказов: {position['orders_last_24h']} шт.
+📊 Аналитика за {lookback_days} дн.:
+• Заказов: {orders_last_period} шт.
 • Текущий остаток: {position['current_stock']} шт.
-• Прогноз: {position['days_remaining']} дн."""
+• Прогноз: {int(round(position['days_remaining']))} дн."""
         
         return {
             "type": "dynamic_stock_alert",

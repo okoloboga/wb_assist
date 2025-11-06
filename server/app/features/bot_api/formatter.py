@@ -170,11 +170,12 @@ class BotMessageFormatter:
             return "❌ Ошибка форматирования данных остатков"
 
     def format_dynamic_critical_stocks(self, data: Dict[str, Any]) -> str:
-        """Форматирование сообщения о критичных остатках на основе динамики"""
+        """Форматирование сообщения о критичных остатках на основе динамики с пагинацией"""
         try:
             at_risk_positions = data.get("at_risk_positions", [])
             summary = data.get("summary", {})
-            recommendations = data.get("recommendations", [])
+            pagination = data.get("pagination", {})
+            lookback_days = data.get("lookback_days", 3)  # Период анализа (по умолчанию 3 дня)
             
             message = "⚠️ КРИТИЧНЫЕ ОСТАТКИ\n\n"
             
@@ -184,17 +185,22 @@ class BotMessageFormatter:
                 return message
             
             # Добавляем сводку
+            total_positions = summary.get('total_positions', 0)
+            offset = pagination.get('offset', 0)
+            limit = pagination.get('limit', 20)
+            current_page = (offset // limit) + 1
+            total_pages = (total_positions + limit - 1) // limit if total_positions > 0 else 1
+            
             message += f"""📊 СВОДКА
-• Всего позиций в риске: {summary.get('total_positions', 0)}
+• Всего позиций в риске: {total_positions}
+• Страница: {current_page} из {total_pages}
 
 """
             
-            # Формируем список позиций с учетом лимита
-            max_positions = 50  # Максимальное количество позиций для отображения
-            positions_count = 0
+            # Формируем список позиций для текущей страницы
             remaining_length = self.max_length - len(message) - 200  # Резерв для завершения
             
-            for position in at_risk_positions[:max_positions]:
+            for position in at_risk_positions:
                 # Формируем строку для позиции
                 nm_id = position.get("nm_id", "N/A")
                 name = position.get("name", "Неизвестно")
@@ -202,7 +208,7 @@ class BotMessageFormatter:
                 warehouse_name = position.get("warehouse_name", "Неизвестный склад")
                 size = position.get("size", "N/A")
                 current_stock = position.get("current_stock", 0)
-                orders_last_24h = position.get("orders_last_24h", 0)
+                orders_last_period = position.get("orders_last_24h", 0)  # Название поля для совместимости, но содержит данные за lookback_days
                 days_remaining = position.get("days_remaining", 0)
                 
                 # Формируем строку позиции
@@ -211,25 +217,18 @@ class BotMessageFormatter:
                     position_str += f" ({brand})"
                 position_str += f"""
    🆔 {nm_id} | 📦 {warehouse_name} | 📏 {size}
-   📊 Остаток: {current_stock} шт | Заказов за 24ч: {orders_last_24h} шт
-   ⏰ Прогноз: {days_remaining:.1f} дн.
+   📊 Остаток: {current_stock} шт | Заказов за {lookback_days} дн.: {orders_last_period} шт
+   ⏰ Прогноз: {int(round(days_remaining))} дн.
 
 """
                 
                 # Проверяем, не превысим ли лимит
                 if len(message) + len(position_str) > remaining_length:
-                    message += f"\n... и еще {len(at_risk_positions) - positions_count} позиций"
                     break
                 
                 message += position_str
-                positions_count += 1
             
-            # Добавляем рекомендации
-            if recommendations:
-                message += "\n💡 РЕКОМЕНДАЦИИ\n"
-                for rec in recommendations[:3]:
-                    if rec:  # Пропускаем пустые строки
-                        message += f"• {rec}\n"
+            # Блок рекомендаций убран по запросу пользователя
             
             # Обрезаем до лимита
             return self._truncate_message(message)

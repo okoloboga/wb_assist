@@ -586,11 +586,13 @@ class BotAPIService:
                 "error": str(e)
             }
 
-    async def get_dynamic_critical_stocks(self, user) -> Dict[str, Any]:
-        """Получение критичных остатков на основе динамики затрат"""
+    async def get_dynamic_critical_stocks(self, user, limit: int = 20, offset: int = 0) -> Dict[str, Any]:
+        """Получение критичных остатков на основе динамики затрат с пагинацией"""
         try:
             # Получаем telegram_id из объекта user
             telegram_id = user.telegram_id if hasattr(user, 'telegram_id') else user["telegram_id"]
+            user_id = user["id"] if isinstance(user, dict) else user.id
+            
             cabinet = await self.get_user_cabinet(telegram_id)
             if not cabinet:
                 return {
@@ -598,8 +600,21 @@ class BotAPIService:
                     "error": "Кабинет WB не найден"
                 }
             
-            # Получаем данные из БД на основе динамики
-            stocks_data = await self._fetch_dynamic_critical_stocks_from_db(cabinet)
+            # Получаем период анализа из настроек пользователя
+            from app.features.notifications.models import NotificationSettings
+            user_settings = self.db.query(NotificationSettings).filter(
+                NotificationSettings.user_id == user_id
+            ).first()
+            
+            lookback_days = getattr(user_settings, 'stock_analysis_days', 3) if user_settings else 3
+            
+            # Получаем данные из БД на основе динамики с пагинацией
+            stocks_data = await self._fetch_dynamic_critical_stocks_from_db(
+                cabinet, 
+                lookback_days=lookback_days,
+                limit=limit,
+                offset=offset
+            )
             
             # Форматируем Telegram сообщение (с учетом лимита 4096 символов)
             telegram_text = self.formatter.format_dynamic_critical_stocks(stocks_data)
@@ -625,12 +640,18 @@ class BotAPIService:
                 "error": str(e)
             }
 
-    async def _fetch_dynamic_critical_stocks_from_db(self, cabinet: WBCabinet) -> Dict[str, Any]:
-        """Получение критичных остатков на основе динамики затрат (days_remaining <= 1)"""
+    async def _fetch_dynamic_critical_stocks_from_db(
+        self, 
+        cabinet: WBCabinet, 
+        lookback_days: int = 3,
+        limit: int = 20,
+        offset: int = 0
+    ) -> Dict[str, Any]:
+        """Получение критичных остатков на основе динамики затрат (days_remaining <= lookback_days) с пагинацией"""
         try:
             # Используем DynamicStockAnalyzer для анализа остатков
             analyzer = DynamicStockAnalyzer(self.db)
-            at_risk_positions = await analyzer.analyze_stock_positions(cabinet.id)
+            at_risk_positions = await analyzer.analyze_stock_positions(cabinet.id, lookback_days=lookback_days)
             
             logger.info(f"Получено {len(at_risk_positions)} позиций в риске из analyze_stock_positions")
             
@@ -643,16 +664,18 @@ class BotAPIService:
                               f"orders_24h={pos.get('orders_last_24h')}, "
                               f"days_remaining={pos.get('days_remaining')}")
             
-            # Фильтруем только позиции с days_remaining <= 1
+            # Фильтруем только позиции с days_remaining <= lookback_days (окно анализа пользователя)
             filtered_positions = []
             for pos in at_risk_positions:
                 days_remaining = pos.get("days_remaining", float('inf'))
-                if days_remaining <= 1.0:
+                if days_remaining <= lookback_days:
                     filtered_positions.append(pos)
                 else:
-                    logger.debug(f"Позиция {pos.get('nm_id')} отфильтрована: days_remaining={days_remaining} > 1.0")
+                    logger.debug(f"Позиция {pos.get('nm_id')} отфильтрована: days_remaining={days_remaining} > {lookback_days}")
             
-            logger.info(f"После фильтрации days_remaining <= 1.0: {len(filtered_positions)} позиций")
+            logger.info(f"После фильтрации days_remaining <= {lookback_days}: {len(filtered_positions)} позиций")
+            
+            total_positions = len(filtered_positions)
             
             if not filtered_positions:
                 return {
@@ -660,20 +683,34 @@ class BotAPIService:
                     "summary": {
                         "total_positions": 0
                     },
-                    "recommendations": ["✅ Все остатки в норме!"]
+                    "pagination": {
+                        "limit": limit,
+                        "offset": offset,
+                        "total": 0,
+                        "has_more": False
+                    },
+                    "lookback_days": lookback_days
                 }
             
             # Сортируем по дням остатка (от меньшего к большему)
             filtered_positions.sort(key=lambda pos: pos.get("days_remaining", float('inf')))
             
+            # Применяем пагинацию
+            paginated_positions = filtered_positions[offset:offset + limit]
+            has_more = offset + limit < total_positions
+            
             return {
-                "at_risk_positions": filtered_positions,
+                "at_risk_positions": paginated_positions,
                 "summary": {
-                    "total_positions": len(filtered_positions)
+                    "total_positions": total_positions
                 },
-                "recommendations": [
-                    f"Срочно пополнить {len(filtered_positions)} позиций (остаток закончится в течение 1 дня)"
-                ] if filtered_positions else []
+                "pagination": {
+                    "limit": limit,
+                    "offset": offset,
+                    "total": total_positions,
+                    "has_more": has_more
+                },
+                "lookback_days": lookback_days  # Добавляем период анализа для форматтера
             }
             
         except Exception as e:

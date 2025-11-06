@@ -9,7 +9,7 @@ from aiogram.types import CallbackQuery, Message, InlineKeyboardMarkup, InlineKe
 from aiogram.filters import Command
 
 from api.client import bot_api_client
-from keyboards.keyboards import wb_menu_keyboard, main_keyboard, create_stocks_keyboard
+from keyboards.keyboards import wb_menu_keyboard, main_keyboard, create_stocks_keyboard, create_stocks_menu_keyboard
 from utils.formatters import format_error_message, format_stocks_summary, safe_edit_message
 
 router = Router()
@@ -17,16 +17,36 @@ router = Router()
 
 @router.callback_query(F.data == "stock")
 async def show_stock_menu(callback: CallbackQuery):
-    """Показать меню склада с отчетом по динамике"""
-    response = await bot_api_client.get_dynamic_critical_stocks(
+    """Показать меню склада (заглушка)"""
+    await safe_edit_message(
+        callback=callback,
+        text="Заглушка для складов",
+        reply_markup=create_stocks_menu_keyboard(),
         user_id=callback.from_user.id
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "dynamic_critical_stocks")
+async def show_dynamic_critical_stocks(callback: CallbackQuery):
+    """Показать критичные остатки на основе динамики"""
+    response = await bot_api_client.get_dynamic_critical_stocks(
+        user_id=callback.from_user.id,
+        limit=20,
+        offset=0
     )
     
     if response.success:
+        # Получаем данные пагинации из ответа
+        stocks_data = response.stocks or {}
+        pagination = stocks_data.get("pagination", {})
+        has_more = pagination.get("has_more", False)
+        offset = pagination.get("offset", 0)
+        
         await safe_edit_message(
             callback=callback,
             text=response.telegram_text or "⚠️ Критичные остатки",
-            reply_markup=create_stocks_keyboard(),
+            reply_markup=create_stocks_keyboard(has_more=has_more, offset=offset),
             user_id=callback.from_user.id
         )
     else:
@@ -34,7 +54,7 @@ async def show_stock_menu(callback: CallbackQuery):
         await safe_edit_message(
             callback=callback,
             text=f"❌ Ошибка загрузки остатков:\n\n{error_message}",
-            reply_markup=wb_menu_keyboard(),
+            reply_markup=create_stocks_menu_keyboard(),
             user_id=callback.from_user.id
         )
     
@@ -117,6 +137,44 @@ async def show_stocks_page(callback: CallbackQuery):
             callback=callback,
             text=response.telegram_text or "📦 Остатки",
             reply_markup=keyboard,
+            user_id=callback.from_user.id
+        )
+    else:
+        error_message = format_error_message(response.error, response.status_code)
+        await safe_edit_message(
+            callback=callback,
+            text=f"❌ Ошибка загрузки остатков:\n\n{error_message}",
+            reply_markup=wb_menu_keyboard(),
+            user_id=callback.from_user.id
+        )
+    
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("dynamic_stocks_page_"))
+async def show_dynamic_stocks_page(callback: CallbackQuery):
+    """Показать страницу динамических критичных остатков"""
+    try:
+        offset = int(callback.data.split("_")[-1])
+    except (ValueError, IndexError):
+        offset = 0
+    
+    response = await bot_api_client.get_dynamic_critical_stocks(
+        user_id=callback.from_user.id,
+        limit=20,
+        offset=offset
+    )
+    
+    if response.success:
+        # Получаем данные пагинации из ответа
+        stocks_data = response.stocks or {}
+        pagination = stocks_data.get("pagination", {})
+        has_more = pagination.get("has_more", False)
+        
+        await safe_edit_message(
+            callback=callback,
+            text=response.telegram_text or "⚠️ Критичные остатки",
+            reply_markup=create_stocks_keyboard(has_more=has_more, offset=offset),
             user_id=callback.from_user.id
         )
     else:

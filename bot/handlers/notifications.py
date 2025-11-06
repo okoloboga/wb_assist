@@ -193,6 +193,71 @@ async def toggle_notif_critical_stocks(callback: CallbackQuery):
     await _toggle_and_refresh(callback, "critical_stocks_enabled")
 
 
+@router.callback_query(F.data == "toggle_stock_analysis_days")
+async def toggle_stock_analysis_days(callback: CallbackQuery):
+    """Циклически изменяем период анализа: 1 -> 3 -> 7 -> 10 -> 14 -> 1"""
+    user_id = callback.from_user.id
+    
+    # Получаем текущие настройки
+    current = await bot_api_client.get_notification_settings(user_id)
+    settings = current.data.get("data", current.data) if current.success and current.data else {}
+    
+    # Получаем текущий период (по умолчанию 3)
+    current_days = settings.get('stock_analysis_days', 3)
+    
+    # Циклическое переключение: 1 -> 3 -> 7 -> 10 -> 14 -> 1
+    allowed_days = [1, 3, 7, 10, 14]
+    try:
+        current_index = allowed_days.index(current_days)
+        next_index = (current_index + 1) % len(allowed_days)
+        next_days = allowed_days[next_index]
+    except ValueError:
+        # Если текущее значение не в списке разрешенных, начинаем с 1
+        next_days = 1
+    
+    # Обновляем период
+    update = {
+        "stock_analysis_days": next_days
+    }
+    
+    upd_resp = await bot_api_client.update_notification_settings(user_id, update)
+    if not upd_resp.success:
+        await callback.answer(f"❌ Ошибка обновления: {upd_resp.error or upd_resp.status_code}", show_alert=True)
+        return
+    
+    # Получаем обновлённые настройки
+    refreshed = await bot_api_client.get_notification_settings(user_id)
+    new_settings = refreshed.data.get("data", refreshed.data) if refreshed.success and refreshed.data else settings
+    
+    # Формируем обновленный статус
+    stock_analysis_days = new_settings.get('stock_analysis_days', 3)
+    callback_text = f"✅ Период анализа установлен: {stock_analysis_days} дн."
+    
+    # Вспомогательная функция для форматирования порога отзывов
+    review_threshold = new_settings.get('review_rating_threshold', 3)
+    if review_threshold == 0:
+        review_status = "Выключены"
+    else:
+        stars = "⭐" * review_threshold
+        review_status = f"Включены {stars} (≤{review_threshold}★)"
+    
+    status_text = "📊 Статус уведомлений:\n"
+    status_text += f"✅ Заказы: {'Включены' if new_settings.get('new_orders_enabled', True) else 'Выключены'}\n"
+    status_text += f"✅ Выкупы: {'Включены' if new_settings.get('order_buyouts_enabled', True) else 'Выключены'}\n"
+    status_text += f"✅ Отмены: {'Включены' if new_settings.get('order_cancellations_enabled', True) else 'Выключены'}\n"
+    status_text += f"✅ Возвраты: {'Включены' if new_settings.get('order_returns_enabled', True) else 'Выключены'}\n"
+    status_text += f"✅ Отзывы: {review_status}\n"
+    status_text += f"✅ Остатки: {'Включены' if new_settings.get('critical_stocks_enabled', True) else 'Выключены'}\n"
+    
+    # Обновляем текст/клавиатуру
+    await callback.message.edit_text(
+        f"🔔 УВЕДОМЛЕНИЯ\n\n{status_text}\n"
+        "Нажмите на тип уведомления для переключения:",
+        reply_markup=create_notification_keyboard(new_settings)
+    )
+    await callback.answer(callback_text)
+
+
 @router.callback_query(F.data == "test_notification")
 async def test_notification(callback: CallbackQuery):
     """Отправить тестовое уведомление"""
