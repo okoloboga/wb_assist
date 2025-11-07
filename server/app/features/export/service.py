@@ -1006,6 +1006,7 @@ class ExportService:
             date_list.append(date)
         
         # Получаем уникальные комбинации nm_id + size из заказов
+        # Сортируем по количеству заказов только для лимита, потом пересортируем по названию
         unique_combinations = self.db.query(
             WBOrder.nm_id,
             WBOrder.size,
@@ -1137,6 +1138,16 @@ class ExportService:
             row.append(total_sum if total_sum > 0 else '')
             
             data.append(row)
+        
+        # Сортируем данные по названию товара (колонка C, индекс 2) в алфавитном порядке
+        # Товары без названия идут в конец (как во вкладке "Склад")
+        def sort_key(row_data):
+            product_name = row_data[2] if len(row_data) > 2 else ""  # Колонка C (индекс 2)
+            # Если название пустое, возвращаем кортеж (1, ""), чтобы оно было в конце
+            # Если название есть, возвращаем (0, название) для нормальной сортировки
+            return (1 if not product_name else 0, str(product_name).lower())
+        
+        data.sort(key=sort_key)
         
         return data
 
