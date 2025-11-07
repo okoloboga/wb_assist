@@ -32,8 +32,10 @@ def compose_messages(data: Dict[str, Any], template_path: Optional[str] = None) 
     if tg_guide:
         sections.append(f"## OUTPUT_TG_GUIDE\n{tg_guide}")
     sections.append(
-        "Верни ответ строго в формате OUTPUT_JSON и OUTPUT_TG, \n"
-        "соблюдая описанные схемы и правила."
+        "Верни ответ СТРОГО в формате OUTPUT_JSON и OUTPUT_TG, \n"
+        "соблюдая описанные схемы и правила.\n\n"
+        "КРИТИЧЕСКИ ВАЖНО: Верни JSON БЕЗ markdown блоков (без ```json и ```). "
+        "Начни ответ сразу с открывающей фигурной скобки { и закончи закрывающей }."
     )
     user_content = "\n\n".join(sections)
 
@@ -44,64 +46,132 @@ def compose_messages(data: Dict[str, Any], template_path: Optional[str] = None) 
 
 
 def _safe_json_extract(text: str) -> Optional[Dict[str, Any]]:
-    """Try to extract the largest JSON object from text.
-    Handles markdown code blocks like ```json ... ``` properly.
+    """Извлекает JSON объект из текста.
+    Теперь ожидает чистый JSON без markdown блоков, но поддерживает fallback для markdown.
     """
     import re
+    import logging
     
-    # Step 1: Try to extract JSON from markdown code block
-    # Pattern: ```json (optional) ... { ... } ... ``` 
-    code_block_pattern = r'```(?:json)?\s*(\{.*?\})\s*```'
-    matches = re.findall(code_block_pattern, text, re.DOTALL)
+    logger = logging.getLogger(__name__)
     
-    if matches:
-        # Try each match (usually there's only one)
-        for match in matches:
-            try:
-                return json.loads(match)
-            except Exception:
-                pass
-    
-    # Step 2: Remove all markdown code blocks and try again
-    # Remove ```json ... ``` or ``` ... ```
-    cleaned = re.sub(r'```(?:json)?\s*', '', text)
-    cleaned = re.sub(r'```', '', cleaned)
-    
-    # Step 3: Find the outermost JSON object
-    start = cleaned.find("{")
-    end = cleaned.rfind("}")
-    if start == -1 or end == -1 or end <= start:
+    if not text or not isinstance(text, str):
         return None
     
-    snippet = cleaned[start : end + 1]
+    # Удаляем лишние пробелы в начале и конце
+    cleaned = text.strip()
     
-    # Step 4: Try to parse
-    try:
-        return json.loads(snippet)
-    except Exception:
-        # Try with escaped newlines fixed
-        try:
-            return json.loads(snippet.replace("\\n", "\n"))
-        except Exception:
-            # Last resort: try to find nested braces
+    def extract_json_from_text(text_to_parse: str, description: str) -> Optional[Dict[str, Any]]:
+        """Вспомогательная функция для извлечения JSON из текста."""
+        start = text_to_parse.find("{")
+        if start == -1:
+            return None
+        
+        # Считаем скобки для поиска соответствующей закрывающей скобки
+        brace_count = 0
+        end_pos = -1
+        in_string = False
+        escape_next = False
+        
+        for i in range(start, len(text_to_parse)):
+            char = text_to_parse[i]
+            
+            # Обработка экранирования
+            if escape_next:
+                escape_next = False
+                continue
+            if char == '\\':
+                escape_next = True
+                continue
+            if char == '"':
+                in_string = not in_string
+                continue
+            
+            # Считаем скобки только вне строк
+            if not in_string:
+                if char == '{':
+                    brace_count += 1
+                elif char == '}':
+                    brace_count -= 1
+                    if brace_count == 0:
+                        end_pos = i
+                        break
+        
+        if end_pos <= start:
+            return None
+        
+        snippet = text_to_parse[start : end_pos + 1]
+        
+        # Пробуем несколько стратегий исправления
+        fixing_strategies = [
+            lambda s: s,  # Оригинал
+            lambda s: re.sub(r',(\s*[}\]])', r'\1', s),  # Удаляем trailing commas
+            lambda s: re.sub(r',(\s*[}\]])', r'\1', s).replace('\\n', '\n'),  # Исправляем newlines
+        ]
+        
+        for strategy_idx, strategy in enumerate(fixing_strategies):
             try:
-                # Count braces to find matching closing brace
-                brace_count = 0
-                end_pos = start
-                for i in range(start, len(cleaned)):
-                    if cleaned[i] == '{':
-                        brace_count += 1
-                    elif cleaned[i] == '}':
-                        brace_count -= 1
-                        if brace_count == 0:
-                            end_pos = i
-                            break
-                if end_pos > start:
-                    snippet = cleaned[start : end_pos + 1]
-                    return json.loads(snippet)
-            except Exception:
-                pass
+                fixed = strategy(snippet)
+                parsed = json.loads(fixed)
+                if isinstance(parsed, dict):
+                    if strategy_idx == 0:
+                        logger.info(f"✅ Успешно извлечен JSON из {description} ({len(snippet)} символов)")
+                    else:
+                        logger.info(f"✅ Успешно извлечен JSON из {description} после исправления стратегией #{strategy_idx}")
+                    return parsed
+            except json.JSONDecodeError as e:
+                if strategy_idx == 0:
+                    logger.debug(f"Ошибка декодирования JSON в {description} на позиции {e.pos}: {e.msg}")
+                    error_pos = e.pos if hasattr(e, 'pos') else 0
+                    logger.debug(f"Проблемная область: {snippet[max(0, error_pos-50):error_pos+50]}")
+                continue
+            except Exception as e:
+                logger.debug(f"Стратегия #{strategy_idx} не удалась для {description}: {e}")
+                continue
+        
+        return None
     
+    # Шаг 1: Пытаемся найти чистый JSON (начинающийся сразу с {)
+    # Это основной случай - чистый JSON без markdown
+    result = extract_json_from_text(cleaned, "чистого текста")
+    if result:
+        return result
+    
+    # Шаг 2: Fallback - если не нашли чистый JSON, пробуем найти в markdown блоках
+    # (на случай, если GPT все еще вернул markdown)
+    logger.debug("Чистый JSON не найден, пробуем markdown блоки как fallback...")
+    
+    code_block_patterns = [
+        r'```json\s*(.*?)\s*```',  # ```json ... ```
+        r'```JSON\s*(.*?)\s*```',  # ```JSON ... ```
+        r'```\s*(.*?)\s*```',      # ``` ... ``` (fallback)
+    ]
+    
+    for pattern in code_block_patterns:
+        code_blocks = re.findall(pattern, cleaned, re.DOTALL | re.IGNORECASE)
+        
+        for block_content in code_blocks:
+            if not block_content.strip():
+                continue
+            
+            result = extract_json_from_text(block_content.strip(), "markdown блока")
+            if result:
+                return result
+    
+    # Шаг 3: Удаляем markdown блоки и пробуем найти JSON в оставшемся тексте
+    cleaned_no_markdown = re.sub(r'```(?:json|JSON)?\s*.*?\s*```', '', cleaned, flags=re.DOTALL | re.IGNORECASE)
+    if cleaned_no_markdown != cleaned:
+        result = extract_json_from_text(cleaned_no_markdown.strip(), "текста без markdown")
+        if result:
+            return result
+    
+    # Логируем проблему для отладки
+    logger.error("❌ Не удалось извлечь JSON из текста после всех стратегий")
+    # Логируем образец текста для помощи в отладке
+    if len(text) > 500:
+        logger.error(f"Образец текста (первые 500 символов): {text[:500]}")
+        logger.error(f"Образец текста (последние 500 символов): {text[-500:]}")
+    else:
+        logger.error(f"Полный текст: {text}")
     return None
 
 
@@ -195,8 +265,25 @@ def run_analysis(
     - parse JSON and prepare telegram/sheets outputs
     Returns dict with keys: messages, raw_response, json, telegram, sheets
     """
+    import logging
+    logger = logging.getLogger(__name__)
+    
     messages = compose_messages(data, template_path)
     text = client.complete_messages(messages)
+    
+    # Save raw response to file for debugging
+    try:
+        import os
+        debug_dir = os.path.join(os.path.dirname(__file__), "debug")
+        os.makedirs(debug_dir, exist_ok=True)
+        debug_file = os.path.join(debug_dir, "last_gpt_response.txt")
+        with open(debug_file, "w", encoding="utf-8") as f:
+            f.write(f"=== RAW GPT RESPONSE ({len(text)} chars) ===\n\n")
+            f.write(text)
+            f.write("\n\n=== END ===\n")
+        logger.info(f"💾 Saved raw response to {debug_file}")
+    except Exception as e:
+        logger.warning(f"⚠️ Failed to save debug file: {e}")
 
     # Handle explicit LLM errors (from client retries)
     result_error: Optional[str] = None
