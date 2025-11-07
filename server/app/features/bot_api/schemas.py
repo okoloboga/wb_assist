@@ -495,6 +495,35 @@ class DynamicCriticalStocksAPIResponse(BaseModel):
     telegram_text: Optional[str] = None
 
 
+class WarehouseStockData(BaseModel):
+    """Данные остатков по складу"""
+    warehouse_name: str
+    total_quantity: int
+    sizes: Dict[str, int]  # Размер -> количество
+
+
+class ProductStockData(BaseModel):
+    """Данные остатков по товару"""
+    nm_id: int
+    name: str
+    total_quantity: int
+    warehouses: Dict[str, WarehouseStockData]  # Название склада -> данные склада
+
+
+class AllStocksReportResponse(BaseModel):
+    """Ответ с отчетом по всем остаткам"""
+    products: List[ProductStockData]
+    pagination: PaginationData
+
+
+class AllStocksReportAPIResponse(BaseModel):
+    """API ответ с отчетом по всем остаткам"""
+    status: str
+    message: Optional[str] = None
+    stocks: Optional[AllStocksReportResponse] = None
+    telegram_text: Optional[str] = None
+
+
 class ReviewsSummaryAPIResponse(BaseModel):
     """Ответ reviews/summary endpoint"""
     status: str

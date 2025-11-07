@@ -1800,6 +1800,127 @@ class BotAPIService:
         
         return recommendations
 
+    async def get_all_stocks_report(self, user, limit: int = 15, offset: int = 0) -> Dict[str, Any]:
+        """Получение отчета по всем остаткам с группировкой по товарам, складам и размерам"""
+        try:
+            # Получаем telegram_id из объекта user
+            telegram_id = user.telegram_id if hasattr(user, 'telegram_id') else user["telegram_id"]
+            
+            cabinet = await self.get_user_cabinet(telegram_id)
+            if not cabinet:
+                return {
+                    "success": False,
+                    "error": "Кабинет WB не найден"
+                }
+            
+            # Получаем все остатки с информацией о товарах
+            stocks_query = self.db.query(WBStock, WBProduct).outerjoin(
+                WBProduct,
+                and_(
+                    WBStock.nm_id == WBProduct.nm_id,
+                    WBStock.cabinet_id == WBProduct.cabinet_id
+                )
+            ).filter(
+                WBStock.cabinet_id == cabinet.id,
+                WBStock.quantity > 0  # Только товары с остатками > 0
+            ).all()
+            
+            # Группируем данные по nm_id → warehouse_name → size
+            products_dict = {}
+            
+            for stock, product in stocks_query:
+                nm_id = stock.nm_id
+                warehouse_name = stock.warehouse_name or "Неизвестный склад"
+                size = stock.size or "ONE SIZE"
+                quantity = stock.quantity or 0
+                
+                # Получаем название товара: сначала из wb_products, потом из wb_stocks
+                product_name = None
+                if product and product.name:
+                    product_name = product.name
+                elif stock.name:
+                    product_name = stock.name
+                else:
+                    product_name = "Неизвестно"
+                
+                # Инициализируем структуру для товара, если его еще нет
+                if nm_id not in products_dict:
+                    products_dict[nm_id] = {
+                        "nm_id": nm_id,
+                        "name": product_name,
+                        "total_quantity": 0,
+                        "warehouses": {}
+                    }
+                
+                # Инициализируем структуру для склада, если его еще нет
+                if warehouse_name not in products_dict[nm_id]["warehouses"]:
+                    products_dict[nm_id]["warehouses"][warehouse_name] = {
+                        "warehouse_name": warehouse_name,
+                        "total_quantity": 0,
+                        "sizes": {}
+                    }
+                
+                # Добавляем размер и количество
+                products_dict[nm_id]["warehouses"][warehouse_name]["sizes"][size] = quantity
+                products_dict[nm_id]["warehouses"][warehouse_name]["total_quantity"] += quantity
+                products_dict[nm_id]["total_quantity"] += quantity
+            
+            # Преобразуем в список и сортируем по общему количеству остатков (убывание)
+            products_list = list(products_dict.values())
+            products_list.sort(key=lambda p: p["total_quantity"], reverse=True)
+            
+            # Сортируем склады внутри каждого товара по количеству остатков (убывание)
+            for product in products_list:
+                warehouses_list = list(product["warehouses"].values())
+                warehouses_list.sort(key=lambda w: w["total_quantity"], reverse=True)
+                product["warehouses"] = {w["warehouse_name"]: w for w in warehouses_list}
+                
+                # Сортируем размеры внутри каждого склада по алфавиту
+                for warehouse in product["warehouses"].values():
+                    sizes_dict = warehouse["sizes"]
+                    sorted_sizes = dict(sorted(sizes_dict.items()))
+                    warehouse["sizes"] = sorted_sizes
+            
+            total_products = len(products_list)
+            
+            # Применяем пагинацию
+            paginated_products = products_list[offset:offset + limit]
+            has_more = offset + limit < total_products
+            
+            stocks_data = {
+                "products": paginated_products,
+                "pagination": {
+                    "limit": limit,
+                    "offset": offset,
+                    "total": total_products,
+                    "has_more": has_more
+                }
+            }
+            
+            # Форматируем Telegram сообщение
+            telegram_text = self.formatter.format_all_stocks_report(stocks_data)
+            
+            return {
+                "success": True,
+                "data": stocks_data,
+                "telegram_text": telegram_text,
+                # Единообразные поля для всех эндпоинтов
+                "orders": [],
+                "pagination": stocks_data["pagination"],
+                "statistics": {},
+                "stocks": stocks_data,
+                "reviews": {},
+                "analytics": {},
+                "order": None
+            }
+            
+        except Exception as e:
+            logger.error(f"Ошибка получения отчета по всем остаткам: {e}")
+            return {
+                "success": False,
+                "error": str(e)
+            }
+
     async def _get_product_statistics(self, cabinet_id: int, nm_id: int) -> Dict[str, Any]:
         """Получение статистики для конкретного товара"""
         try:

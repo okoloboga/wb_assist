@@ -184,27 +184,50 @@ def create_stocks_menu_keyboard() -> InlineKeyboardMarkup:
     ])
 
 
-def create_stocks_keyboard(has_more: bool = False, offset: int = 0) -> InlineKeyboardMarkup:
-    """Создать клавиатуру для отчета критичных остатков с пагинацией"""
+def create_stocks_keyboard(has_more: bool = False, offset: int = 0, is_all_stocks: bool = True) -> InlineKeyboardMarkup:
+    """Создать клавиатуру для отчета остатков с пагинацией"""
     buttons = []
     
     # Навигационные кнопки
     if offset > 0 or has_more:
         nav_buttons = []
         if offset > 0:
+            # Определяем callback_data в зависимости от типа отчета
+            if is_all_stocks:
+                limit = 15
+                callback_prefix = "stocks_all_page_"
+            else:
+                limit = 20
+                callback_prefix = "dynamic_stocks_page_"
+            
             nav_buttons.append(InlineKeyboardButton(
                 text="⬅️ Назад",
-                callback_data=f"dynamic_stocks_page_{max(0, offset-20)}"
+                callback_data=f"{callback_prefix}{max(0, offset-limit)}"
             ))
         
         if has_more:
+            # Определяем callback_data в зависимости от типа отчета
+            if is_all_stocks:
+                limit = 15
+                callback_prefix = "stocks_all_page_"
+            else:
+                limit = 20
+                callback_prefix = "dynamic_stocks_page_"
+            
             nav_buttons.append(InlineKeyboardButton(
                 text="Вперед ➡️",
-                callback_data=f"dynamic_stocks_page_{offset+20}"
+                callback_data=f"{callback_prefix}{offset+limit}"
             ))
         
         if nav_buttons:
             buttons.append(nav_buttons)
+    
+    # Кнопка "Критические остатки" для отчета по всем остаткам
+    if is_all_stocks:
+        buttons.append([InlineKeyboardButton(
+            text="⚠️ Критические остатки",
+            callback_data="dynamic_critical_stocks"
+        )])
     
     # Кнопки действий
     buttons.extend([

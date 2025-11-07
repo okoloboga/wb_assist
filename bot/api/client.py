@@ -396,6 +396,20 @@ class BotAPIClient:
         }
         return await self._make_request_with_retry("GET", "/stocks/dynamic-critical", params=params)
 
+    async def get_all_stocks_report(
+        self, 
+        user_id: int,
+        limit: int = 15,
+        offset: int = 0
+    ) -> BotAPIResponse:
+        """Получить отчет по всем остаткам с группировкой по товарам, складам и размерам"""
+        params = {
+            "telegram_id": user_id,
+            "limit": limit,
+            "offset": offset
+        }
+        return await self._make_request_with_retry("GET", "/stocks/all", params=params)
+
     # Отзывы и аналитика
     async def get_reviews_summary(
         self, 
