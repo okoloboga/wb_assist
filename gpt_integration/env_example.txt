@@ -34,5 +34,19 @@ OPENAI_RETRY_DELAY_MS=500
 # Множитель экспоненциального бэк-оффа
 OPENAI_RETRY_BACKOFF=2
 
+# Photo Processing - API генерации изображений
+IMAGE_GEN_API_KEY=your_image_gen_api_key
+IMAGE_GEN_BASE_URL=https://api.example.com/v1
+IMAGE_GEN_TIMEOUT=60
+IMAGE_GEN_MAX_RETRIES=3
+
+# Photo Processing - Хранение результатов (Вариант 1: ссылки)
+PHOTO_STORAGE_TYPE=url
+# PHOTO_STORAGE_PATH=/path/to/storage (опционально, для Варианта 2)
+# PHOTO_STORAGE_URL_PREFIX=https://cdn.example.com (опционально, для CDN)
+
+# Photo Processing - База данных (опционально, по умолчанию используется общая БД)
+# PHOTO_PROCESSING_DATABASE_URL=sqlite:///./photo_processing.db
+
 # Примечание: при локальном запуске убедитесь, что импорт bot/utils доступен,
 # например запуская из корня проекта или установив PYTHONPATH на корень.

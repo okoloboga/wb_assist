@@ -103,6 +103,7 @@ def ai_assistant_keyboard() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="🧠 AI-анализ", callback_data="ai_analysis")],
         [InlineKeyboardButton(text="💬 AI-чат", callback_data="ai_chat")],
         [InlineKeyboardButton(text="🎨 Генерация карточки", callback_data="start_card_generation")],
+        [InlineKeyboardButton(text="📸 Обработка фото", callback_data="start_photo_processing")],
         [InlineKeyboardButton(text="🔙 Назад", callback_data="main_menu")]
     ])
 
@@ -384,6 +385,13 @@ def create_cabinet_removal_keyboard() -> InlineKeyboardMarkup:
                 callback_data="main_menu"
             )
         ]
+    ])
+
+
+def create_photo_processing_keyboard() -> InlineKeyboardMarkup:
+    """Создать клавиатуру для процесса обработки фото"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 Отмена", callback_data="cancel_photo_processing")]
     ])
 
 
