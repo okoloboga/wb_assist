@@ -484,7 +484,7 @@ class DynamicCriticalStocksResponse(BaseModel):
     summary: DynamicStocksSummary
     pagination: Optional[PaginationData] = None  # Данные пагинации
     recommendations: Optional[List[str]] = None  # Опциональное поле, убрано из форматирования
-    lookback_days: Optional[int] = None  # Период анализа для форматтера
+    perspective_days: Optional[int] = None  # Период перспективы для фильтрации
 
 
 class DynamicCriticalStocksAPIResponse(BaseModel):

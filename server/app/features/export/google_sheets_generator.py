@@ -81,17 +81,30 @@ class GoogleSheetsTemplateGenerator:
                 {'title': '⚙️ Настройки'},
                 {'title': '📦 Склад'},
                 {'title': '🛒 Заказы'},
-                {'title': '⭐ Отзывы'}
+                {'title': '⭐ Отзывы'},
+                {
+                    'title': '📅 В разрезе дня',
+                    'properties': {
+                        'gridProperties': {
+                            'columnCount': 35,  # 5 базовых + 29 дат + 1 СУММА
+                            'rowCount': 1000
+                        }
+                    }
+                }
             ]
             
             requests = []
             for sheet_info in sheets_to_create:
                 if sheet_info['title'] not in existing_sheets:
+                    # Формируем properties для листа
+                    sheet_properties = {'title': sheet_info['title']}
+                    # Если есть дополнительные properties (например, gridProperties), добавляем их
+                    if 'properties' in sheet_info:
+                        sheet_properties.update(sheet_info['properties'])
+                    
                     requests.append({
                         'addSheet': {
-                            'properties': {
-                                'title': sheet_info['title']
-                            }
+                            'properties': sheet_properties
                         }
                     })
             
@@ -116,6 +129,9 @@ class GoogleSheetsTemplateGenerator:
             # Получаем информацию о листах
             spreadsheet_info = self.service.spreadsheets().get(spreadsheetId=spreadsheet_id).execute()
             sheets = spreadsheet_info.get('sheets', [])
+            
+            # Генерируем заголовки для вкладки "В разрезе дня" (28 дней назад до сегодня)
+            daily_headers = self._generate_daily_headers()
             
             # Заголовки для каждого листа
             headers = {
@@ -144,7 +160,8 @@ class GoogleSheetsTemplateGenerator:
                     ['ID отзыва', 'Артикул', 'Название', 'Рейтинг', 'Текст отзыва', 'Плюсы', 
                      'Минусы', 'Имя пользователя', 'Цвет', 'Размер', 'Дата отзыва', 
                      'Ответ продавца', 'Просмотрен']
-                ]
+                ],
+                '📅 В разрезе дня': [daily_headers]
             }
             
             # Записываем заголовки
@@ -170,6 +187,24 @@ class GoogleSheetsTemplateGenerator:
         except Exception as e:
             logger.error(f"Ошибка настройки заголовков: {e}")
             raise
+    
+    def _generate_daily_headers(self) -> List[str]:
+        """Генерирует заголовки для вкладки 'В разрезе дня' (28 дней назад до сегодня)"""
+        from datetime import datetime, timedelta
+        
+        headers = ['📷 Фото', '🆔 Номенклатура', '👗 Название', '↔️ Размер', '⏳ Запас на Дней']
+        
+        # Генерируем даты за последние 28 дней (от 28 дней назад до сегодня)
+        today = datetime.now().date()
+        for i in range(28, -1, -1):  # От 28 дней назад до сегодня (включительно)
+            date = today - timedelta(days=i)
+            date_str = date.strftime('%d.%m.%Y')
+            headers.append(date_str)
+        
+        # Добавляем колонку СУММА в конце
+        headers.append('СУММА')
+        
+        return headers
 
     def _embed_google_apps_script(self, spreadsheet_id: str):
         """Встраивает Google Apps Script в таблицу"""

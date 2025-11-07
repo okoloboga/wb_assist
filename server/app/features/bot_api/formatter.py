@@ -175,7 +175,7 @@ class BotMessageFormatter:
             at_risk_positions = data.get("at_risk_positions", [])
             summary = data.get("summary", {})
             pagination = data.get("pagination", {})
-            lookback_days = data.get("lookback_days", 3)  # Период анализа (по умолчанию 3 дня)
+            perspective_days = data.get("perspective_days", 3)  # Период перспективы для фильтрации (по умолчанию 3 дня)
             
             message = "⚠️ КРИТИЧНЫЕ ОСТАТКИ\n\n"
             
@@ -208,7 +208,7 @@ class BotMessageFormatter:
                 warehouse_name = position.get("warehouse_name", "Неизвестный склад")
                 size = position.get("size", "N/A")
                 current_stock = position.get("current_stock", 0)
-                orders_last_period = position.get("orders_last_24h", 0)  # Название поля для совместимости, но содержит данные за lookback_days
+                orders_last_30_days = position.get("orders_last_24h", 0)  # Название поля для совместимости, но содержит данные за 30 дней
                 days_remaining = position.get("days_remaining", 0)
                 
                 # Формируем строку позиции
@@ -217,7 +217,7 @@ class BotMessageFormatter:
                     position_str += f" ({brand})"
                 position_str += f"""
    🆔 {nm_id} | 📦 {warehouse_name} | 📏 {size}
-   📊 Остаток: {current_stock} шт | Заказов за {lookback_days} дн.: {orders_last_period} шт
+   📊 Остаток: {current_stock} шт | Заказов за 30 дн.: {orders_last_30_days} шт
    ⏰ Прогноз: {int(round(days_remaining))} дн.
 
 """

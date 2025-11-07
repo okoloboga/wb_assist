@@ -335,6 +335,69 @@ class ExportService:
             
             if total_applied != len(requests):
                 logger.warning(f"ВНИМАНИЕ: Не все запросы были применены! Отправлено {len(requests)}, применено {total_applied}")
+            
+            # Сворачиваем созданные группы
+            # Для сворачивания нужно сначала получить ID созданных групп, затем обновить их
+            logger.info(f"Сворачиваем {len(ranges_to_group)} созданных групп...")
+            try:
+                # Получаем информацию о созданных группах
+                spreadsheet_info = service.spreadsheets().get(
+                    spreadsheetId=spreadsheet_id,
+                    fields='sheets.properties.sheetId,sheets.rowGroups'
+                ).execute()
+                
+                # Находим группы для нашего листа
+                row_groups = []
+                for sheet_info in spreadsheet_info.get('sheets', []):
+                    if sheet_info['properties']['sheetId'] == sheet_id:
+                        row_groups = sheet_info.get('rowGroups', [])
+                        break
+                
+                if not row_groups:
+                    logger.warning("Не найдено групп для сворачивания")
+                else:
+                    collapse_requests = []
+                    for group in row_groups:
+                        group_range = group.get('range', {})
+                        if group_range.get('dimension') == 'ROWS':
+                            collapse_requests.append({
+                                "updateDimensionGroup": {
+                                    "dimensionGroup": {
+                                        "range": {
+                                            "sheetId": sheet_id,
+                                            "dimension": "ROWS",
+                                            "startIndex": group_range['startIndex'],
+                                            "endIndex": group_range['endIndex']
+                                        },
+                                        "depth": group.get('depth', 1),  # Глубина группировки
+                                        "collapsed": True
+                                    },
+                                    "fields": "collapsed"
+                                }
+                            })
+                    
+                    if collapse_requests:
+                        # Отправляем запросы на сворачивание батчами
+                        for batch_start in range(0, len(collapse_requests), BATCH_SIZE):
+                            batch_end = min(batch_start + BATCH_SIZE, len(collapse_requests))
+                            batch_collapse_requests = collapse_requests[batch_start:batch_end]
+                            
+                            try:
+                                service.spreadsheets().batchUpdate(
+                                    spreadsheetId=spreadsheet_id,
+                                    body={'requests': batch_collapse_requests}
+                                ).execute()
+                                logger.debug(f"Батч сворачивания {batch_start//BATCH_SIZE + 1}: {len(batch_collapse_requests)} групп свернуто")
+                            except HttpError as e:
+                                logger.error(f"HTTP ошибка при сворачивании батча {batch_start//BATCH_SIZE + 1}: {e}")
+                                continue
+                        
+                        logger.info(f"Успешно свернуто {len(collapse_requests)} групп")
+            except Exception as e:
+                logger.warning(f"Не удалось свернуть группы (это не критично): {e}")
+                # Продолжаем выполнение, так как группы уже созданы
+            
+            
             return True
             
         except HttpError as e:
@@ -795,16 +858,17 @@ class ExportService:
                 grouped_by_nm_id[nm_id] = []
             grouped_by_nm_id[nm_id].append(item)
         
-        # Вычисляем заказы за месяц для каждого nm_id для сортировки
-        nm_id_orders_30d = {}
-        for nm_id, items in grouped_by_nm_id.items():
-            stats = product_stats.get(nm_id, {})
-            nm_id_orders_30d[nm_id] = stats.get('orders_30d', 0)
-        
         # Формируем данные с строками -total
-        # Сортируем nm_id по заказам за месяц по убыванию (от большего к меньшему)
+        # Сортируем nm_id по названию товара (колонка C) в алфавитном порядке
+        # Товары с пустым названием идут в конец
         data = []
-        for nm_id in sorted(grouped_by_nm_id.keys(), key=lambda x: nm_id_orders_30d.get(x, 0), reverse=True):
+        def sort_key(x):
+            product_name = grouped_by_nm_id[x][0].get("product_name") or ""
+            # Если название пустое, возвращаем кортеж (1, ""), чтобы оно было в конце
+            # Если название есть, возвращаем (0, название) для нормальной сортировки
+            return (1 if not product_name else 0, product_name.lower())
+        
+        for nm_id in sorted(grouped_by_nm_id.keys(), key=sort_key):
             items = grouped_by_nm_id[nm_id]
             stats = product_stats.get(nm_id, {})
             
@@ -929,6 +993,168 @@ class ExportService:
             })
         
         return data
+
+    def get_daily_orders_data(self, cabinet_id: int, limit: int = 10000) -> List[List[Any]]:
+        """Получает данные заказов по дням для вкладки 'В разрезе дня'"""
+        from datetime import date as date_type
+        
+        # Получаем даты за последние 28 дней (от 28 дней назад до сегодня включительно)
+        today = datetime.now(timezone.utc).date()
+        date_list = []
+        for i in range(28, -1, -1):  # От 28 дней назад до сегодня (включительно)
+            date = today - timedelta(days=i)
+            date_list.append(date)
+        
+        # Получаем уникальные комбинации nm_id + size из заказов
+        unique_combinations = self.db.query(
+            WBOrder.nm_id,
+            WBOrder.size,
+            func.count(WBOrder.id).label('total_orders')
+        ).filter(
+            WBOrder.cabinet_id == cabinet_id
+        ).group_by(
+            WBOrder.nm_id,
+            WBOrder.size
+        ).order_by(
+            desc('total_orders')
+        ).limit(limit).all()
+        
+        if not unique_combinations:
+            return []
+        
+        # Получаем информацию о продуктах одним запросом
+        unique_nm_ids = list(set(combo.nm_id for combo in unique_combinations))
+        products = self.db.query(WBProduct.nm_id, WBProduct.name, WBProduct.image_url).filter(
+            and_(
+                WBProduct.cabinet_id == cabinet_id,
+                WBProduct.nm_id.in_(unique_nm_ids)
+            )
+        ).all()
+        products_dict = {p.nm_id: {'name': p.name, 'image_url': p.image_url} for p in products}
+        
+        # Получаем остатки для расчета "Запас на Дней"
+        stocks = self.db.query(
+            WBStock.nm_id,
+            WBStock.size,
+            func.sum(WBStock.quantity).label('total_quantity')
+        ).filter(
+            WBStock.cabinet_id == cabinet_id
+        ).group_by(
+            WBStock.nm_id,
+            WBStock.size
+        ).all()
+        stocks_dict = {(s.nm_id, s.size): s.total_quantity for s in stocks}
+        
+        # Получаем заказы за месяц для расчета "Запас на Дней"
+        orders_30d_start = today - timedelta(days=30)
+        orders_30d = self.db.query(
+            WBOrder.nm_id,
+            WBOrder.size,
+            func.count(WBOrder.id).label('count')
+        ).filter(
+            and_(
+                WBOrder.cabinet_id == cabinet_id,
+                WBOrder.order_date >= orders_30d_start
+            )
+        ).group_by(
+            WBOrder.nm_id,
+            WBOrder.size
+        ).all()
+        orders_30d_dict = {(o.nm_id, o.size): o.count for o in orders_30d}
+        
+        # Получаем заказы по дням для каждой комбинации nm_id + size
+        # Используем один запрос с фильтрацией по датам
+        orders_by_day = {}
+        date_start = datetime.combine(date_list[0], datetime.min.time()).replace(tzinfo=timezone.utc)
+        date_end = datetime.combine(date_list[-1] + timedelta(days=1), datetime.min.time()).replace(tzinfo=timezone.utc)
+        
+        for nm_id, size in [(combo.nm_id, combo.size) for combo in unique_combinations]:
+            orders = self.db.query(
+                func.date(WBOrder.order_date).label('order_day'),
+                func.count(WBOrder.id).label('count')
+            ).filter(
+                and_(
+                    WBOrder.cabinet_id == cabinet_id,
+                    WBOrder.nm_id == nm_id,
+                    WBOrder.size == size,
+                    WBOrder.order_date >= date_start,
+                    WBOrder.order_date < date_end
+                )
+            ).group_by(
+                func.date(WBOrder.order_date)
+            ).all()
+            
+            orders_by_day[(nm_id, size)] = {order.order_day: order.count for order in orders}
+        
+        # Формируем данные
+        data = []
+        for combo in unique_combinations:
+            nm_id = combo.nm_id
+            size = combo.size
+            
+            # Получаем информацию о продукте
+            product = products_dict.get(nm_id, {})
+            product_name = product.get('name')
+            image_url = product.get('image_url')
+            image_formula = f'=IMAGE("{image_url}")' if image_url else ''
+            
+            # Получаем остаток для расчета "Запас на Дней"
+            total_quantity = stocks_dict.get((nm_id, size), 0) or 0
+            orders_30d_count = orders_30d_dict.get((nm_id, size), 0)
+            orders_per_day = orders_30d_count / 30.0 if orders_30d_count > 0 else 0
+            
+            # Рассчитываем запас на дней
+            if total_quantity == 0:
+                # Нет остатков - показываем 0
+                stock_days_value = 0
+            elif orders_per_day == 0:
+                # Есть остатки, но нет заказов - показываем большое число (бесконечный запас)
+                stock_days_value = 999
+            else:
+                # Есть остатки и заказы - рассчитываем
+                stock_days_value = round(total_quantity / orders_per_day, 1)
+            
+            # Получаем заказы по дням
+            day_orders = orders_by_day.get((nm_id, size), {})
+            
+            # Формируем строку данных
+            row = [
+                image_formula,                    # A - Фото
+                nm_id,                            # B - Номенклатура
+                product_name or '',               # C - Название
+                size or '',                       # D - Размер
+                stock_days_value                 # E - Запас на Дней
+            ]
+            
+            # Добавляем количество заказов за каждый день
+            total_sum = 0
+            for date in date_list:
+                count = day_orders.get(date, 0)
+                row.append(count if count > 0 else '')
+                total_sum += count
+            
+            # Добавляем колонку СУММА
+            row.append(total_sum if total_sum > 0 else '')
+            
+            data.append(row)
+        
+        return data
+
+    def _generate_daily_headers(self) -> List[str]:
+        """Генерирует заголовки для вкладки 'В разрезе дня' (28 дней назад до сегодня)"""
+        headers = ['📷 Фото', '🆔 Номенклатура', '👗 Название', '↔️ Размер', '⏳ Запас на Дней']
+        
+        # Генерируем даты за последние 28 дней (от 28 дней назад до сегодня включительно)
+        today = datetime.now(timezone.utc).date()
+        for i in range(28, -1, -1):  # От 28 дней назад до сегодня (включительно)
+            date = today - timedelta(days=i)
+            date_str = date.strftime('%d.%m.%Y')
+            headers.append(date_str)
+        
+        # Добавляем колонку СУММА в конце
+        headers.append('СУММА')
+        
+        return headers
 
     def get_export_data(
         self, 
@@ -1164,6 +1390,9 @@ class ExportService:
             reviews_data = self.get_reviews_data(cabinet_id, limit=10000)
             logger.info(f"Получено {len(reviews_data)} отзывов")
             
+            daily_orders_data = self.get_daily_orders_data(cabinet_id, limit=10000)
+            logger.info(f"Получено {len(daily_orders_data)} строк для вкладки 'В разрезе дня'")
+            
             # Обновляем заказы
             if orders_data:
                 logger.info("Формируем данные для листа Заказы...")
@@ -1295,6 +1524,109 @@ class ExportService:
                         valueInputOption='USER_ENTERED',
                         body={'values': values}
                     ).execute()
+            
+            # Обновляем вкладку "В разрезе дня"
+            # Получаем sheetId для листа "В разрезе дня" (избегаем проблем с эмодзи в URL)
+            try:
+                spreadsheet_info = service.spreadsheets().get(spreadsheetId=spreadsheet_id).execute()
+                sheets = spreadsheet_info.get('sheets', [])
+                logger.info(f"Всего листов в таблице: {len(sheets)}")
+                logger.debug(f"Названия листов: {[s['properties']['title'] for s in sheets]}")
+                
+                daily_sheet_id = None
+                daily_sheet_title = None
+                for sheet in sheets:
+                    title = sheet['properties']['title']
+                    # Проверяем название с учетом возможных пробелов после эмодзи
+                    if title.startswith('📅') and 'В разрезе дня' in title:
+                        daily_sheet_id = sheet['properties']['sheetId']
+                        daily_sheet_title = title
+                        logger.info(f"Найден лист 'В разрезе дня' с sheetId={daily_sheet_id}, название: '{title}'")
+                        break
+                
+                if daily_sheet_id:
+                    logger.info(f"Начинаем обновление листа 'В разрезе дня', данных: {len(daily_orders_data)} строк")
+                    # Генерируем заголовки ДО try блока, чтобы переменная была доступна везде
+                    daily_headers = self._generate_daily_headers()
+                    logger.info(f"Сгенерировано {len(daily_headers)} заголовков для листа 'В разрезе дня'")
+                    
+                    # Сначала обновляем заголовки с актуальными датами (они меняются каждый день)
+                    logger.info("Обновляем заголовки вкладки 'В разрезе дня' с актуальными датами...")
+                    try:
+                        # Используем batchUpdate с указанием sheetId для избежания проблем с URL-кодированием
+                        update_requests = [{
+                            "updateCells": {
+                                "range": {
+                                    "sheetId": daily_sheet_id,
+                                    "startRowIndex": 0,
+                                    "endRowIndex": 1,
+                                    "startColumnIndex": 0,
+                                    "endColumnIndex": len(daily_headers)
+                                },
+                                "rows": [{
+                                    "values": [{"userEnteredValue": {"stringValue": str(header)}} for header in daily_headers]
+                                }],
+                                "fields": "userEnteredValue"
+                            }
+                        }]
+                        service.spreadsheets().batchUpdate(
+                            spreadsheetId=spreadsheet_id,
+                            body={'requests': update_requests}
+                        ).execute()
+                        logger.info("Заголовки вкладки 'В разрезе дня' обновлены с актуальными датами")
+                    except Exception as e:
+                        logger.warning(f"Не удалось обновить заголовки вкладки 'В разрезе дня': {e}")
+                        # Продолжаем выполнение, так как это не критично
+                    
+                    if daily_orders_data:
+                        logger.info(f"Формируем данные для листа 'В разрезе дня': {len(daily_orders_data)} строк...")
+                        # Записываем новые данные используя batchUpdate (новые данные перезапишут старые)
+                        logger.info(f"Записываем {len(daily_orders_data)} строк в лист 'В разрезе дня'...")
+                        try:
+                            # Формируем запрос на запись данных
+                            rows = []
+                            for row in daily_orders_data:
+                                row_values = []
+                                for cell_value in row:
+                                    if cell_value == '' or cell_value is None:
+                                        row_values.append({})
+                                    elif isinstance(cell_value, (int, float)):
+                                        row_values.append({"userEnteredValue": {"numberValue": cell_value}})
+                                    else:
+                                        cell_str = str(cell_value)
+                                        # Если значение начинается с "=", это формула - записываем как формулу
+                                        if cell_str.startswith('='):
+                                            row_values.append({"userEnteredValue": {"formulaValue": cell_str}})
+                                        else:
+                                            row_values.append({"userEnteredValue": {"stringValue": cell_str}})
+                                rows.append({"values": row_values})
+                            
+                            write_requests = [{
+                                "updateCells": {
+                                    "range": {
+                                        "sheetId": daily_sheet_id,
+                                        "startRowIndex": 1,  # Строка 2 (индекс 1)
+                                        "endRowIndex": 1 + len(daily_orders_data),
+                                        "startColumnIndex": 0,
+                                        "endColumnIndex": len(daily_headers) if daily_orders_data else 0
+                                    },
+                                    "rows": rows,
+                                    "fields": "userEnteredValue"
+                                }
+                            }]
+                            service.spreadsheets().batchUpdate(
+                                spreadsheetId=spreadsheet_id,
+                                body={'requests': write_requests}
+                            ).execute()
+                            logger.info("Лист 'В разрезе дня' успешно обновлен")
+                        except Exception as e:
+                            logger.error(f"Ошибка записи данных в лист 'В разрезе дня': {e}")
+                    else:
+                        logger.warning(f"Нет данных для записи в лист 'В разрезе дня' (daily_orders_data пустой)")
+                else:
+                    logger.warning(f"Лист 'В разрезе дня' не найден в таблице. Листы: {[s['properties']['title'] for s in sheets]}")
+            except Exception as e:
+                logger.error(f"Ошибка при обновлении вкладки 'В разрезе дня': {e}")
             
             logger.info(f"Таблица {spreadsheet_id} успешно обновлена для кабинета {cabinet_id}")
             return True

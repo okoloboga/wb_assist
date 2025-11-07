@@ -22,7 +22,7 @@ class DynamicStockAnalyzer:
     async def analyze_stock_positions(
         self, 
         cabinet_id: int,
-        lookback_days: int = 3
+        perspective_days: int = 3
     ) -> List[Dict[str, Any]]:
         """
         Анализирует все позиции остатков для кабинета
@@ -30,20 +30,21 @@ class DynamicStockAnalyzer:
         Логика:
         1. Получить все текущие остатки из WBStock
         2. Для каждой позиции (nm_id, warehouse_name, size):
-           - Получить количество заказов за lookback_days
-           - Сравнить с текущим остатком
-           - Если current_stock < orders_last_period → добавить в риск-лист
+           - Получить количество заказов за 30 дней (всегда)
+           - Рассчитать avg_per_day = заказов за 30 дней / 30
+           - Рассчитать days_remaining = current_stock / avg_per_day
+           - Если days_remaining <= perspective_days → добавить в риск-лист
         3. Рассчитать days_remaining для каждой рисковой позиции
         
         Args:
             cabinet_id: ID кабинета для анализа
-            lookback_days: Количество дней для анализа динамики (по умолчанию 3)
+            perspective_days: Количество дней для фильтрации (показывать только если days_remaining <= perspective_days)
         
         Returns:
             Список рисковых позиций с прогнозами
         """
         try:
-            logger.info(f"Starting stock analysis for cabinet {cabinet_id}, lookback_days={lookback_days}")
+            logger.info(f"Starting stock analysis for cabinet {cabinet_id}, perspective_days={perspective_days}")
             
             # Получаем все текущие остатки
             stocks = self.db.query(WBStock).filter(
@@ -59,18 +60,19 @@ class DynamicStockAnalyzer:
             
             at_risk_positions = []
             
-            # Вычисляем временную границу для запроса заказов (конвертируем дни в часы)
-            lookback_hours = lookback_days * 24
-            time_threshold = datetime.utcnow() - timedelta(hours=lookback_hours)
+            # Всегда используем 30 дней для расчета среднего количества заказов в день
+            ANALYSIS_DAYS = 30
+            analysis_hours = ANALYSIS_DAYS * 24
+            time_threshold = datetime.utcnow() - timedelta(hours=analysis_hours)
             
             # Анализируем каждую позицию
             for stock in stocks:
                 try:
-                    # Получаем количество заказов за последние lookback_days напрямую из wb_orders
+                    # Получаем количество заказов за последние 30 дней напрямую из wb_orders
                     warehouse_name = stock.warehouse_name or "Неизвестный склад"
                     size = stock.size or "ONE SIZE"
                     
-                    orders_last_period = self.db.query(func.sum(WBOrder.quantity)).filter(
+                    orders_last_30_days = self.db.query(func.sum(WBOrder.quantity)).filter(
                         and_(
                             WBOrder.cabinet_id == cabinet_id,
                             WBOrder.nm_id == stock.nm_id,
@@ -82,16 +84,16 @@ class DynamicStockAnalyzer:
                     
                     current_stock = stock.quantity or 0
                     
-                    # Рассчитываем avg_per_day (заказов за период / дни)
-                    avg_per_day = orders_last_period / lookback_days if lookback_days > 0 else 0
+                    # Рассчитываем avg_per_day (заказов за 30 дней / 30)
+                    avg_per_day = orders_last_30_days / ANALYSIS_DAYS if ANALYSIS_DAYS > 0 else 0
                     
-                    # Проверяем условие риска: остаток < заказов за период
-                    if current_stock < orders_last_period and orders_last_period > 0:
-                        # Рассчитываем прогноз
-                        days_remaining = await self.calculate_days_remaining(
-                            current_stock, avg_per_day
-                        )
-                        
+                    # Рассчитываем прогноз
+                    days_remaining = await self.calculate_days_remaining(
+                        current_stock, avg_per_day
+                    )
+                    
+                    # Проверяем условие риска: days_remaining <= perspective_days и есть заказы
+                    if days_remaining <= perspective_days and orders_last_30_days > 0:
                         # Определяем уровень риска
                         risk_level = self._determine_risk_level(days_remaining)
                         
@@ -111,7 +113,7 @@ class DynamicStockAnalyzer:
                             "warehouse_name": warehouse_name,
                             "size": size,
                             "current_stock": current_stock,
-                            "orders_last_24h": orders_last_period,  # Название поля оставлено для совместимости, но содержит данные за lookback_days
+                            "orders_last_24h": orders_last_30_days,  # Название поля оставлено для совместимости, но содержит данные за 30 дней
                             "days_remaining": days_remaining,
                             "risk_level": risk_level
                         })

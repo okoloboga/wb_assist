@@ -600,18 +600,18 @@ class BotAPIService:
                     "error": "Кабинет WB не найден"
                 }
             
-            # Получаем период анализа из настроек пользователя
+            # Получаем период перспективы из настроек пользователя
             from app.features.notifications.models import NotificationSettings
             user_settings = self.db.query(NotificationSettings).filter(
                 NotificationSettings.user_id == user_id
             ).first()
             
-            lookback_days = getattr(user_settings, 'stock_analysis_days', 3) if user_settings else 3
+            perspective_days = getattr(user_settings, 'stock_analysis_days', 3) if user_settings else 3
             
             # Получаем данные из БД на основе динамики с пагинацией
             stocks_data = await self._fetch_dynamic_critical_stocks_from_db(
                 cabinet, 
-                lookback_days=lookback_days,
+                perspective_days=perspective_days,
                 limit=limit,
                 offset=offset
             )
@@ -643,17 +643,18 @@ class BotAPIService:
     async def _fetch_dynamic_critical_stocks_from_db(
         self, 
         cabinet: WBCabinet, 
-        lookback_days: int = 3,
+        perspective_days: int = 3,
         limit: int = 20,
         offset: int = 0
     ) -> Dict[str, Any]:
-        """Получение критичных остатков на основе динамики затрат (days_remaining <= lookback_days) с пагинацией"""
+        """Получение критичных остатков на основе динамики затрат (days_remaining <= perspective_days) с пагинацией"""
         try:
             # Используем DynamicStockAnalyzer для анализа остатков
+            # Фильтрация по perspective_days уже происходит внутри analyze_stock_positions
             analyzer = DynamicStockAnalyzer(self.db)
-            at_risk_positions = await analyzer.analyze_stock_positions(cabinet.id, lookback_days=lookback_days)
+            at_risk_positions = await analyzer.analyze_stock_positions(cabinet.id, perspective_days=perspective_days)
             
-            logger.info(f"Получено {len(at_risk_positions)} позиций в риске из analyze_stock_positions")
+            logger.info(f"Получено {len(at_risk_positions)} позиций в риске из analyze_stock_positions (уже отфильтровано по perspective_days={perspective_days})")
             
             # Логируем примеры позиций для диагностики
             if at_risk_positions:
@@ -661,23 +662,12 @@ class BotAPIService:
                 for pos in sample:
                     logger.info(f"Пример позиции: nm_id={pos.get('nm_id')}, "
                               f"stock={pos.get('current_stock')}, "
-                              f"orders_24h={pos.get('orders_last_24h')}, "
+                              f"orders_30d={pos.get('orders_last_24h')}, "
                               f"days_remaining={pos.get('days_remaining')}")
             
-            # Фильтруем только позиции с days_remaining <= lookback_days (окно анализа пользователя)
-            filtered_positions = []
-            for pos in at_risk_positions:
-                days_remaining = pos.get("days_remaining", float('inf'))
-                if days_remaining <= lookback_days:
-                    filtered_positions.append(pos)
-                else:
-                    logger.debug(f"Позиция {pos.get('nm_id')} отфильтрована: days_remaining={days_remaining} > {lookback_days}")
+            total_positions = len(at_risk_positions)
             
-            logger.info(f"После фильтрации days_remaining <= {lookback_days}: {len(filtered_positions)} позиций")
-            
-            total_positions = len(filtered_positions)
-            
-            if not filtered_positions:
+            if not at_risk_positions:
                 return {
                     "at_risk_positions": [],
                     "summary": {
@@ -689,14 +679,14 @@ class BotAPIService:
                         "total": 0,
                         "has_more": False
                     },
-                    "lookback_days": lookback_days
+                    "perspective_days": perspective_days
                 }
             
             # Сортируем по дням остатка (от меньшего к большему)
-            filtered_positions.sort(key=lambda pos: pos.get("days_remaining", float('inf')))
+            at_risk_positions.sort(key=lambda pos: pos.get("days_remaining", float('inf')))
             
             # Применяем пагинацию
-            paginated_positions = filtered_positions[offset:offset + limit]
+            paginated_positions = at_risk_positions[offset:offset + limit]
             has_more = offset + limit < total_positions
             
             return {
@@ -710,7 +700,7 @@ class BotAPIService:
                     "total": total_positions,
                     "has_more": has_more
                 },
-                "lookback_days": lookback_days  # Добавляем период анализа для форматтера
+                "perspective_days": perspective_days  # Добавляем период перспективы для форматтера
             }
             
         except Exception as e:

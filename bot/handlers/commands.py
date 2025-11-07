@@ -457,21 +457,8 @@ async def create_export_for_cabinet(message: Message, cabinet, user_id: int, sta
                 [InlineKeyboardButton(text="⬅️ Назад", callback_data="back_wb_menu")]
             ])
             
-            # Отправляем фото с текстом как подписью
-            try:
-                photo1_path = Path(__file__).parent.parent / "assets" / "1.png"
-                photo1 = FSInputFile(photo1_path)
-                
-                await message.bot.send_photo(
-                    chat_id=user_id,
-                    photo=photo1,
-                    caption=text,
-                    reply_markup=kb
-                )
-            except Exception as e:
-                logger.error(f"Ошибка отправки фото: {e}")
-                # Фолбэк - отправляем обычное сообщение
-                await safe_send_message(message=message, text=text, reply_markup=kb, user_id=user_id)
+            # Отправляем только текстовое сообщение (без фото) для существующей таблицы
+            await safe_send_message(message=message, text=text, reply_markup=kb, user_id=user_id)
             return
         
         # 2) Если таблица не привязана — поведение как раньше (инструкция + ожидание URL)
@@ -508,7 +495,7 @@ async def create_export_for_cabinet(message: Message, cabinet, user_id: int, sta
             )
         except Exception as e:
             logger.error(f"Ошибка отправки фото: {e}")
-            # Фолбэк - отправляем обычное сообщение
+            # Фолбэк - отправляем обычное сообщение только если фото не отправилось
             await safe_send_message(message=message, text=text, user_id=user_id)
         
     except Exception as e:
@@ -807,11 +794,11 @@ async def handle_manual_export_update(callback: CallbackQuery):
             except Exception as e:
                 logger.error(f"Ошибка отправки фото: {e}")
                 # Фолбэк - отправляем обычное сообщение
-                await safe_edit_message(
-                    callback=callback,
+            await safe_edit_message(
+                callback=callback,
                     text=text,
-                    user_id=user_id
-                )
+                user_id=user_id
+            )
         else:
             await safe_edit_message(
                 callback=callback,
