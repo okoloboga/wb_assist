@@ -177,19 +177,63 @@ async def orchestrate_analysis(telegram_id: int, period: str, validate_output: b
             logger.error(f"❌ Result keys: {list(result.keys())}")
             logger.error(f"❌ telegram object: {telegram}")
             logger.error(f"❌ telegram type: {type(telegram)}")
-            logger.error(f"❌ parsed JSON: {parsed_json}")
+            logger.error(f"❌ parsed JSON keys: {list(parsed_json.keys()) if parsed_json else 'None'}")
+            logger.error(f"❌ raw_response length: {len(raw_response)} chars")
             logger.error(f"❌ raw_response (first 1000 chars): {raw_response[:1000]}")
             logger.error(f"❌ raw_response (last 1000 chars): {raw_response[-1000:]}")
             
+            # Check for markdown blocks
+            import re
+            markdown_blocks = re.findall(r'```(.*?)```', raw_response, re.DOTALL)
+            logger.error(f"❌ Found {len(markdown_blocks)} markdown blocks in response")
+            for idx, block in enumerate(markdown_blocks[:3]):  # Log first 3 blocks
+                block_preview = block[:200] + "..." if len(block) > 200 else block
+                logger.error(f"❌ Markdown block {idx+1} preview: {block_preview}")
+            
             # Try to provide more helpful error message
-            if "```json" in raw_response or "```" in raw_response:
-                error_msg = "❌ Не удалось извлечь JSON из markdown блока. Проверьте формат ответа."
-            elif len(raw_response) < 100:
-                error_msg = f"❌ Ответ слишком короткий ({len(raw_response)} символов). Возможно, ошибка API."
+            if len(raw_response) < 100:
+                error_msg = f"❌ Ответ от GPT слишком короткий ({len(raw_response)} символов). Возможно, ошибка API или недостаточно токенов."
+            elif not parsed_json:
+                # JSON extraction completely failed
+                if "```json" in raw_response or "```" in raw_response:
+                    error_msg = (
+                        "❌ Ответ содержит markdown блоки, но не удалось извлечь валидный JSON.\n\n"
+                        "Возможные причины:\n"
+                        "• JSON содержит синтаксические ошибки\n"
+                        "• Ответ был обрезан (недостаточно max_tokens)\n"
+                        "• Неожиданный формат markdown блока\n\n"
+                        "Попробуйте запустить анализ снова."
+                    )
+                elif "{" in raw_response:
+                    error_msg = (
+                        "❌ Ответ содержит JSON, но не в markdown блоке, и парсинг не удался.\n\n"
+                        "Попробуйте запустить анализ снова."
+                    )
+                else:
+                    error_msg = (
+                        "❌ Ответ от GPT не содержит JSON данных.\n\n"
+                        "Возможно, модель вернула текстовый ответ вместо JSON. "
+                        "Попробуйте запустить анализ снова."
+                    )
             elif "telegram" not in parsed_json:
-                error_msg = "❌ В ответе отсутствует секция 'telegram'. Увеличьте max_tokens."
+                error_msg = (
+                    "❌ В ответе отсутствует секция 'telegram'.\n\n"
+                    f"Найденные секции: {', '.join(parsed_json.keys())}\n\n"
+                    "Возможно, ответ был обрезан. Увеличьте max_tokens в настройках."
+                )
+            elif not isinstance(parsed_json.get("telegram"), dict):
+                error_msg = (
+                    f"❌ Секция 'telegram' имеет неверный тип: {type(parsed_json.get('telegram')).__name__}\n\n"
+                    "Ожидается объект с полем 'chunks' или 'mdv2'."
+                )
             else:
-                error_msg = "❌ Не удалось сформировать текст отчёта. Попробуйте позже."
+                tg_obj = parsed_json.get("telegram", {})
+                tg_keys = list(tg_obj.keys()) if isinstance(tg_obj, dict) else []
+                error_msg = (
+                    f"❌ Секция 'telegram' не содержит данных для отправки.\n\n"
+                    f"Найденные поля: {', '.join(tg_keys) if tg_keys else 'нет'}\n\n"
+                    "Ожидается поле 'chunks' (список строк) или 'mdv2' (строка)."
+                )
             
             chunks = [error_msg]
 
