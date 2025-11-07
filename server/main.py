@@ -17,6 +17,7 @@ from app.features.notifications.api.settings import router as notification_setti
 from app.features.notifications.api.test import router as notification_test_router
 from app.features.wb_api.api.cabinet_validation import router as cabinet_validation_router
 from app.features.export import router as export_router, template_router
+from app.features.digest.router import router as digest_router
 
 # Импортируем модели для создания таблиц
 from app.features.user.models import User
@@ -25,6 +26,7 @@ from app.features.wb_api.models_sales import WBSales
 from app.features.notifications.models import NotificationSettings, NotificationHistory, OrderStatusHistory
 from app.features.stock_alerts.models import DailySalesAnalytics, StockAlertHistory
 from app.features.export.models import ExportToken, ExportLog
+from app.features.digest.models import ChannelReport, DigestHistory
 
 # Создаем FastAPI приложение с настройками из config
 app = FastAPI(**settings.get_app_config())
@@ -50,6 +52,7 @@ app.include_router(notification_test_router, prefix="/api/v1/notifications", tag
 app.include_router(cabinet_validation_router, prefix="/api/v1/wb/cabinets/validation", tags=["Cabinet Validation"])
 app.include_router(export_router, tags=["Export"])
 app.include_router(template_router, tags=["Export Templates"])
+app.include_router(digest_router, prefix="/api/v1", tags=["Digest"])
 
 if __name__ == "__main__":
     import uvicorn

@@ -65,7 +65,7 @@ services:
     build:
       context: ./server
       dockerfile: Dockerfile
-    command: celery -A app.core.celery_app worker --loglevel=info --queues=sync_queue,alerts_queue,export_queue
+    command: celery -A app.core.celery_app worker --loglevel=info --queues=sync_queue,alerts_queue,export_queue,digest_queue
     depends_on:
       db:
         condition: service_healthy
@@ -81,6 +81,7 @@ services:
       - GOOGLE_SERVICE_ACCOUNT_FILE=${GOOGLE_SERVICE_ACCOUNT_FILE}
       - GOOGLE_TEMPLATE_SPREADSHEET_ID=${GOOGLE_TEMPLATE_SPREADSHEET_ID}
       - GOOGLE_SCOPES=${GOOGLE_SCOPES}
+      - BOT_YOUNG_TOKEN=${BOT_YOUNG_TOKEN}
     networks:
       - app-network
 
@@ -171,6 +172,25 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    networks:
+      - app-network
+    restart: unless-stopped
+
+  bot_young:
+    build:
+      context: .
+      dockerfile: bot_young/Dockerfile
+    container_name: wb_assist_bot_young
+    depends_on:
+      - server
+      - redis
+    environment:
+      - BOT_YOUNG_TOKEN=${BOT_YOUNG_TOKEN}
+      - SERVER_HOST=http://server:8000
+      - API_SECRET_KEY=${API_SECRET_KEY}
+      - MAIN_BOT_USERNAME=${MAIN_BOT_USERNAME}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - DEFAULT_TIMEZONE=Europe/Moscow
     networks:
       - app-network
     restart: unless-stopped

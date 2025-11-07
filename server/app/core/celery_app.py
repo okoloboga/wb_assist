@@ -50,6 +50,7 @@ celery_app = Celery(
         "app.features.sync.tasks",
         "app.features.stock_alerts.tasks",
         "app.features.export.tasks",
+        "app.features.digest.tasks",
     ]
 )
 
@@ -81,6 +82,10 @@ celery_app.conf.update(
         # Экспорт в Google Sheets
         "app.features.export.tasks.export_all_to_spreadsheets": {"queue": "export_queue"},
         "app.features.export.tasks.export_cabinet_to_spreadsheet": {"queue": "export_queue"},
+        
+        # Отправка сводок в каналы
+        "app.features.digest.tasks.check_digest_schedule": {"queue": "digest_queue"},
+        "app.features.digest.tasks.send_digest_to_channel": {"queue": "digest_queue"},
     },
     
     # Настройки для периодических задач
@@ -100,6 +105,10 @@ celery_app.conf.update(
         "export-all-to-sheets": {
             "task": "app.features.export.tasks.export_all_to_spreadsheets",
             "schedule": float(export_interval),  # Экспорт в Google Sheets (использует SYNC_INTERVAL)
+        },
+        "check-digest-schedule": {
+            "task": "app.features.digest.tasks.check_digest_schedule",
+            "schedule": crontab(minute='*'),  # Каждую минуту проверяем расписание
         },
     },
     
