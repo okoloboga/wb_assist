@@ -16,6 +16,9 @@ from core.config import config
 from handlers.start import router as start_router
 from handlers.channels import router as channels_router
 from handlers.add_channel import router as add_channel_router
+from handlers.connect import router as connect_router
+from handlers.channel_flow import router as channel_flow_router
+from handlers.fsm_time_entry import router as fsm_time_entry_router
 
 # Настройка логирования
 logging.basicConfig(
@@ -30,7 +33,10 @@ dp = Dispatcher()
 
 # Подключаем роутеры
 dp.include_router(start_router)
-dp.include_router(add_channel_router)  # FSM должен быть раньше
+dp.include_router(add_channel_router)
+dp.include_router(connect_router)
+dp.include_router(channel_flow_router)
+dp.include_router(fsm_time_entry_router)
 dp.include_router(channels_router)
 
 

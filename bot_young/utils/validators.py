@@ -7,24 +7,26 @@ from typing import Optional
 
 def parse_channel_link(text: str) -> Optional[str]:
     """
-    Парсит ссылку или username канала
+    Парсит ссылку или username публичного канала/группы.
+    
+    Для приватных чатов используется механизм пересылки сообщений,
+    а этот парсер является фолбэком для публичных.
     
     Поддерживаемые форматы:
-    - @channel
-    - https://t.me/channel
-    - t.me/channel
+    - @chat_username
+    - https://t.me/chat_username
+    - t.me/chat_username
     
     Returns:
-        @channel или None если формат неверный
+        @chat_username или None если формат неверный
     """
     text = text.strip()
     
-    # Если уже в формате @channel
+    # Если уже в формате @username
     if text.startswith("@"):
         return text
     
-    # Парсим URL
-    # https://t.me/channel или t.me/channel
+    # Парсим URL (https://t.me/username или t.me/username)
     pattern = r'(?:https?://)?t\.me/([a-zA-Z0-9_]+)'
     match = re.match(pattern, text)
     

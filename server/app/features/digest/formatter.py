@@ -71,7 +71,6 @@ class DigestFormatter:
 💰 ПРОДАЖИ
 • Выкупов: {sales.get('buyouts_count', 0)} ({DigestFormatter.format_currency(sales.get('buyouts_amount', 0))})
 • Возвратов: {sales.get('returns_count', 0)} ({DigestFormatter.format_currency(sales.get('returns_amount', 0))})
-• Коэффициент выкупа: {sales.get('buyout_rate', 0):.1f}%
 
 ⭐ ОТЗЫВЫ
 • Новых отзывов: {reviews.get('new_count', 0)}
