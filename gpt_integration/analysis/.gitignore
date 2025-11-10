@@ -1,0 +1,5 @@
+# Debug files
+debug/
+*.debug.txt
+last_gpt_response.txt
+

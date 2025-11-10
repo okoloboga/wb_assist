@@ -37,3 +37,7 @@ class PhotoProcessingResult(Base):
     def __repr__(self) -> str:
         return f"<PhotoProcessingResult(id={self.id}, telegram_id={self.telegram_id}, created_at={self.created_at})>"
 
+
+
+
+

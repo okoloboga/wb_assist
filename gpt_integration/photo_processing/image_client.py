@@ -114,3 +114,7 @@ class ImageGenerationClient:
         # TODO: Реализовать экспоненциальную задержку между попытками
         raise NotImplementedError("_make_request not implemented yet")
 
+
+
+
+
