@@ -381,15 +381,47 @@ class BotAPIClient:
         params = {"telegram_id": user_id, "limit": limit, "offset": offset}
         return await self._make_request_with_retry("GET", "/stocks/critical", params=params)
 
+    # Остатки и товары
+    async def get_dynamic_critical_stocks(
+        self, 
+        user_id: int,
+        limit: int = 20,
+        offset: int = 0
+    ) -> BotAPIResponse:
+        """Получить критичные остатки на основе динамики затрат с пагинацией"""
+        params = {
+            "telegram_id": user_id,
+            "limit": limit,
+            "offset": offset
+        }
+        return await self._make_request_with_retry("GET", "/stocks/dynamic-critical", params=params)
+
+    async def get_all_stocks_report(
+        self, 
+        user_id: int,
+        limit: int = 15,
+        offset: int = 0
+    ) -> BotAPIResponse:
+        """Получить отчет по всем остаткам с группировкой по товарам, складам и размерам"""
+        params = {
+            "telegram_id": user_id,
+            "limit": limit,
+            "offset": offset
+        }
+        return await self._make_request_with_retry("GET", "/stocks/all", params=params)
+
     # Отзывы и аналитика
     async def get_reviews_summary(
         self, 
         user_id: int, 
         limit: int = 10, 
-        offset: int = 0
+        offset: int = 0,
+        rating_threshold: Optional[int] = None
     ) -> BotAPIResponse:
-        """Получить новые и проблемные отзывы"""
+        """Получить новые и проблемные отзывы с фильтрацией по рейтингу"""
         params = {"telegram_id": user_id, "limit": limit, "offset": offset}
+        if rating_threshold is not None:
+            params["rating_threshold"] = rating_threshold
         return await self._make_request("GET", "/reviews/summary", params=params)
 
     async def get_analytics_sales(
@@ -601,6 +633,25 @@ class BotAPIClient:
                 status_code=500
             )
 
+    async def get_cabinet_spreadsheet(self, cabinet_id: int) -> BotAPIResponse:
+        """Получить привязанную Google Sheet кабинета"""
+        url = f"{SERVER_HOST}/api/export/cabinet/{cabinet_id}/spreadsheet"
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    url,
+                    headers=self.headers,
+                    timeout=aiohttp.ClientTimeout(total=self.timeout)
+                ) as resp:
+                    data = await resp.json()
+                    if resp.status == 200:
+                        return BotAPIResponse(success=True, data=data, status_code=resp.status)
+                    else:
+                        return BotAPIResponse(success=False, error=data.get("detail", "Not found"), status_code=resp.status)
+        except Exception as e:
+            logger.error(f"Ошибка получения spreadsheet: {e}")
+            return BotAPIResponse(success=False, error=str(e), status_code=500)
+
     async def update_cabinet_spreadsheet(self, cabinet_id: int) -> BotAPIResponse:
         """Обновляет Google Sheets таблицу кабинета"""
         logger.info(f"🔄 Обновление таблицы кабинета {cabinet_id}")
@@ -612,7 +663,8 @@ class BotAPIClient:
                 async with session.post(
                     url,
                     headers=self.headers,
-                    timeout=aiohttp.ClientTimeout(total=self.timeout)
+                    # Даем серверу достаточно времени на экспорт больших таблиц
+                    timeout=aiohttp.ClientTimeout(total=300)
                 ) as resp:
                     response_data = await resp.json()
                     
@@ -632,6 +684,15 @@ class BotAPIClient:
                             status_code=resp.status
                         )
                         
+        except asyncio.TimeoutError:
+            # Сервер продолжает обновление, но клиент дождаться не смог
+            msg = "Таймаут ожидания ответа. Экспорт на сервере продолжится — проверьте таблицу через минуту."
+            logger.warning(f"⏰ {msg}")
+            return BotAPIResponse(
+                success=False,
+                error=msg,
+                status_code=408
+            )
         except Exception as e:
             logger.error(f"💥 Ошибка обновления таблицы: {e}")
             return BotAPIResponse(

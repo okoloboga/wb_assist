@@ -2,9 +2,11 @@
 Фоновые задачи для автоматического экспорта в Google Sheets
 """
 import logging
+import os
 from typing import Dict, Any
 from sqlalchemy.orm import Session
 from sqlalchemy import and_
+import redis
 
 from app.core.database import get_db
 from app.core.celery_app import celery_app
@@ -13,13 +15,28 @@ from .service import ExportService
 
 logger = logging.getLogger(__name__)
 
+# Redis клиент для дедупликации задач
+redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+redis_client = redis.from_url(redis_url, decode_responses=True)
+
 
 @celery_app.task(bind=True, max_retries=3, autoretry_for=(Exception,))
 def export_all_to_spreadsheets(self) -> Dict[str, Any]:
     """
     Экспортирует данные всех кабинетов в их Google Sheets таблицы
     """
+    # Дедупликация: проверяем, не запущена ли уже задача
+    lock_key = "export_all_sheets_lock"
+    lock_value = str(self.request.id)
+    lock_ttl = 300  # 5 минут
+    
     try:
+        # Пытаемся занять лока
+        acquired = redis_client.set(lock_key, lock_value, nx=True, ex=lock_ttl)
+        if not acquired:
+            logger.info("Задача экспорта уже выполняется другим воркером, пропускаем")
+            return {"status": "skipped", "message": "Уже выполняется"}
+        
         logger.info("Начинаем экспорт данных во все Google Sheets таблицы")
         
         # Получаем сессию БД
@@ -75,8 +92,15 @@ def export_all_to_spreadsheets(self) -> Dict[str, Any]:
         
     except Exception as e:
         logger.error(f"Критическая ошибка при экспорте: {e}")
-        db.close()
+        if 'db' in locals():
+            db.close()
         raise
+    finally:
+        # Освобождаем лок после выполнения
+        try:
+            redis_client.delete(lock_key)
+        except Exception:
+            pass
 
 
 @celery_app.task(bind=True, max_retries=3)

@@ -3,14 +3,12 @@
 """
 
 from sqlalchemy.orm import Session
-from sqlalchemy import and_
+from sqlalchemy import and_, func
 from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional
 import logging
-import os
 
-from app.features.wb_api.models import WBStock, WBProduct
-from .sales_aggregator import DailySalesAggregator
+from app.features.wb_api.models import WBStock, WBProduct, WBOrder
 
 logger = logging.getLogger(__name__)
 
@@ -20,12 +18,11 @@ class DynamicStockAnalyzer:
     
     def __init__(self, db: Session):
         self.db = db
-        self.aggregator = DailySalesAggregator(db)
-        self.lookback_hours = int(os.getenv("STOCK_ALERT_LOOKBACK_HOURS", "24"))
     
     async def analyze_stock_positions(
         self, 
-        cabinet_id: int
+        cabinet_id: int,
+        perspective_days: int = 3
     ) -> List[Dict[str, Any]]:
         """
         Анализирует все позиции остатков для кабинета
@@ -33,19 +30,21 @@ class DynamicStockAnalyzer:
         Логика:
         1. Получить все текущие остатки из WBStock
         2. Для каждой позиции (nm_id, warehouse_name, size):
-           - Получить количество заказов за lookback_hours
-           - Сравнить с текущим остатком
-           - Если current_stock < orders_last_24h → добавить в риск-лист
+           - Получить количество заказов за 30 дней (всегда)
+           - Рассчитать avg_per_day = заказов за 30 дней / 30
+           - Рассчитать days_remaining = current_stock / avg_per_day
+           - Если days_remaining <= perspective_days → добавить в риск-лист
         3. Рассчитать days_remaining для каждой рисковой позиции
         
         Args:
             cabinet_id: ID кабинета для анализа
+            perspective_days: Количество дней для фильтрации (показывать только если days_remaining <= perspective_days)
         
         Returns:
             Список рисковых позиций с прогнозами
         """
         try:
-            logger.info(f"Starting stock analysis for cabinet {cabinet_id}")
+            logger.info(f"Starting stock analysis for cabinet {cabinet_id}, perspective_days={perspective_days}")
             
             # Получаем все текущие остатки
             stocks = self.db.query(WBStock).filter(
@@ -61,35 +60,49 @@ class DynamicStockAnalyzer:
             
             at_risk_positions = []
             
+            # Всегда используем 30 дней для расчета среднего количества заказов в день
+            ANALYSIS_DAYS = 30
+            analysis_hours = ANALYSIS_DAYS * 24
+            time_threshold = datetime.utcnow() - timedelta(hours=analysis_hours)
+            
             # Анализируем каждую позицию
             for stock in stocks:
                 try:
-                    # Получаем статистику заказов за lookback_hours
-                    stats = await self.aggregator.get_rolling_stats(
-                        cabinet_id=cabinet_id,
-                        nm_id=stock.nm_id,
-                        warehouse_name=stock.warehouse_name or "Неизвестный склад",
-                        size=stock.size or "ONE SIZE",
-                        hours=self.lookback_hours
-                    )
+                    # Получаем количество заказов за последние 30 дней напрямую из wb_orders
+                    warehouse_name = stock.warehouse_name or "Неизвестный склад"
+                    size = stock.size or "ONE SIZE"
                     
-                    orders_last_24h = stats.get("quantity_ordered", 0)
+                    orders_last_30_days = self.db.query(func.sum(WBOrder.quantity)).filter(
+                        and_(
+                            WBOrder.cabinet_id == cabinet_id,
+                            WBOrder.nm_id == stock.nm_id,
+                            WBOrder.warehouse_from == warehouse_name,
+                            WBOrder.size == size,
+                            WBOrder.order_date >= time_threshold
+                        )
+                    ).scalar() or 0
+                    
                     current_stock = stock.quantity or 0
                     
-                    # Проверяем условие риска: остаток < заказов за период
-                    if current_stock < orders_last_24h and orders_last_24h > 0:
-                        # Рассчитываем прогноз
-                        avg_per_day = stats.get("avg_per_day", 0)
-                        days_remaining = await self.calculate_days_remaining(
-                            current_stock, avg_per_day
-                        )
-                        
+                    # Рассчитываем avg_per_day (заказов за 30 дней / 30)
+                    avg_per_day = orders_last_30_days / ANALYSIS_DAYS if ANALYSIS_DAYS > 0 else 0
+                    
+                    # Рассчитываем прогноз
+                    days_remaining = await self.calculate_days_remaining(
+                        current_stock, avg_per_day
+                    )
+                    
+                    # Проверяем условие риска: days_remaining <= perspective_days и есть заказы
+                    if days_remaining <= perspective_days and orders_last_30_days > 0:
                         # Определяем уровень риска
                         risk_level = self._determine_risk_level(days_remaining)
                         
                         # Получаем информацию о товаре
                         product = self.db.query(WBProduct).filter(
-                            WBProduct.nm_id == stock.nm_id
+                            and_(
+                                WBProduct.nm_id == stock.nm_id,
+                                WBProduct.cabinet_id == cabinet_id
+                            )
                         ).first()
                         
                         at_risk_positions.append({
@@ -97,10 +110,10 @@ class DynamicStockAnalyzer:
                             "name": product.name if product else f"Товар {stock.nm_id}",
                             "brand": product.brand if product else "",
                             "image_url": product.image_url if product else None,
-                            "warehouse_name": stock.warehouse_name or "Неизвестный склад",
-                            "size": stock.size or "ONE SIZE",
+                            "warehouse_name": warehouse_name,
+                            "size": size,
                             "current_stock": current_stock,
-                            "orders_last_24h": orders_last_24h,
+                            "orders_last_24h": orders_last_30_days,  # Название поля оставлено для совместимости, но содержит данные за 30 дней
                             "days_remaining": days_remaining,
                             "risk_level": risk_level
                         })
@@ -195,20 +208,32 @@ class DynamicStockAnalyzer:
                     "error": "Stock not found"
                 }
             
-            # Получаем статистику за 24ч
-            stats_24h = await self.aggregator.get_rolling_stats(
-                cabinet_id, nm_id, warehouse_name, size, hours=24
-            )
+            # Получаем статистику за 24ч напрямую из wb_orders
+            time_threshold_24h = datetime.utcnow() - timedelta(hours=24)
+            orders_last_24h = self.db.query(func.sum(WBOrder.quantity)).filter(
+                and_(
+                    WBOrder.cabinet_id == cabinet_id,
+                    WBOrder.nm_id == nm_id,
+                    WBOrder.warehouse_from == warehouse_name,
+                    WBOrder.size == size,
+                    WBOrder.order_date >= time_threshold_24h
+                )
+            ).scalar() or 0
             
-            # Получаем статистику за 7 дней
-            stats_7d = await self.aggregator.get_rolling_stats(
-                cabinet_id, nm_id, warehouse_name, size, hours=168
-            )
+            # Получаем статистику за 7 дней напрямую из wb_orders
+            time_threshold_7d = datetime.utcnow() - timedelta(hours=168)
+            orders_last_7d = self.db.query(func.sum(WBOrder.quantity)).filter(
+                and_(
+                    WBOrder.cabinet_id == cabinet_id,
+                    WBOrder.nm_id == nm_id,
+                    WBOrder.warehouse_from == warehouse_name,
+                    WBOrder.size == size,
+                    WBOrder.order_date >= time_threshold_7d
+                )
+            ).scalar() or 0
             
             current_stock = stock.quantity or 0
-            orders_last_24h = stats_24h.get("quantity_ordered", 0)
-            orders_last_7d = stats_7d.get("quantity_ordered", 0)
-            avg_per_day = stats_24h.get("avg_per_day", 0)
+            avg_per_day = orders_last_24h / 1.0  # За 24 часа = 1 день
             
             days_remaining = await self.calculate_days_remaining(current_stock, avg_per_day)
             

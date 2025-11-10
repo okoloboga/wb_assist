@@ -32,6 +32,7 @@ pytest-asyncio>=0.21.0
 redis>=4.5.0
 asyncio-mqtt>=0.13.0
 celery>=5.3.0
+pytz>=2023.3
 
 # Зависимости для WB API
 httpx>=0.24.0

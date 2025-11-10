@@ -3,7 +3,7 @@ Pydantic schemas for notification API endpoints
 """
 from typing import Optional, List
 from datetime import datetime
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class NotificationSettingsResponse(BaseModel):
@@ -17,7 +17,17 @@ class NotificationSettingsResponse(BaseModel):
     negative_reviews_enabled: bool
     review_rating_threshold: int = Field(ge=0, le=5)
     critical_stocks_enabled: bool
+    stock_analysis_days: int = Field(ge=1, le=14, description="Дни для анализа динамики остатков: 1, 3, 7, 10, 14")
     grouping_enabled: bool
+    
+    @field_validator('stock_analysis_days')
+    @classmethod
+    def validate_stock_analysis_days(cls, v: int) -> int:
+        """Валидация: разрешены только значения 1, 3, 7, 10, 14"""
+        allowed_values = [1, 3, 7, 10, 14]
+        if v not in allowed_values:
+            raise ValueError(f"stock_analysis_days должен быть одним из: {allowed_values}, получено: {v}")
+        return v
     max_group_size: int = Field(ge=1, le=50)
     group_timeout: int = Field(ge=1, le=300)
 
@@ -35,7 +45,19 @@ class NotificationSettingsUpdate(BaseModel):
     negative_reviews_enabled: Optional[bool] = None
     review_rating_threshold: Optional[int] = Field(None, ge=0, le=5)
     critical_stocks_enabled: Optional[bool] = None
+    stock_analysis_days: Optional[int] = Field(None, ge=1, le=14, description="Дни для анализа динамики остатков: 1, 3, 7, 10, 14")
     grouping_enabled: Optional[bool] = None
+    
+    @field_validator('stock_analysis_days')
+    @classmethod
+    def validate_stock_analysis_days(cls, v: Optional[int]) -> Optional[int]:
+        """Валидация: разрешены только значения 1, 3, 7, 10, 14"""
+        if v is None:
+            return v
+        allowed_values = [1, 3, 7, 10, 14]
+        if v not in allowed_values:
+            raise ValueError(f"stock_analysis_days должен быть одним из: {allowed_values}, получено: {v}")
+        return v
     max_group_size: Optional[int] = Field(None, ge=1, le=50)
     group_timeout: Optional[int] = Field(None, ge=1, le=300)
 

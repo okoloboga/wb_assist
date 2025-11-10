@@ -16,6 +16,7 @@ from googleapiclient.errors import HttpError
 
 from ...core.database import get_db
 from ..wb_api.models import WBCabinet, WBOrder, WBStock, WBReview, WBProduct
+from ..wb_api.models_sales import WBSales
 from .models import ExportToken, ExportLog
 from .schemas import ExportStatus, ExportDataType
 from .schemas import ExportDataResponse, ExportStatsResponse, CabinetValidationResponse
@@ -48,6 +49,363 @@ class ExportService:
                 logger.error(f"Ошибка инициализации Google Sheets API: {e}")
                 raise
         return self._sheets_service
+
+    def get_cabinet_spreadsheet(self, cabinet_id: int) -> Optional[str]:
+        """Возвращает spreadsheet_id привязанной таблицы кабинета или None"""
+        cabinet = self.db.query(WBCabinet).filter(WBCabinet.id == cabinet_id).first()
+        return cabinet.spreadsheet_id if cabinet and cabinet.spreadsheet_id else None
+
+    def _format_total_rows(self, service, spreadsheet_id: str, stocks_data: List[Dict[str, Any]]) -> bool:
+        """
+        Форматирует строки -total жирным шрифтом
+        """
+        try:
+            # Получаем sheetId для листа "📦 Склад"
+            spreadsheet_info = service.spreadsheets().get(spreadsheetId=spreadsheet_id).execute()
+            sheets = spreadsheet_info.get('sheets', [])
+            
+            sheet_id = None
+            for sheet in sheets:
+                if sheet['properties']['title'] == '📦 Склад':
+                    sheet_id = sheet['properties']['sheetId']
+                    break
+            
+            if sheet_id is None:
+                logger.warning("Лист '📦 Склад' не найден для форматирования")
+                return False
+            
+            # Находим индексы строк с -total (начинаются со строки 2, индекс 1)
+            format_requests = []
+            for idx, stock in enumerate(stocks_data):
+                if stock.get('is_total_row', False):
+                    row_index = idx + 1  # +1 потому что данные начинаются со строки 2 (индекс 1)
+                    
+                    # Форматирование: жирный шрифт
+                    format_requests.append({
+                        "repeatCell": {
+                            "range": {
+                                "sheetId": sheet_id,
+                                "startRowIndex": row_index,
+                                "endRowIndex": row_index + 1,  # Одна строка
+                                "startColumnIndex": 0,
+                                "endColumnIndex": 17  # Все колонки A-Q (0-16)
+                            },
+                            "cell": {
+                                "userEnteredFormat": {
+                                    "textFormat": {
+                                        "bold": True
+                                    }
+                                }
+                            },
+                            "fields": "userEnteredFormat.textFormat"
+                        }
+                    })
+            
+            if not format_requests:
+                logger.info("Нет строк -total для форматирования")
+                return True
+            
+            # Применяем форматирование
+            logger.info(f"Применяем жирный шрифт к {len(format_requests)} строкам -total")
+            body = {'requests': format_requests}
+            service.spreadsheets().batchUpdate(
+                spreadsheetId=spreadsheet_id,
+                body=body
+            ).execute()
+            
+            logger.info(f"Форматирование {len(format_requests)} строк -total завершено")
+            return True
+            
+        except HttpError as e:
+            logger.error(f"HTTP ошибка при форматировании строк -total: {e}")
+            return False
+        except Exception as e:
+            logger.error(f"Ошибка форматирования строк -total: {e}")
+            return False
+
+    def _group_stocks_by_nm_id(self, service, spreadsheet_id: str) -> bool:
+        """
+        Группирует строки в листе "📦 Склад" по значению в колонке B (nm_id)
+        """
+        try:
+            # Получаем информацию о таблице для получения sheetId
+            spreadsheet_info = service.spreadsheets().get(spreadsheetId=spreadsheet_id).execute()
+            sheets = spreadsheet_info.get('sheets', [])
+            
+            # Находим sheetId для листа "📦 Склад"
+            sheet_id = None
+            for sheet in sheets:
+                if sheet['properties']['title'] == '📦 Склад':
+                    sheet_id = sheet['properties']['sheetId']
+                    break
+            
+            if sheet_id is None:
+                logger.warning("Лист '📦 Склад' не найден в таблице")
+                return False
+            
+            # Считываем все значения из колонки B (со строки 2, пропускаем заголовок)
+            result = service.spreadsheets().values().get(
+                spreadsheetId=spreadsheet_id,
+                range='📦 Склад!B2:B'
+            ).execute()
+            
+            values = result.get('values', [])
+            
+            logger.info(f"Получено {len(values)} значений из колонки B для группировки")
+            if len(values) > 0:
+                sample_values = [v[0] if v and len(v) > 0 else None for v in values[:min(10, len(values))]]
+                logger.debug(f"Первые значения nm_id: {sample_values}")
+                if len(values) > 10:
+                    sample_values_end = [v[0] if v and len(v) > 0 else None for v in values[-10:]]
+                    logger.debug(f"Последние значения nm_id: {sample_values_end}")
+            
+            if not values:
+                logger.info("Нет данных для группировки в листе '📦 Склад'")
+                return True
+            
+            # Сначала удаляем все существующие группы строк более точным способом
+            # ВАЖНО: При большом количестве групп операция может таймаутить, поэтому делаем её опциональной
+            try:
+                # Получаем информацию о таблице для поиска существующих групп
+                spreadsheet_info = service.spreadsheets().get(
+                    spreadsheetId=spreadsheet_id,
+                    fields='sheets.properties.title,sheets.properties.sheetId,sheets.rowGroups'
+                ).execute()
+                
+                # Ищем лист "📦 Склад" и его группы
+                delete_requests = []
+                for sheet_info in spreadsheet_info.get('sheets', []):
+                    if sheet_info['properties']['title'] == '📦 Склад':
+                        sheet_id_found = sheet_info['properties']['sheetId']
+                        if sheet_id_found == sheet_id and 'rowGroups' in sheet_info:
+                            # Находим все группы строк в листе
+                            for group in sheet_info.get('rowGroups', []):
+                                group_range = group.get('range', {})
+                                if group_range.get('dimension') == 'ROWS':
+                                    delete_requests.append({
+                                        "deleteDimensionGroup": {
+                                            "range": {
+                                                "sheetId": sheet_id,
+                                                "dimension": "ROWS",
+                                                "startIndex": group_range['startIndex'],
+                                                "endIndex": group_range['endIndex']
+                                            }
+                                        }
+                                    })
+                
+                # Удаляем найденные группы
+                if delete_requests:
+                    logger.info(f"Найдено {len(delete_requests)} старых групп для удаления")
+                    body = {'requests': delete_requests}
+                    service.spreadsheets().batchUpdate(
+                        spreadsheetId=spreadsheet_id,
+                        body=body
+                    ).execute()
+                    logger.info("Старые группы строк удалены")
+                else:
+                    logger.debug("Старые группы не найдены")
+            except HttpError as http_err:
+                # Если групп нет или ошибка доступа, это нормально
+                if http_err.resp.status == 400 or http_err.resp.status == 404:
+                    logger.debug("Группы не найдены для удаления (это нормально)")
+                elif http_err.resp.status == 408 or http_err.resp.status == 504 or 'timeout' in str(http_err).lower() or 'timed out' in str(http_err).lower():
+                    # Таймаут при чтении групп строк - это нормально при большом объеме данных
+                    logger.warning(f"Таймаут при чтении групп строк (это нормально при большом объеме данных). Продолжаем создание новых групп: {http_err}")
+                    # Продолжаем выполнение без удаления старых групп
+                else:
+                    logger.warning(f"HTTP ошибка при удалении старых групп (продолжаем выполнение): {http_err.resp.status} - {http_err}")
+                    # Продолжаем выполнение даже при других HTTP ошибках
+            except TimeoutError as timeout_err:
+                # Явная обработка таймаутов
+                logger.warning(f"Таймаут при чтении групп строк (это нормально при большом объеме данных). Продолжаем создание новых групп: {timeout_err}")
+            except Exception as e:
+                # Обрабатываем все исключения, включая таймауты
+                error_msg = str(e).lower()
+                if 'timeout' in error_msg or 'timed out' in error_msg:
+                    logger.warning(f"Таймаут при чтении групп строк (это нормально при большом объеме данных). Продолжаем создание новых групп: {e}")
+                else:
+                    logger.warning(f"Не удалось удалить старые группы (это не критично, создадим новые): {e}")
+            
+            # Обнаруживаем диапазоны одинаковых значений nm_id
+            # Учитываем, что данные начинаются со строки 2 (индекс 0 в массиве = строка 2)
+            # Строки -total автоматически разделят группы, так как имеют уникальное значение
+            ranges_to_group = []
+            start_idx = 0
+            
+            for i in range(1, len(values)):
+                current_value = values[i][0] if values[i] and len(values[i]) > 0 else None
+                start_value = values[start_idx][0] if values[start_idx] and len(values[start_idx]) > 0 else None
+                
+                # Если значение изменилось
+                if current_value != start_value:
+                    # Количество строк в диапазоне от start_idx до i-1 включительно
+                    num_rows_in_range = i - start_idx
+                    
+                    logger.debug(f"Строка {i+2} (индекс {i}): изменение '{start_value}' -> '{current_value}', "
+                                f"диапазон [{start_idx}:{i-1}] содержит {num_rows_in_range} строк")
+                    
+                    # Группируем только если в диапазоне 2 или больше строк
+                    if num_rows_in_range >= 2:
+                        # В API индексация строк начинается с 0
+                        # values[0] = строка 2 в Google Sheets = API индекс 1
+                        # Поэтому: API startIndex = array index + 1
+                        # API endIndex не включительно, поэтому: API endIndex = i + 1
+                        api_range = (start_idx + 1, i + 1)
+                        ranges_to_group.append(api_range)
+                    else:
+                        logger.debug(f"  -> Пропускаем группировку (только {num_rows_in_range} строка)")
+                    
+                    # ВСЕГДА начинаем новый диапазон с текущей позиции i
+                    # (даже если предыдущий диапазон был уникальным и мы не создали группу)
+                    start_idx = i
+            
+            # Обрабатываем последний диапазон
+            num_rows_in_last_range = len(values) - start_idx
+            if num_rows_in_last_range >= 2:
+                last_range = (start_idx + 1, len(values) + 1)
+                ranges_to_group.append(last_range)
+            
+            # Формируем запросы на группировку
+            requests = []
+            for start, end in ranges_to_group:
+                requests.append({
+                    "addDimensionGroup": {
+                        "range": {
+                            "sheetId": sheet_id,
+                            "dimension": "ROWS",
+                            "startIndex": start,  # Строка 2 = индекс 1
+                            "endIndex": end       # Не включительно
+                        }
+                    }
+                })
+            
+            if not requests:
+                logger.info("Нет групп для создания (все строки уникальны или по одной строке на группу)")
+                return True
+            
+            # Логируем первые несколько запросов для отладки
+            if len(requests) <= 10:
+                for idx, req in enumerate(requests, 1):
+                    range_info = req['addDimensionGroup']['range']
+                    logger.debug(f"  Запрос {idx}: строки {range_info['startIndex']} до {range_info['endIndex']} "
+                                f"(в Google Sheets: строки {range_info['startIndex']+1} до {range_info['endIndex']+1})")
+            else:
+                logger.debug(f"  Первые 5 запросов:")
+                for idx, req in enumerate(requests[:5], 1):
+                    range_info = req['addDimensionGroup']['range']
+                    logger.debug(f"    Запрос {idx}: GS строки {range_info['startIndex']+1} до {range_info['endIndex']+1}")
+                logger.debug(f"  ... и еще {len(requests) - 5} запросов")
+            
+            # Выполняем batchUpdate - отправляем запросы батчами по 50 штук
+            # (Google Sheets API имеет ограничения на размер batchUpdate)
+            BATCH_SIZE = 50
+            total_applied = 0
+            
+            for batch_start in range(0, len(requests), BATCH_SIZE):
+                batch_end = min(batch_start + BATCH_SIZE, len(requests))
+                batch_requests = requests[batch_start:batch_end]
+                
+                logger.debug(f"Отправляем batch {batch_start//BATCH_SIZE + 1}: запросы {batch_start+1}-{batch_end} из {len(requests)}")
+                body = {'requests': batch_requests}
+                
+                try:
+                    response = service.spreadsheets().batchUpdate(
+                        spreadsheetId=spreadsheet_id,
+                        body=body
+                    ).execute()
+                    
+                    # Проверяем ответ API
+                    if 'replies' in response:
+                        replies_count = len(response['replies'])
+                        total_applied += replies_count
+                        if replies_count != len(batch_requests):
+                            logger.warning(f"Батч {batch_start//BATCH_SIZE + 1}: отправлено {len(batch_requests)} запросов, "
+                                         f"получено {replies_count} ответов")
+                        else:
+                            logger.debug(f"Батч {batch_start//BATCH_SIZE + 1}: все {replies_count} запросов обработаны")
+                    
+                    # Проверяем на ошибки
+                    if 'error' in str(response).lower() or 'error' in response:
+                        logger.error(f"ОШИБКА в ответе API батча {batch_start//BATCH_SIZE + 1}: {response}")
+                        
+                except HttpError as e:
+                    logger.error(f"HTTP ошибка при выполнении батча {batch_start//BATCH_SIZE + 1}: {e}")
+                    # Продолжаем с следующим батчем
+                    continue
+            
+            if total_applied != len(requests):
+                logger.warning(f"ВНИМАНИЕ: Не все запросы были применены! Отправлено {len(requests)}, применено {total_applied}")
+            
+            # Сворачиваем созданные группы
+            # Для сворачивания нужно сначала получить ID созданных групп, затем обновить их
+            logger.info(f"Сворачиваем {len(ranges_to_group)} созданных групп...")
+            try:
+                # Получаем информацию о созданных группах
+                spreadsheet_info = service.spreadsheets().get(
+                    spreadsheetId=spreadsheet_id,
+                    fields='sheets.properties.sheetId,sheets.rowGroups'
+                ).execute()
+                
+                # Находим группы для нашего листа
+                row_groups = []
+                for sheet_info in spreadsheet_info.get('sheets', []):
+                    if sheet_info['properties']['sheetId'] == sheet_id:
+                        row_groups = sheet_info.get('rowGroups', [])
+                        break
+                
+                if not row_groups:
+                    logger.warning("Не найдено групп для сворачивания")
+                else:
+                    collapse_requests = []
+                    for group in row_groups:
+                        group_range = group.get('range', {})
+                        if group_range.get('dimension') == 'ROWS':
+                            collapse_requests.append({
+                                "updateDimensionGroup": {
+                                    "dimensionGroup": {
+                                        "range": {
+                                            "sheetId": sheet_id,
+                                            "dimension": "ROWS",
+                                            "startIndex": group_range['startIndex'],
+                                            "endIndex": group_range['endIndex']
+                                        },
+                                        "depth": group.get('depth', 1),  # Глубина группировки
+                                        "collapsed": True
+                                    },
+                                    "fields": "collapsed"
+                                }
+                            })
+                    
+                    if collapse_requests:
+                        # Отправляем запросы на сворачивание батчами
+                        for batch_start in range(0, len(collapse_requests), BATCH_SIZE):
+                            batch_end = min(batch_start + BATCH_SIZE, len(collapse_requests))
+                            batch_collapse_requests = collapse_requests[batch_start:batch_end]
+                            
+                            try:
+                                service.spreadsheets().batchUpdate(
+                                    spreadsheetId=spreadsheet_id,
+                                    body={'requests': batch_collapse_requests}
+                                ).execute()
+                                logger.debug(f"Батч сворачивания {batch_start//BATCH_SIZE + 1}: {len(batch_collapse_requests)} групп свернуто")
+                            except HttpError as e:
+                                logger.error(f"HTTP ошибка при сворачивании батча {batch_start//BATCH_SIZE + 1}: {e}")
+                                continue
+                        
+                        logger.info(f"Успешно свернуто {len(collapse_requests)} групп")
+            except Exception as e:
+                logger.warning(f"Не удалось свернуть группы (это не критично): {e}")
+                # Продолжаем выполнение, так как группы уже созданы
+            
+            
+            return True
+            
+        except HttpError as e:
+            logger.error(f"HTTP ошибка при группировке строк по nm_id: {e}")
+            return False
+        except Exception as e:
+            logger.error(f"Ошибка группировки строк по nm_id: {e}")
+            return False
 
     def create_export_token(self, user_id: int, cabinet_id: int) -> ExportToken:
         """Создает или возвращает существующий токен экспорта для кабинета"""
@@ -152,6 +510,7 @@ class ExportService:
 
     def get_orders_data(self, cabinet_id: int, limit: int = 1000) -> List[Dict[str, Any]]:
         """Получает данные заказов для экспорта с названием товара из WBProduct"""
+        # Получаем заказы с JOIN по продуктам
         orders = self.db.query(WBOrder, WBProduct).join(
             WBProduct,
             and_(
@@ -163,41 +522,128 @@ class ExportService:
             WBOrder.cabinet_id == cabinet_id
         ).order_by(desc(WBOrder.order_date)).limit(limit).all()
         
+        # Получаем уникальные order_id для проверки статусов в WBSales
+        order_ids = [order.order_id for order, _ in orders if order.order_id]
+        
+        # Получаем все продажи (buyout и return) по g_number для сопоставления с заказами
+        sales_by_g_number = {}
+        if order_ids:
+            sales = self.db.query(WBSales).filter(
+                and_(
+                    WBSales.cabinet_id == cabinet_id,
+                    WBSales.g_number.in_(order_ids)
+                )
+            ).all()
+            
+            # Группируем по g_number, приоритет: return > buyout
+            for sale in sales:
+                g_number = sale.g_number
+                if g_number:
+                    if g_number not in sales_by_g_number:
+                        sales_by_g_number[g_number] = {}
+                    sales_by_g_number[g_number][sale.type] = sale
+        
+        # Получаем уникальные nm_id из заказов для сбора статистики
+        unique_nm_ids = list(set(order.nm_id for order, _ in orders))
+        
+        # Собираем статистику для всех товаров оптимизированными запросами
+        product_stats = {}
+        if unique_nm_ids:
+            # Получаем рейтинги товаров одним запросом
+            products = self.db.query(WBProduct.nm_id, WBProduct.rating).filter(
+                and_(
+                    WBProduct.cabinet_id == cabinet_id,
+                    WBProduct.nm_id.in_(unique_nm_ids)
+                )
+            ).all()
+            ratings_dict = {nm_id: rating for nm_id, rating in products}
+            
+            # Общее количество заказов, выкупов и возвратов одним запросом с группировкой
+            total_orders = self.db.query(
+                WBOrder.nm_id,
+                func.count(WBOrder.id).label('count')
+            ).filter(
+                and_(
+                    WBOrder.cabinet_id == cabinet_id,
+                    WBOrder.nm_id.in_(unique_nm_ids)
+                )
+            ).group_by(WBOrder.nm_id).all()
+            total_orders_dict = {nm_id: count for nm_id, count in total_orders}
+            
+            total_buyouts = self.db.query(
+                WBSales.nm_id,
+                func.count(WBSales.id).label('count')
+            ).filter(
+                and_(
+                    WBSales.cabinet_id == cabinet_id,
+                    WBSales.nm_id.in_(unique_nm_ids),
+                    WBSales.type == 'buyout',
+                    WBSales.is_cancel == False
+                )
+            ).group_by(WBSales.nm_id).all()
+            total_buyouts_dict = {nm_id: count for nm_id, count in total_buyouts}
+            
+            # Формируем словарь статистики для всех товаров
+            for nm_id in unique_nm_ids:
+                total_orders_count = total_orders_dict.get(nm_id, 0)
+                total_buyouts_count = total_buyouts_dict.get(nm_id, 0)
+                
+                buyout_percent = (total_buyouts_count / total_orders_count * 100) if total_orders_count > 0 else 0.0
+                
+                product_stats[nm_id] = {
+                    "rating": ratings_dict.get(nm_id),
+                    "buyout_percent": buyout_percent
+                }
+        
         data = []
         for order, product in orders:
             image_url = product.image_url if product else None
             image_formula = f'=IMAGE("{image_url}")' if image_url else ''
             
-            # Переводим статус на русский
-            status_map = {
-                "active": "Активный",
-                "canceled": "Отменен"
-            }
-            status_ru = status_map.get(order.status.lower() if order.status else "", order.status or "")
+            # Получаем статистику для товара
+            stats = product_stats.get(order.nm_id, {})
+            
+            # Определяем статус заказа на основе сопоставления с WBSales
+            order_status = "🧾Активный"  # По умолчанию
+            
+            # Проверяем, отменен ли заказ
+            if order.status == "canceled":
+                order_status = "↩️Отмена"
+            else:
+                # Проверяем продажи по g_number
+                g_number = order.order_id
+                if g_number and g_number in sales_by_g_number:
+                    sales_for_order = sales_by_g_number[g_number]
+                    # Приоритет: return > buyout
+                    if "return" in sales_for_order:
+                        order_status = "🔴Возврат"
+                    elif "buyout" in sales_for_order:
+                        order_status = "💰Выкуп"
             
             data.append({
                 "photo": image_formula,                          # A - photo (formula)
                 "order_id": order.order_id,                     # B - order_id
                 "nm_id": order.nm_id,                           # C - nm_id
                 "product_name": product.name if product else None,  # D - product.name
-                "size": order.size,                             # E - size
-                "quantity": order.quantity,                     # F - quantity
-                "price": order.price,                           # G - price
-                "total_price": order.total_price,               # H - total_price
-                "status": status_ru,                            # I - status (русский)
-                "order_date": order.order_date.strftime("%Y-%m-%d %H:%M") if order.order_date else None,  # J - order_date
-                "warehouse_from": order.warehouse_from,         # K - warehouse_from
-                "warehouse_to": order.warehouse_to,             # L - warehouse_to
-                "commission_amount": order.commission_amount,   # M - commission_amount
-                "spp_percent": order.spp_percent,               # N - spp_percent
-                "customer_price": order.customer_price,         # O - customer_price
-                "discount_percent": order.discount_percent      # P - discount_percent
+                "status": order_status,                          # E - Статус (новое поле)
+                "size": order.size,                             # F - size
+                "order_date": order.order_date.strftime("%Y-%m-%d %H:%M") if order.order_date else None,  # G - order_date
+                "warehouse_from": order.warehouse_from,         # H - warehouse_from
+                "warehouse_to": order.warehouse_to,             # I - warehouse_to
+                "total_price": order.total_price,               # J - total_price
+                "commission_amount": order.commission_amount,   # K - commission_amount
+                "customer_price": order.customer_price,         # L - customer_price
+                "spp_percent": order.spp_percent,               # M - spp_percent
+                "discount_percent": order.discount_percent,     # N - discount_percent
+                "buyout_percent": round(stats.get('buyout_percent', 0), 2),  # O - % выкуп
+                "rating": stats.get('rating')                   # P - Рейтинг
             })
         
         return data
 
     def get_stocks_data(self, cabinet_id: int, limit: int = 1000) -> List[Dict[str, Any]]:
-        """Получает данные остатков для экспорта с названием товара из WBProduct"""
+        """Получает данные остатков для экспорта с группировкой по складам (без размеров)"""
+        # Получаем все записи для корректной агрегации
         stocks = self.db.query(WBStock, WBProduct).join(
             WBProduct,
             and_(
@@ -207,29 +653,294 @@ class ExportService:
             isouter=True
         ).filter(
             WBStock.cabinet_id == cabinet_id
-        ).order_by(WBStock.nm_id, WBStock.warehouse_name).limit(limit).all()
+        ).order_by(WBStock.nm_id, WBStock.warehouse_name).all()
         
-        data = []
+        # Группируем по nm_id + warehouse_name и суммируем количества
+        aggregated = {}
         for stock, product in stocks:
-            image_url = product.image_url if product else None
-            image_formula = f'=IMAGE("{image_url}")' if image_url else ''
+            key = (stock.nm_id, stock.warehouse_name)
             
-            data.append({
-                "photo": image_formula,                       # A - photo (formula)
-                "nm_id": stock.nm_id,                         # B - nm_id
-                "product_name": product.name if product else None,  # C - product.name
-                "brand": stock.brand,                         # D - brand
-                "size": stock.size,                           # E - size
-                "warehouse_name": stock.warehouse_name,       # F - warehouse
-                "quantity": stock.quantity,                   # G - quantity
-                "in_way_to_client": stock.in_way_to_client,   # H - in_way_to_client
-                "in_way_from_client": stock.in_way_from_client,  # I - in_way_from_client
-                "price": stock.price,                         # J - price
-                "discount": stock.discount,                   # K - discount
-                "last_updated": stock.last_updated.strftime("%Y-%m-%d %H:%M") if stock.last_updated else None  # L - last_updated
-            })
+            if key not in aggregated:
+                image_url = product.image_url if product else None
+                image_formula = f'=IMAGE("{image_url}")' if image_url else ''
+                
+                aggregated[key] = {
+                    "photo": image_formula,
+                    "nm_id": stock.nm_id,
+                    "product_name": product.name if product else None,
+                    "brand": stock.brand or "",
+                    "warehouse_name": stock.warehouse_name,
+                    "quantity": 0,
+                    "in_way_to_client": 0,
+                    "in_way_from_client": 0,
+                    "price": stock.price or 0,
+                    "discount": stock.discount or 0,
+                    "last_updated": stock.last_updated
+                }
+            
+            # Суммируем количества
+            aggregated[key]["quantity"] += stock.quantity or 0
+            aggregated[key]["in_way_to_client"] += stock.in_way_to_client or 0
+            aggregated[key]["in_way_from_client"] += stock.in_way_from_client or 0
+            
+            # Обновляем дату на самую свежую
+            if stock.last_updated and (not aggregated[key]["last_updated"] or stock.last_updated > aggregated[key]["last_updated"]):
+                aggregated[key]["last_updated"] = stock.last_updated
         
-        return data
+        # Получаем уникальные nm_id для сбора статистики
+        unique_nm_ids = list(set(item["nm_id"] for item in aggregated.values()))
+        
+        if not unique_nm_ids:
+            return []
+        
+        # Собираем статистику для всех товаров оптимизированными запросами
+        now = datetime.now(timezone.utc)
+        periods = {
+            "7_days": now - timedelta(days=7),
+            "14_days": now - timedelta(days=14),
+            "30_days": now - timedelta(days=30)
+        }
+        
+        # Получаем рейтинги товаров одним запросом
+        products = self.db.query(WBProduct.nm_id, WBProduct.rating).filter(
+            and_(
+                WBProduct.cabinet_id == cabinet_id,
+                WBProduct.nm_id.in_(unique_nm_ids)
+            )
+        ).all()
+        ratings_dict = {nm_id: rating for nm_id, rating in products}
+        
+        # Получаем заказы за периоды одним запросом с группировкой
+        orders_7d = self.db.query(
+            WBOrder.nm_id,
+            func.count(WBOrder.id).label('count')
+        ).filter(
+            and_(
+                WBOrder.cabinet_id == cabinet_id,
+                WBOrder.nm_id.in_(unique_nm_ids),
+                WBOrder.order_date >= periods["7_days"]
+            )
+        ).group_by(WBOrder.nm_id).all()
+        orders_7d_dict = {nm_id: count for nm_id, count in orders_7d}
+        
+        orders_14d = self.db.query(
+            WBOrder.nm_id,
+            func.count(WBOrder.id).label('count')
+        ).filter(
+            and_(
+                WBOrder.cabinet_id == cabinet_id,
+                WBOrder.nm_id.in_(unique_nm_ids),
+                WBOrder.order_date >= periods["14_days"]
+            )
+        ).group_by(WBOrder.nm_id).all()
+        orders_14d_dict = {nm_id: count for nm_id, count in orders_14d}
+        
+        orders_30d = self.db.query(
+            WBOrder.nm_id,
+            func.count(WBOrder.id).label('count')
+        ).filter(
+            and_(
+                WBOrder.cabinet_id == cabinet_id,
+                WBOrder.nm_id.in_(unique_nm_ids),
+                WBOrder.order_date >= periods["30_days"]
+            )
+        ).group_by(WBOrder.nm_id).all()
+        orders_30d_dict = {nm_id: count for nm_id, count in orders_30d}
+        
+        # Получаем выкупы за периоды одним запросом с группировкой
+        buyouts_7d = self.db.query(
+            WBSales.nm_id,
+            func.count(WBSales.id).label('count')
+        ).filter(
+            and_(
+                WBSales.cabinet_id == cabinet_id,
+                WBSales.nm_id.in_(unique_nm_ids),
+                WBSales.sale_date >= periods["7_days"],
+                WBSales.type == 'buyout',
+                WBSales.is_cancel == False
+            )
+        ).group_by(WBSales.nm_id).all()
+        buyouts_7d_dict = {nm_id: count for nm_id, count in buyouts_7d}
+        
+        buyouts_14d = self.db.query(
+            WBSales.nm_id,
+            func.count(WBSales.id).label('count')
+        ).filter(
+            and_(
+                WBSales.cabinet_id == cabinet_id,
+                WBSales.nm_id.in_(unique_nm_ids),
+                WBSales.sale_date >= periods["14_days"],
+                WBSales.type == 'buyout',
+                WBSales.is_cancel == False
+            )
+        ).group_by(WBSales.nm_id).all()
+        buyouts_14d_dict = {nm_id: count for nm_id, count in buyouts_14d}
+        
+        buyouts_30d = self.db.query(
+            WBSales.nm_id,
+            func.count(WBSales.id).label('count')
+        ).filter(
+            and_(
+                WBSales.cabinet_id == cabinet_id,
+                WBSales.nm_id.in_(unique_nm_ids),
+                WBSales.sale_date >= periods["30_days"],
+                WBSales.type == 'buyout',
+                WBSales.is_cancel == False
+            )
+        ).group_by(WBSales.nm_id).all()
+        buyouts_30d_dict = {nm_id: count for nm_id, count in buyouts_30d}
+        
+        # Общее количество заказов, выкупов и возвратов одним запросом с группировкой
+        total_orders = self.db.query(
+            WBOrder.nm_id,
+            func.count(WBOrder.id).label('count')
+        ).filter(
+            and_(
+                WBOrder.cabinet_id == cabinet_id,
+                WBOrder.nm_id.in_(unique_nm_ids)
+            )
+        ).group_by(WBOrder.nm_id).all()
+        total_orders_dict = {nm_id: count for nm_id, count in total_orders}
+        
+        total_buyouts = self.db.query(
+            WBSales.nm_id,
+            func.count(WBSales.id).label('count')
+        ).filter(
+            and_(
+                WBSales.cabinet_id == cabinet_id,
+                WBSales.nm_id.in_(unique_nm_ids),
+                WBSales.type == 'buyout',
+                WBSales.is_cancel == False
+            )
+        ).group_by(WBSales.nm_id).all()
+        total_buyouts_dict = {nm_id: count for nm_id, count in total_buyouts}
+        
+        total_returns = self.db.query(
+            WBSales.nm_id,
+            func.count(WBSales.id).label('count')
+        ).filter(
+            and_(
+                WBSales.cabinet_id == cabinet_id,
+                WBSales.nm_id.in_(unique_nm_ids),
+                WBSales.type == 'return',
+                WBSales.is_cancel == False
+            )
+        ).group_by(WBSales.nm_id).all()
+        total_returns_dict = {nm_id: count for nm_id, count in total_returns}
+        
+        # Формируем словарь статистики для всех товаров
+        product_stats = {}
+        for nm_id in unique_nm_ids:
+            total_orders_count = total_orders_dict.get(nm_id, 0)
+            total_buyouts_count = total_buyouts_dict.get(nm_id, 0)
+            total_returns_count = total_returns_dict.get(nm_id, 0)
+            
+            buyout_percent = (total_buyouts_count / total_orders_count * 100) if total_orders_count > 0 else 0.0
+            return_percent = (total_returns_count / total_orders_count * 100) if total_orders_count > 0 else 0.0
+            
+            product_stats[nm_id] = {
+                "orders_7d": orders_7d_dict.get(nm_id, 0),
+                "orders_14d": orders_14d_dict.get(nm_id, 0),
+                "orders_30d": orders_30d_dict.get(nm_id, 0),
+                "buyouts_7d": buyouts_7d_dict.get(nm_id, 0),
+                "buyouts_14d": buyouts_14d_dict.get(nm_id, 0),
+                "buyouts_30d": buyouts_30d_dict.get(nm_id, 0),
+                "rating": ratings_dict.get(nm_id),
+                "buyout_percent": buyout_percent,
+                "return_percent": return_percent
+            }
+        
+        # Группируем по nm_id для создания строк -total и детальных строк
+        grouped_by_nm_id = {}
+        for key, item in aggregated.items():
+            nm_id = item["nm_id"]
+            if nm_id not in grouped_by_nm_id:
+                grouped_by_nm_id[nm_id] = []
+            grouped_by_nm_id[nm_id].append(item)
+        
+        # Формируем данные с строками -total
+        # Сортируем nm_id по названию товара (колонка C) в алфавитном порядке
+        # Товары с пустым названием идут в конец
+        data = []
+        def sort_key(x):
+            product_name = grouped_by_nm_id[x][0].get("product_name") or ""
+            # Если название пустое, возвращаем кортеж (1, ""), чтобы оно было в конце
+            # Если название есть, возвращаем (0, название) для нормальной сортировки
+            return (1 if not product_name else 0, product_name.lower())
+        
+        for nm_id in sorted(grouped_by_nm_id.keys(), key=sort_key):
+            items = grouped_by_nm_id[nm_id]
+            stats = product_stats.get(nm_id, {})
+            
+            # Вычисляем суммы и средние для строки -total
+            total_quantity = sum(item["quantity"] for item in items)
+            total_in_way_to_client = sum(item["in_way_to_client"] for item in items)
+            total_in_way_from_client = sum(item["in_way_from_client"] for item in items)
+            
+            # Средняя цена и скидка (взвешенная по количеству)
+            total_price_weighted = sum(item["price"] * item["quantity"] for item in items if item["quantity"] > 0)
+            total_discount_weighted = sum(item["discount"] * item["quantity"] for item in items if item["quantity"] > 0)
+            avg_price = (total_price_weighted / total_quantity) if total_quantity > 0 else 0
+            avg_discount = (total_discount_weighted / total_quantity) if total_quantity > 0 else 0
+            
+            # Вычисляем "Запас на Дней": остаток / (заказы за месяц / 30)
+            orders_30d = stats.get('orders_30d', 0)
+            orders_per_day = orders_30d / 30.0 if orders_30d > 0 else 0
+            stock_days_total = (total_quantity / orders_per_day) if orders_per_day > 0 else 0
+            
+            # Берем фото, название и бренд из первого элемента
+            first_item = items[0]
+            
+            # Создаем строку -total (первая в группе)
+            data.append({
+                "photo": first_item["photo"],                        # A - photo (formula)
+                "nm_id": f"{nm_id}-total",                          # B - nm_id с суффиксом -total
+                "product_name": first_item["product_name"],         # C - product.name
+                "brand": first_item["brand"],                        # D - brand
+                "warehouse_name": "Все склады",                      # E - "Все склады"
+                "quantity": total_quantity,                          # F - сумма по всем складам
+                "in_way_to_client": total_in_way_to_client,        # G - сумма по всем складам
+                "in_way_from_client": total_in_way_from_client,    # H - сумма по всем складам
+                "orders_buyouts_7d": stats.get('orders_7d', 0),        # I - Заказы за неделю
+                "orders_buyouts_14d": stats.get('orders_14d', 0),    # J - Заказы за 2 недели
+                "orders_buyouts_30d": stats.get('orders_30d', 0),     # K - Заказы за месяц
+                "stock_days": round(stock_days_total, 1),            # L - Запас на Дней
+                "price": round(avg_price, 2),                        # M - средняя цена
+                "discount": round(avg_discount, 2),                  # N - средняя скидка
+                "rating": stats.get('rating'),                       # O - рейтинг
+                "buyout_percent": round(stats.get('buyout_percent', 0), 2),  # P - % выкуп
+                "return_percent": round(stats.get('return_percent', 0), 2),   # Q - % возврат
+                "is_total_row": True  # Маркер для форматирования
+            })
+            
+            # Добавляем детальные строки для каждого склада (сортируем по остатку по убыванию)
+            # Для сортировки используем 0 если quantity отсутствует или None
+            for item in sorted(items, key=lambda x: x.get("quantity", 0) or 0, reverse=True):
+                # Для остатков: если 0 или None, не пишем, оставляем пустым
+                quantity_value = item["quantity"] if (item.get("quantity", 0) or 0) > 0 else None
+                
+                data.append({
+                    "photo": item["photo"],                          # A - photo (formula)
+                    "nm_id": item["nm_id"],                          # B - nm_id (обычный)
+                    "product_name": item["product_name"],            # C - product.name
+                    "brand": item["brand"],                          # D - brand
+                    "warehouse_name": item["warehouse_name"],        # E - warehouse_name
+                    "quantity": quantity_value,                      # F - quantity (пусто если 0)
+                    "in_way_to_client": item["in_way_to_client"],   # G - in_way_to_client
+                    "in_way_from_client": item["in_way_from_client"], # H - in_way_from_client
+                    "orders_buyouts_7d": "",                         # I - пусто
+                    "orders_buyouts_14d": "",                        # J - пусто
+                    "orders_buyouts_30d": "",                        # K - пусто
+                    "stock_days": None,                               # L - пусто (только для -total)
+                    "price": item["price"],                           # M - price
+                    "discount": item["discount"],                    # N - discount
+                    "rating": None,                                  # O - пусто
+                    "buyout_percent": None,                          # P - пусто
+                    "return_percent": None,                          # Q - пусто
+                    "is_total_row": False  # Обычная строка
+                })
+        
+        return data[:limit]
 
     def get_reviews_data(self, cabinet_id: int, limit: int = 1000) -> List[Dict[str, Any]]:
         """Получает данные отзывов для экспорта с названием товара и размером из WBProduct и WBStock"""
@@ -282,6 +993,179 @@ class ExportService:
             })
         
         return data
+
+    def get_daily_orders_data(self, cabinet_id: int, limit: int = 10000) -> List[List[Any]]:
+        """Получает данные заказов по дням для вкладки 'В разрезе дня'"""
+        from datetime import date as date_type
+        
+        # Получаем даты за последние 28 дней (от 28 дней назад до сегодня включительно)
+        today = datetime.now(timezone.utc).date()
+        date_list = []
+        for i in range(28, -1, -1):  # От 28 дней назад до сегодня (включительно)
+            date = today - timedelta(days=i)
+            date_list.append(date)
+        
+        # Получаем уникальные комбинации nm_id + size из заказов
+        # Сортируем по количеству заказов только для лимита, потом пересортируем по названию
+        unique_combinations = self.db.query(
+            WBOrder.nm_id,
+            WBOrder.size,
+            func.count(WBOrder.id).label('total_orders')
+        ).filter(
+            WBOrder.cabinet_id == cabinet_id
+        ).group_by(
+            WBOrder.nm_id,
+            WBOrder.size
+        ).order_by(
+            desc('total_orders')
+        ).limit(limit).all()
+        
+        if not unique_combinations:
+            return []
+        
+        # Получаем информацию о продуктах одним запросом
+        unique_nm_ids = list(set(combo.nm_id for combo in unique_combinations))
+        products = self.db.query(WBProduct.nm_id, WBProduct.name, WBProduct.image_url).filter(
+            and_(
+                WBProduct.cabinet_id == cabinet_id,
+                WBProduct.nm_id.in_(unique_nm_ids)
+            )
+        ).all()
+        products_dict = {p.nm_id: {'name': p.name, 'image_url': p.image_url} for p in products}
+        
+        # Получаем остатки для расчета "Запас на Дней"
+        stocks = self.db.query(
+            WBStock.nm_id,
+            WBStock.size,
+            func.sum(WBStock.quantity).label('total_quantity')
+        ).filter(
+            WBStock.cabinet_id == cabinet_id
+        ).group_by(
+            WBStock.nm_id,
+            WBStock.size
+        ).all()
+        stocks_dict = {(s.nm_id, s.size): s.total_quantity for s in stocks}
+        
+        # Получаем заказы за месяц для расчета "Запас на Дней"
+        orders_30d_start = today - timedelta(days=30)
+        orders_30d = self.db.query(
+            WBOrder.nm_id,
+            WBOrder.size,
+            func.count(WBOrder.id).label('count')
+        ).filter(
+            and_(
+                WBOrder.cabinet_id == cabinet_id,
+                WBOrder.order_date >= orders_30d_start
+            )
+        ).group_by(
+            WBOrder.nm_id,
+            WBOrder.size
+        ).all()
+        orders_30d_dict = {(o.nm_id, o.size): o.count for o in orders_30d}
+        
+        # Получаем заказы по дням для каждой комбинации nm_id + size
+        # Используем один запрос с фильтрацией по датам
+        orders_by_day = {}
+        date_start = datetime.combine(date_list[0], datetime.min.time()).replace(tzinfo=timezone.utc)
+        date_end = datetime.combine(date_list[-1] + timedelta(days=1), datetime.min.time()).replace(tzinfo=timezone.utc)
+        
+        for nm_id, size in [(combo.nm_id, combo.size) for combo in unique_combinations]:
+            orders = self.db.query(
+                func.date(WBOrder.order_date).label('order_day'),
+                func.count(WBOrder.id).label('count')
+            ).filter(
+                and_(
+                    WBOrder.cabinet_id == cabinet_id,
+                    WBOrder.nm_id == nm_id,
+                    WBOrder.size == size,
+                    WBOrder.order_date >= date_start,
+                    WBOrder.order_date < date_end
+                )
+            ).group_by(
+                func.date(WBOrder.order_date)
+            ).all()
+            
+            orders_by_day[(nm_id, size)] = {order.order_day: order.count for order in orders}
+        
+        # Формируем данные
+        data = []
+        for combo in unique_combinations:
+            nm_id = combo.nm_id
+            size = combo.size
+            
+            # Получаем информацию о продукте
+            product = products_dict.get(nm_id, {})
+            product_name = product.get('name')
+            image_url = product.get('image_url')
+            image_formula = f'=IMAGE("{image_url}")' if image_url else ''
+            
+            # Получаем остаток для расчета "Запас на Дней"
+            total_quantity = stocks_dict.get((nm_id, size), 0) or 0
+            orders_30d_count = orders_30d_dict.get((nm_id, size), 0)
+            orders_per_day = orders_30d_count / 30.0 if orders_30d_count > 0 else 0
+            
+            # Рассчитываем запас на дней
+            if total_quantity == 0:
+                # Нет остатков - показываем 0
+                stock_days_value = 0
+            elif orders_per_day == 0:
+                # Есть остатки, но нет заказов - показываем большое число (бесконечный запас)
+                stock_days_value = 999
+            else:
+                # Есть остатки и заказы - рассчитываем
+                stock_days_value = round(total_quantity / orders_per_day, 1)
+            
+            # Получаем заказы по дням
+            day_orders = orders_by_day.get((nm_id, size), {})
+            
+            # Формируем строку данных
+            row = [
+                image_formula,                    # A - Фото
+                nm_id,                            # B - Номенклатура
+                product_name or '',               # C - Название
+                size or '',                       # D - Размер
+                stock_days_value                 # E - Запас на Дней
+            ]
+            
+            # Добавляем количество заказов за каждый день
+            total_sum = 0
+            for date in date_list:
+                count = day_orders.get(date, 0)
+                row.append(count if count > 0 else '')
+                total_sum += count
+            
+            # Добавляем колонку СУММА
+            row.append(total_sum if total_sum > 0 else '')
+            
+            data.append(row)
+        
+        # Сортируем данные по названию товара (колонка C, индекс 2) в алфавитном порядке
+        # Товары без названия идут в конец (как во вкладке "Склад")
+        def sort_key(row_data):
+            product_name = row_data[2] if len(row_data) > 2 else ""  # Колонка C (индекс 2)
+            # Если название пустое, возвращаем кортеж (1, ""), чтобы оно было в конце
+            # Если название есть, возвращаем (0, название) для нормальной сортировки
+            return (1 if not product_name else 0, str(product_name).lower())
+        
+        data.sort(key=sort_key)
+        
+        return data
+
+    def _generate_daily_headers(self) -> List[str]:
+        """Генерирует заголовки для вкладки 'В разрезе дня' (28 дней назад до сегодня)"""
+        headers = ['📷 Фото', '🆔 Номенклатура', '👗 Название', '↔️ Размер', '⏳ Запас на Дней']
+        
+        # Генерируем даты за последние 28 дней (от 28 дней назад до сегодня включительно)
+        today = datetime.now(timezone.utc).date()
+        for i in range(28, -1, -1):  # От 28 дней назад до сегодня (включительно)
+            date = today - timedelta(days=i)
+            date_str = date.strftime('%d.%m.%Y')
+            headers.append(date_str)
+        
+        # Добавляем колонку СУММА в конце
+        headers.append('СУММА')
+        
+        return headers
 
     def get_export_data(
         self, 
@@ -517,6 +1401,9 @@ class ExportService:
             reviews_data = self.get_reviews_data(cabinet_id, limit=10000)
             logger.info(f"Получено {len(reviews_data)} отзывов")
             
+            daily_orders_data = self.get_daily_orders_data(cabinet_id, limit=10000)
+            logger.info(f"Получено {len(daily_orders_data)} строк для вкладки 'В разрезе дня'")
+            
             # Обновляем заказы
             if orders_data:
                 logger.info("Формируем данные для листа Заказы...")
@@ -525,25 +1412,25 @@ class ExportService:
                     order.get('order_id', ''),           # B - order_id
                     order.get('nm_id', ''),              # C - nm_id
                     order.get('product_name', ''),       # D - product.name
-                    order.get('size', ''),               # E - size
-                    order.get('quantity', 0),            # F - quantity
-                    order.get('price', 0),               # G - price
-                    order.get('total_price', 0),         # H - total_price
-                    order.get('status', ''),             # I - status
-                    order.get('order_date', ''),         # J - order_date
-                    order.get('warehouse_from', ''),     # K - warehouse_from
-                    order.get('warehouse_to', ''),       # L - warehouse_to
-                    order.get('commission_amount', 0),   # M - commission_amount
-                    order.get('spp_percent', 0),         # N - spp_percent
-                    order.get('customer_price', 0),      # O - customer_price
-                    order.get('discount_percent', 0)     # P - discount_percent
+                    order.get('status', '🧾Активный'),   # E - Статус (новое поле)
+                    order.get('size', ''),               # F - size
+                    order.get('order_date', ''),         # G - order_date
+                    order.get('warehouse_from', ''),     # H - warehouse_from
+                    order.get('warehouse_to', ''),       # I - warehouse_to
+                    order.get('total_price', 0),         # J - total_price
+                    order.get('commission_amount', 0),   # K - commission_amount
+                    order.get('customer_price', 0),      # L - customer_price
+                    order.get('spp_percent', 0),         # M - spp_percent
+                    order.get('discount_percent', 0),    # N - discount_percent
+                    order.get('buyout_percent', 0),      # O - % выкуп
+                    order.get('rating')                  # P - Рейтинг
                 ] for order in orders_data]
                 
                 # Очищаем старые данные
                 logger.info("Очищаем старые данные в листе Заказы...")
                 service.spreadsheets().values().clear(
                     spreadsheetId=spreadsheet_id,
-                    range='🛒 Заказы!A2:P'
+                    range='🛒 Заказы!A2:P'  # Обновлено: добавлен столбец "Статус" (E), теперь A-P
                 ).execute()
                 
                 # Записываем новые данные
@@ -560,26 +1447,41 @@ class ExportService:
             # Обновляем остатки
             if stocks_data:
                 logger.info("Формируем данные для листа Склад...")
-                values = [[
-                    stock.get('photo', ''),               # A - photo (formula)
-                    stock.get('nm_id', ''),               # B - nm_id
-                    stock.get('product_name', ''),        # C - product.name
-                    stock.get('brand', ''),               # D - brand
-                    stock.get('size', ''),                # E - size
-                    stock.get('warehouse_name', ''),      # F - warehouse_name
-                    stock.get('quantity', 0),             # G - quantity
-                    stock.get('in_way_to_client', 0),     # H - in_way_to_client
-                    stock.get('in_way_from_client', 0),   # I - in_way_from_client
-                    stock.get('price', 0),                # J - price
-                    stock.get('discount', 0),             # K - discount
-                    stock.get('last_updated', '')         # L - last_updated
-                ] for stock in stocks_data]
+                values = []
+                for stock in stocks_data:
+                    # Для остатков: если 0 или None и не -total строка, не пишем 0
+                    quantity = stock.get('quantity')
+                    if not stock.get('is_total_row', False) and (quantity == 0 or quantity is None):
+                        quantity = ''
+                    
+                    # Для stock_days: заполняем только для -total строк
+                    stock_days = stock.get('stock_days') if (stock.get('is_total_row', False) and stock.get('stock_days') is not None) else ''
+                    
+                    values.append([
+                        stock.get('photo', ''),               # A - photo (formula)
+                        stock.get('nm_id', ''),               # B - nm_id
+                        stock.get('product_name', ''),        # C - product.name
+                        stock.get('brand', ''),               # D - brand
+                        stock.get('warehouse_name', ''),      # E - warehouse_name
+                        quantity,                             # F - quantity (пусто если 0 и не -total)
+                        stock.get('in_way_to_client', 0),     # G - in_way_to_client
+                        stock.get('in_way_from_client', 0),   # H - in_way_from_client
+                        stock.get('orders_buyouts_7d', ''),    # I - Заказы за неделю
+                        stock.get('orders_buyouts_14d', ''),  # J - Заказы за 2 недели
+                        stock.get('orders_buyouts_30d', ''),  # K - Заказы за месяц
+                        stock_days,                            # L - Запас на Дней (только для -total)
+                        stock.get('price', 0),                # M - price
+                        stock.get('discount', 0),             # N - discount
+                        stock.get('rating'),                  # O - Рейтинг
+                        stock.get('buyout_percent'),          # P - % выкуп
+                        stock.get('return_percent')           # Q - % возврат
+                    ])
                 
                 # Очищаем старые данные
                 logger.info("Очищаем старые данные в листе Склад...")
                 service.spreadsheets().values().clear(
                     spreadsheetId=spreadsheet_id,
-                    range='📦 Склад!A2:L'
+                    range='📦 Склад!A2:Q'  # Обновлено: добавлена колонка "Запас на Дней" (L)
                 ).execute()
                 
                 # Записываем новые данные
@@ -592,10 +1494,16 @@ class ExportService:
                         body={'values': values}
                     ).execute()
                     logger.info("Лист Склад успешно обновлен")
+                    
+                    # Форматируем строки -total (голубой фон)
+                    logger.info("Применяем форматирование для строк -total...")
+                    self._format_total_rows(service, spreadsheet_id, stocks_data)
+                    
+                    # Группируем строки по nm_id (колонка B)
+                    self._group_stocks_by_nm_id(service, spreadsheet_id)
             
             # Обновляем отзывы
             if reviews_data:
-                logger.info("Формируем данные для листа Отзывы...")
                 values = [[
                     review.get('photo', ''),                # A - photo (formula)
                     review.get('review_id', ''),            # B - review_id
@@ -614,7 +1522,6 @@ class ExportService:
                 ] for review in reviews_data]
                 
                 # Очищаем старые данные
-                logger.info("Очищаем старые данные в листе Отзывы...")
                 service.spreadsheets().values().clear(
                     spreadsheetId=spreadsheet_id,
                     range='⭐ Отзывы!A2:N'
@@ -622,14 +1529,115 @@ class ExportService:
                 
                 # Записываем новые данные
                 if values:
-                    logger.info(f"Записываем {len(values)} строк в лист Отзывы...")
                     service.spreadsheets().values().update(
                         spreadsheetId=spreadsheet_id,
                         range='⭐ Отзывы!A2',
                         valueInputOption='USER_ENTERED',
                         body={'values': values}
                     ).execute()
-                    logger.info("Лист Отзывы успешно обновлен")
+            
+            # Обновляем вкладку "В разрезе дня"
+            # Получаем sheetId для листа "В разрезе дня" (избегаем проблем с эмодзи в URL)
+            try:
+                spreadsheet_info = service.spreadsheets().get(spreadsheetId=spreadsheet_id).execute()
+                sheets = spreadsheet_info.get('sheets', [])
+                logger.info(f"Всего листов в таблице: {len(sheets)}")
+                logger.debug(f"Названия листов: {[s['properties']['title'] for s in sheets]}")
+                
+                daily_sheet_id = None
+                daily_sheet_title = None
+                for sheet in sheets:
+                    title = sheet['properties']['title']
+                    # Проверяем название с учетом возможных пробелов после эмодзи
+                    if title.startswith('📅') and 'В разрезе дня' in title:
+                        daily_sheet_id = sheet['properties']['sheetId']
+                        daily_sheet_title = title
+                        logger.info(f"Найден лист 'В разрезе дня' с sheetId={daily_sheet_id}, название: '{title}'")
+                        break
+                
+                if daily_sheet_id:
+                    logger.info(f"Начинаем обновление листа 'В разрезе дня', данных: {len(daily_orders_data)} строк")
+                    # Генерируем заголовки ДО try блока, чтобы переменная была доступна везде
+                    daily_headers = self._generate_daily_headers()
+                    logger.info(f"Сгенерировано {len(daily_headers)} заголовков для листа 'В разрезе дня'")
+                    
+                    # Сначала обновляем заголовки с актуальными датами (они меняются каждый день)
+                    logger.info("Обновляем заголовки вкладки 'В разрезе дня' с актуальными датами...")
+                    try:
+                        # Используем batchUpdate с указанием sheetId для избежания проблем с URL-кодированием
+                        update_requests = [{
+                            "updateCells": {
+                                "range": {
+                                    "sheetId": daily_sheet_id,
+                                    "startRowIndex": 0,
+                                    "endRowIndex": 1,
+                                    "startColumnIndex": 0,
+                                    "endColumnIndex": len(daily_headers)
+                                },
+                                "rows": [{
+                                    "values": [{"userEnteredValue": {"stringValue": str(header)}} for header in daily_headers]
+                                }],
+                                "fields": "userEnteredValue"
+                            }
+                        }]
+                        service.spreadsheets().batchUpdate(
+                            spreadsheetId=spreadsheet_id,
+                            body={'requests': update_requests}
+                        ).execute()
+                        logger.info("Заголовки вкладки 'В разрезе дня' обновлены с актуальными датами")
+                    except Exception as e:
+                        logger.warning(f"Не удалось обновить заголовки вкладки 'В разрезе дня': {e}")
+                        # Продолжаем выполнение, так как это не критично
+                    
+                    if daily_orders_data:
+                        logger.info(f"Формируем данные для листа 'В разрезе дня': {len(daily_orders_data)} строк...")
+                        # Записываем новые данные используя batchUpdate (новые данные перезапишут старые)
+                        logger.info(f"Записываем {len(daily_orders_data)} строк в лист 'В разрезе дня'...")
+                        try:
+                            # Формируем запрос на запись данных
+                            rows = []
+                            for row in daily_orders_data:
+                                row_values = []
+                                for cell_value in row:
+                                    if cell_value == '' or cell_value is None:
+                                        row_values.append({})
+                                    elif isinstance(cell_value, (int, float)):
+                                        row_values.append({"userEnteredValue": {"numberValue": cell_value}})
+                                    else:
+                                        cell_str = str(cell_value)
+                                        # Если значение начинается с "=", это формула - записываем как формулу
+                                        if cell_str.startswith('='):
+                                            row_values.append({"userEnteredValue": {"formulaValue": cell_str}})
+                                        else:
+                                            row_values.append({"userEnteredValue": {"stringValue": cell_str}})
+                                rows.append({"values": row_values})
+                            
+                            write_requests = [{
+                                "updateCells": {
+                                    "range": {
+                                        "sheetId": daily_sheet_id,
+                                        "startRowIndex": 1,  # Строка 2 (индекс 1)
+                                        "endRowIndex": 1 + len(daily_orders_data),
+                                        "startColumnIndex": 0,
+                                        "endColumnIndex": len(daily_headers) if daily_orders_data else 0
+                                    },
+                                    "rows": rows,
+                                    "fields": "userEnteredValue"
+                                }
+                            }]
+                            service.spreadsheets().batchUpdate(
+                                spreadsheetId=spreadsheet_id,
+                                body={'requests': write_requests}
+                            ).execute()
+                            logger.info("Лист 'В разрезе дня' успешно обновлен")
+                        except Exception as e:
+                            logger.error(f"Ошибка записи данных в лист 'В разрезе дня': {e}")
+                    else:
+                        logger.warning(f"Нет данных для записи в лист 'В разрезе дня' (daily_orders_data пустой)")
+                else:
+                    logger.warning(f"Лист 'В разрезе дня' не найден в таблице. Листы: {[s['properties']['title'] for s in sheets]}")
+            except Exception as e:
+                logger.error(f"Ошибка при обновлении вкладки 'В разрезе дня': {e}")
             
             logger.info(f"Таблица {spreadsheet_id} успешно обновлена для кабинета {cabinet_id}")
             return True

@@ -23,6 +23,7 @@ class NotificationSettings(Base):
     negative_reviews_enabled = Column(Boolean, default=True, nullable=False)
     review_rating_threshold = Column(Integer, default=3, nullable=False)  # 0-5, где 0 = отключено
     critical_stocks_enabled = Column(Boolean, default=True, nullable=False)
+    stock_analysis_days = Column(Integer, default=3, nullable=False)  # 1, 3, 7, 10, 14 дней для анализа динамики остатков
     
     # Группировка
     grouping_enabled = Column(Boolean, default=True, nullable=False)

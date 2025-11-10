@@ -459,6 +459,71 @@ class CriticalStocksAPIResponse(BaseModel):
     telegram_text: Optional[str] = None
 
 
+class AtRiskPosition(BaseModel):
+    """Позиция с риском по динамике"""
+    nm_id: int
+    name: str
+    brand: Optional[str] = None
+    image_url: Optional[str] = None
+    warehouse_name: str
+    size: str
+    current_stock: int
+    orders_last_24h: int
+    days_remaining: float
+    risk_level: Optional[str] = None
+
+
+class DynamicStocksSummary(BaseModel):
+    """Сводка по динамическим остаткам"""
+    total_positions: int
+
+
+class DynamicCriticalStocksResponse(BaseModel):
+    """Ответ с динамическими критичными остатками"""
+    at_risk_positions: List[AtRiskPosition]
+    summary: DynamicStocksSummary
+    pagination: Optional[PaginationData] = None  # Данные пагинации
+    recommendations: Optional[List[str]] = None  # Опциональное поле, убрано из форматирования
+    perspective_days: Optional[int] = None  # Период перспективы для фильтрации
+
+
+class DynamicCriticalStocksAPIResponse(BaseModel):
+    """Ответ stocks/dynamic-critical endpoint"""
+    status: str
+    message: Optional[str] = None
+    stocks: Optional[DynamicCriticalStocksResponse] = None
+    telegram_text: Optional[str] = None
+
+
+class WarehouseStockData(BaseModel):
+    """Данные остатков по складу"""
+    warehouse_name: str
+    total_quantity: int
+    sizes: Dict[str, int]  # Размер -> количество
+
+
+class ProductStockData(BaseModel):
+    """Данные остатков по товару"""
+    nm_id: int
+    name: str
+    total_quantity: int
+    warehouses: Dict[str, WarehouseStockData]  # Название склада -> данные склада
+
+
+class AllStocksReportResponse(BaseModel):
+    """Ответ с отчетом по всем остаткам"""
+    products: List[ProductStockData]
+    pagination: PaginationData
+
+
+class AllStocksReportAPIResponse(BaseModel):
+    """API ответ с отчетом по всем остаткам"""
+    status: str
+    message: Optional[str] = None
+    stocks: Optional[AllStocksReportResponse] = None
+    telegram_text: Optional[str] = None
+
+
 class ReviewsSummaryAPIResponse(BaseModel):
     """Ответ reviews/summary endpoint"""
     status: str

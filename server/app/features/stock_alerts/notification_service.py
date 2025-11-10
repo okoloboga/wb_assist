@@ -71,11 +71,15 @@ class StockAlertNotificationService:
                     "positions_analyzed": 0
                 }
             
-            # Получаем рисковые позиции
-            at_risk_positions = await self.analyzer.analyze_stock_positions(cabinet_id)
+            # Получаем период перспективы из настроек пользователя (по умолчанию 3 дня)
+            perspective_days = getattr(user_settings, 'stock_analysis_days', 3)
+            
+            # Получаем рисковые позиции с учетом периода перспективы пользователя
+            # Фильтрация по perspective_days уже происходит внутри analyze_stock_positions
+            at_risk_positions = await self.analyzer.analyze_stock_positions(cabinet_id, perspective_days=perspective_days)
             
             if not at_risk_positions:
-                logger.info(f"No at-risk positions found for cabinet {cabinet_id}")
+                logger.info(f"No at-risk positions found for cabinet {cabinet_id} (уже отфильтровано по perspective_days={perspective_days})")
                 return {
                     "status": "success",
                     "alerts_sent": 0,
@@ -83,10 +87,12 @@ class StockAlertNotificationService:
                     "positions_analyzed": 0
                 }
             
+            logger.info(f"Получено {len(at_risk_positions)} позиций для уведомлений (уже отфильтровано по perspective_days={perspective_days})")
+            
             alerts_sent = 0
             alerts_skipped = 0
             
-            # Обрабатываем каждую рисковую позицию
+            # Обрабатываем каждую позицию
             for position in at_risk_positions:
                 try:
                     # Проверяем, нужно ли отправлять уведомление
@@ -103,8 +109,8 @@ class StockAlertNotificationService:
                         )
                         continue
                     
-                    # Формируем уведомление
-                    notification_data = self._format_notification_data(position)
+                    # Формируем уведомление с учетом периода перспективы
+                    notification_data = self._format_notification_data(position, perspective_days=perspective_days)
                     
                     # Отправляем через webhook
                     if bot_webhook_url:
@@ -196,16 +202,19 @@ class StockAlertNotificationService:
             logger.error(f"Error checking if should send alert: {e}")
             return False
     
-    def _format_notification_data(self, position: Dict[str, Any]) -> Dict[str, Any]:
+    def _format_notification_data(self, position: Dict[str, Any], perspective_days: int = 3) -> Dict[str, Any]:
         """
         Форматирование данных уведомления
         
         Args:
             position: Данные позиции из analyzer
+            perspective_days: Период перспективы для фильтрации (по умолчанию 3 дня)
         
         Returns:
             Данные для webhook
         """
+        orders_last_30_days = position.get('orders_last_24h', 0)  # Название поля для совместимости, но содержит данные за 30 дней
+        
         telegram_text = f"""⚠️ КРИТИЧЕСКИЕ ОСТАТКИ
 
 👗 {position['name']} ({position['brand']})
@@ -213,10 +222,10 @@ class StockAlertNotificationService:
 📦 {position['warehouse_name']}
 📏 Размер: {position['size']}
 
-📊 Аналитика за 24ч:
-• Заказов: {position['orders_last_24h']} шт.
+📊 Аналитика за 30 дн.:
+• Заказов: {orders_last_30_days} шт.
 • Текущий остаток: {position['current_stock']} шт.
-• Прогноз: {position['days_remaining']} дн."""
+• Прогноз: {int(round(position['days_remaining']))} дн."""
         
         return {
             "type": "dynamic_stock_alert",

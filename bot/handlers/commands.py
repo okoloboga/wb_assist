@@ -6,7 +6,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from aiogram import Router, F
-from aiogram.types import CallbackQuery, User, InlineKeyboardMarkup, InlineKeyboardButton, Message
+from aiogram.types import CallbackQuery, User, InlineKeyboardMarkup, InlineKeyboardButton, Message, FSInputFile
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from utils.formatters import safe_edit_message, safe_send_message, handle_telegram_errors
@@ -429,7 +429,6 @@ async def create_export_for_cabinet(message: Message, cabinet, user_id: int, sta
         
         # Получаем ID шаблона из переменных окружения
         template_id = os.getenv('GOOGLE_TEMPLATE_SPREADSHEET_ID')
-        
         if not template_id:
             await safe_send_message(
                 message=message,
@@ -437,20 +436,38 @@ async def create_export_for_cabinet(message: Message, cabinet, user_id: int, sta
                 user_id=user_id
             )
             return
-        
-        # Формируем ссылку на копирование шаблона
         template_url = f"https://docs.google.com/spreadsheets/d/{template_id}/copy"
+
+        # 1) Проверяем, привязана ли таблица
+        from api.client import bot_api_client
+        existing_sheet = await bot_api_client.get_cabinet_spreadsheet(cabinet.id)
         
-        # Сохраняем cabinet_id в состоянии
+        if existing_sheet.success and existing_sheet.data and existing_sheet.data.get("spreadsheet_id"):
+            sheet_url = existing_sheet.data.get("spreadsheet_url")
+            text = (
+                f"📊 Экспорт в Google Sheets\n\n"
+                f"🔗 Текущая таблица: {sheet_url}\n\n"
+                f"ℹ️ Данные обновляются автоматически по расписанию.\n"
+                f"Вы можете обновить вручную или заменить таблицу."
+            )
+            from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+            kb = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🔄 Обновить сейчас", callback_data=f"manual_export_update_{cabinet.id}")],
+                [InlineKeyboardButton(text="♻️ Сменить таблицу", callback_data=f"change_spreadsheet_{cabinet.id}")],
+                [InlineKeyboardButton(text="⬅️ Назад", callback_data="back_wb_menu")]
+            ])
+            
+            # Отправляем только текстовое сообщение (без фото) для существующей таблицы
+            await safe_send_message(message=message, text=text, reply_markup=kb, user_id=user_id)
+            return
+        
+        # 2) Если таблица не привязана — поведение как раньше (инструкция + ожидание URL)
         if state:
             await state.update_data(cabinet_id=cabinet.id)
             from core.states import ExportStates
             await state.set_state(ExportStates.waiting_for_spreadsheet_url)
-        
-        # Отправляем пользователю инструкции
-        text = f"""📊 Экспорт в Google Sheets
 
-🏪 Кабинет: {cabinet.name or f'ID {cabinet.id}'}
+        text = f"""📊 Экспорт в Google Sheets
 
 📋 Инструкция:
 
@@ -464,15 +481,22 @@ async def create_export_for_cabinet(message: Message, cabinet, user_id: int, sta
 
 3️⃣ Отправьте мне ссылку на вашу скопированную таблицу
 
-✨ После этого данные будут обновляться автоматически!
-
-💡 Поддержка: @wb_assist_bot"""
+✨ После этого данные будут обновляться автоматически!"""
         
-        await safe_send_message(
-            message=message,
-            text=text,
-            user_id=user_id
-        )
+        # Отправляем фото с текстом как подписью
+        try:
+            photo1_path = Path(__file__).parent.parent / "assets" / "1.png"
+            photo1 = FSInputFile(photo1_path)
+            
+            await message.bot.send_photo(
+                chat_id=user_id,
+                photo=photo1,
+                caption=text
+            )
+        except Exception as e:
+            logger.error(f"Ошибка отправки фото: {e}")
+            # Фолбэк - отправляем обычное сообщение только если фото не отправилось
+            await safe_send_message(message=message, text=text, user_id=user_id)
         
     except Exception as e:
         logger.error(f"Ошибка настройки экспорта для кабинета {cabinet.id}: {e}")
@@ -551,6 +575,69 @@ async def handle_cancel_export(callback: CallbackQuery, state: FSMContext):
         user_id=callback.from_user.id
     )
 
+
+@router.callback_query(F.data.startswith("change_spreadsheet_"))
+@handle_telegram_errors
+async def handle_change_spreadsheet(callback: CallbackQuery, state: FSMContext):
+    """Включает режим смены таблицы и показывает инструкцию"""
+    try:
+        import os
+        from core.states import ExportStates
+        
+        cabinet_id = int(callback.data.replace("change_spreadsheet_", ""))
+        template_id = os.getenv('GOOGLE_TEMPLATE_SPREADSHEET_ID')
+        template_url = f"https://docs.google.com/spreadsheets/d/{template_id}/copy" if template_id else None
+        
+        await state.update_data(cabinet_id=cabinet_id)
+        await state.set_state(ExportStates.waiting_for_spreadsheet_url)
+        
+        text = (
+            "🔄 Смена таблицы экспорта.\n\n"
+            "📋 Инструкция:\n\n"
+            f"1️⃣ Откройте ссылку и скопируйте таблицу:\n{template_url}\n\n"
+            "2️⃣ Дайте доступ боту:\n"
+            "   • Нажмите \"Настроить доступ\"\n"
+            "   • Добавьте: wb-assist-sheets@wb-assist.iam.gserviceaccount.com\n"
+            "   • Дайте права \"Редактор\"\n\n"
+            "3️⃣ Отправьте мне ссылку на вашу скопированную таблицу"
+        )
+        
+        from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_export")]
+        ])
+        
+        # Отправляем фото с текстом как подписью
+        try:
+            photo1_path = Path(__file__).parent.parent / "assets" / "1.png"
+            photo1 = FSInputFile(photo1_path)
+            
+            # Удаляем предыдущее сообщение и отправляем фото
+            await callback.message.delete()
+            
+            # Отправляем фото с текстом как подписью
+            await callback.message.bot.send_photo(
+                chat_id=callback.from_user.id,
+                photo=photo1,
+                caption=text,
+                reply_markup=kb
+            )
+                
+        except Exception as e:
+            logger.error(f"Ошибка отправки фото: {e}")
+            # Фолбэк - отправляем обычное сообщение
+            await safe_send_message(
+                message=callback.message,
+                text=text,
+                reply_markup=kb,
+                user_id=callback.from_user.id
+            )
+        
+        await callback.answer()
+        
+    except Exception as e:
+        logger.error(f"Ошибка смены таблицы: {e}")
+        await callback.answer("❌ Произошла ошибка", show_alert=True)
 
 @router.message(F.text.startswith("http"))
 @handle_telegram_errors
@@ -685,9 +772,31 @@ async def handle_manual_export_update(callback: CallbackQuery):
         response = await bot_api_client.update_cabinet_spreadsheet(cabinet_id)
         
         if response.success:
+            text = (
+                "✅ Таблица успешно обновлена!\n\n"
+                "Данные обновлены и готовы к использованию.\n\n"
+                "ℹ️ Для отображения изображений - разрешите доступ третьим сторонам. "
+                "Третья сторона - Wildberries, откуда таблица получает фото товара"
+            )
+            
+            # Отправляем фото с текстом
+            try:
+                photo3_path = Path(__file__).parent.parent / "assets" / "3.png"
+                photo3 = FSInputFile(photo3_path)
+                
+                # Удаляем предыдущее сообщение и отправляем фото с текстом
+                await callback.message.delete()
+                await callback.message.bot.send_photo(
+                    chat_id=callback.from_user.id,
+                    photo=photo3,
+                    caption=text
+                )
+            except Exception as e:
+                logger.error(f"Ошибка отправки фото: {e}")
+                # Фолбэк - отправляем обычное сообщение
             await safe_edit_message(
                 callback=callback,
-                text="✅ Таблица успешно обновлена!\n\nДанные обновлены и готовы к использованию.",
+                    text=text,
                 user_id=user_id
             )
         else:
@@ -783,4 +892,4 @@ async def process_spreadsheet_url_auto(message: Message, state: FSMContext):
             message=message,
             text="❌ Произошла ошибка. Попробуйте позже.",
             user_id=user_id
-        )
+    )

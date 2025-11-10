@@ -17,6 +17,7 @@ class WBSales(Base):
     cabinet_id = Column(Integer, ForeignKey("wb_cabinets.id", ondelete="CASCADE"), nullable=False, index=True)
     sale_id = Column(String(100), nullable=False, index=True)  # srid из WB API
     order_id = Column(String(100), nullable=True, index=True)
+    g_number = Column(String(100), nullable=True, index=True)  # gNumber из WB API для сопоставления с заказами
     nm_id = Column(Integer, nullable=False, index=True)
     product_name = Column(String(500), nullable=True)  # subject из WB API
     brand = Column(String(255), nullable=True)
@@ -51,6 +52,7 @@ class WBSales(Base):
         Index('idx_sales_date', 'sale_date'),
         Index('idx_sales_type', 'type'),
         Index('idx_sales_is_cancel', 'is_cancel'),
+        Index('idx_sales_g_number', 'g_number'),  # Индекс для сопоставления с заказами
     )
 
     def __repr__(self):

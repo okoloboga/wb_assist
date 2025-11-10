@@ -1,5 +1,5 @@
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from utils.formatters import format_currency
 
 
@@ -51,10 +51,6 @@ def analytics_keyboard() -> InlineKeyboardMarkup:
 
 def stock_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="📋 Остатки", callback_data="stock_list"),
-            InlineKeyboardButton(text="⏳ Прогноз остатков", callback_data="stock_forecast")
-        ],
         [
             InlineKeyboardButton(text="🔔 Уведомления", callback_data="stock_notify"),
             InlineKeyboardButton(text="📤 Выгрузка в Google", callback_data="export_stock")
@@ -175,38 +171,67 @@ def create_orders_keyboard(orders: list, offset: int = 0, has_more: bool = False
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-def create_stocks_keyboard(has_more: bool = False, offset: int = 0) -> InlineKeyboardMarkup:
-    """Создать клавиатуру для остатков"""
+def create_stocks_menu_keyboard() -> InlineKeyboardMarkup:
+    """Создать клавиатуру для меню складов"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(
+            text="⚠️ Критические остатки",
+            callback_data="dynamic_critical_stocks"
+        )],
+        [InlineKeyboardButton(
+            text="🔙 Назад к меню",
+            callback_data="main_menu"
+        )]
+    ])
+
+
+def create_stocks_keyboard(has_more: bool = False, offset: int = 0, is_all_stocks: bool = True) -> InlineKeyboardMarkup:
+    """Создать клавиатуру для отчета остатков с пагинацией"""
     buttons = []
     
     # Навигационные кнопки
     if offset > 0 or has_more:
         nav_buttons = []
         if offset > 0:
+            # Определяем callback_data в зависимости от типа отчета
+            if is_all_stocks:
+                limit = 15
+                callback_prefix = "stocks_all_page_"
+            else:
+                limit = 20
+                callback_prefix = "dynamic_stocks_page_"
+            
             nav_buttons.append(InlineKeyboardButton(
                 text="⬅️ Назад",
-                callback_data=f"stocks_page_{max(0, offset-20)}"
+                callback_data=f"{callback_prefix}{max(0, offset-limit)}"
             ))
         
         if has_more:
+            # Определяем callback_data в зависимости от типа отчета
+            if is_all_stocks:
+                limit = 15
+                callback_prefix = "stocks_all_page_"
+            else:
+                limit = 20
+                callback_prefix = "dynamic_stocks_page_"
+            
             nav_buttons.append(InlineKeyboardButton(
                 text="Вперед ➡️",
-                callback_data=f"stocks_page_{offset+20}"
+                callback_data=f"{callback_prefix}{offset+limit}"
             ))
         
         if nav_buttons:
             buttons.append(nav_buttons)
     
+    # Кнопка "Критические остатки" для отчета по всем остаткам
+    if is_all_stocks:
+        buttons.append([InlineKeyboardButton(
+            text="⚠️ Критические остатки",
+            callback_data="dynamic_critical_stocks"
+        )])
+    
     # Кнопки действий
     buttons.extend([
-        [InlineKeyboardButton(
-            text="🔄 Обновить",
-            callback_data="refresh_stocks"
-        )],
-        [InlineKeyboardButton(
-            text="📊 Прогноз остатков",
-            callback_data="stock_forecast"
-        )],
         [InlineKeyboardButton(
             text="🔙 Назад к меню",
             callback_data="main_menu"
@@ -216,23 +241,41 @@ def create_stocks_keyboard(has_more: bool = False, offset: int = 0) -> InlineKey
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-def create_reviews_keyboard(has_more: bool = False, offset: int = 0) -> InlineKeyboardMarkup:
-    """Создать клавиатуру для отзывов"""
+def create_reviews_keyboard(has_more: bool = False, offset: int = 0, rating_threshold: Optional[int] = None) -> InlineKeyboardMarkup:
+    """Создать клавиатуру для отзывов с фильтрацией по рейтингу"""
     buttons = []
+    
+    # Кнопка фильтрации по рейтингу (аналогично уведомлениям)
+    def review_filter_text(threshold: Optional[int]) -> str:
+        """Форматирование фильтра отзывов"""
+        if threshold is None:
+            return "⭐ Все отзывы (≤5★)"
+        else:
+            stars = "⭐" * threshold
+            return f"{stars} (≤{threshold}★)"
+    
+    # Для кнопки фильтра: если None (все отзывы), то передаем 5 в callback_data
+    # чтобы цикл был: 1→2→3→4→5→1 (5 = все отзывы)
+    filter_callback_value = rating_threshold if rating_threshold is not None else 5
+    buttons.append([InlineKeyboardButton(
+        text=f"🔍 Фильтр: {review_filter_text(rating_threshold)}",
+        callback_data=f"reviews_filter_toggle_{filter_callback_value}"
+    )])
     
     # Навигационные кнопки
     if offset > 0 or has_more:
         nav_buttons = []
+        threshold_str = str(rating_threshold) if rating_threshold is not None else "all"
         if offset > 0:
             nav_buttons.append(InlineKeyboardButton(
                 text="⬅️ Назад",
-                callback_data=f"reviews_page_{max(0, offset-10)}"
+                callback_data=f"reviews_page_{max(0, offset-10)}_{threshold_str}"
             ))
         
         if has_more:
             nav_buttons.append(InlineKeyboardButton(
                 text="Вперед ➡️",
-                callback_data=f"reviews_page_{offset+10}"
+                callback_data=f"reviews_page_{offset+10}_{threshold_str}"
             ))
         
         if nav_buttons:
@@ -240,10 +283,6 @@ def create_reviews_keyboard(has_more: bool = False, offset: int = 0) -> InlineKe
     
     # Кнопки действий
     buttons.extend([
-        [InlineKeyboardButton(
-            text="🔄 Обновить",
-            callback_data="refresh_reviews"
-        )],
         [InlineKeyboardButton(
             text="🤖 Автоответы",
             callback_data="auto_answers"
@@ -368,14 +407,18 @@ def create_notification_keyboard(settings: Dict[str, Any]) -> InlineKeyboardMark
         else:
             stars = "⭐" * threshold
             return f"{stars} (≤{threshold}★)"
+    
+    def stock_analysis_days_text(days: int) -> str:
+        """Форматирование дней для анализа остатков"""
+        return f"{days} дн."
 
     new_orders = settings.get("new_orders_enabled", True)
     buyouts = settings.get("order_buyouts_enabled", True)
     cancellations = settings.get("order_cancellations_enabled", True)
     returns = settings.get("order_returns_enabled", True)
-    negative_reviews = settings.get("negative_reviews_enabled", True)
-    review_threshold = settings.get("review_rating_threshold", 3)  # НОВОЕ ПОЛЕ
+    review_threshold = settings.get("review_rating_threshold", 3)
     critical_stocks = settings.get("critical_stocks_enabled", True)
+    stock_analysis_days = settings.get("stock_analysis_days", 3)
 
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(
@@ -395,12 +438,16 @@ def create_notification_keyboard(settings: Dict[str, Any]) -> InlineKeyboardMark
             callback_data="toggle_notif_returns"
         )],
         [InlineKeyboardButton(
+            text=f"⚠️ Критичные остатки: {flag_text(critical_stocks)}",
+            callback_data="toggle_notif_critical_stocks"
+        )],
+        [InlineKeyboardButton(
             text=f"⭐ Отзывы: {review_threshold_text(review_threshold)}",
             callback_data="toggle_notif_negative_reviews"
         )],
         [InlineKeyboardButton(
-            text=f"⚠️ Критичные остатки: {flag_text(critical_stocks)}",
-            callback_data="toggle_notif_critical_stocks"
+            text=f"📊 Динамика продаж за: {stock_analysis_days_text(stock_analysis_days)}",
+            callback_data="toggle_stock_analysis_days"
         )],
         [InlineKeyboardButton(
             text="🔙 Назад к меню",

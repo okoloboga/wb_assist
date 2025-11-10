@@ -12,6 +12,7 @@ from datetime import datetime, timezone, timedelta
 from app.features.wb_api.cache_manager import WBCacheManager
 from app.features.wb_api.sync_service import WBSyncService
 from app.utils.timezone import TimezoneUtils
+from app.features.stock_alerts.stock_analyzer import DynamicStockAnalyzer
 from .formatter import BotMessageFormatter
 
 logger = logging.getLogger(__name__)
@@ -585,7 +586,137 @@ class BotAPIService:
                 "error": str(e)
             }
 
-    async def get_reviews_summary(self, user, limit: int = 10, offset: int = 0) -> Dict[str, Any]:
+    async def get_dynamic_critical_stocks(self, user, limit: int = 20, offset: int = 0) -> Dict[str, Any]:
+        """Получение критичных остатков на основе динамики затрат с пагинацией"""
+        try:
+            # Получаем telegram_id из объекта user
+            telegram_id = user.telegram_id if hasattr(user, 'telegram_id') else user["telegram_id"]
+            user_id = user["id"] if isinstance(user, dict) else user.id
+            
+            cabinet = await self.get_user_cabinet(telegram_id)
+            if not cabinet:
+                return {
+                    "success": False,
+                    "error": "Кабинет WB не найден"
+                }
+            
+            # Получаем период перспективы из настроек пользователя
+            from app.features.notifications.models import NotificationSettings
+            user_settings = self.db.query(NotificationSettings).filter(
+                NotificationSettings.user_id == user_id
+            ).first()
+            
+            perspective_days = getattr(user_settings, 'stock_analysis_days', 3) if user_settings else 3
+            
+            # Получаем данные из БД на основе динамики с пагинацией
+            stocks_data = await self._fetch_dynamic_critical_stocks_from_db(
+                cabinet, 
+                perspective_days=perspective_days,
+                limit=limit,
+                offset=offset
+            )
+            
+            # Форматируем Telegram сообщение (с учетом лимита 4096 символов)
+            telegram_text = self.formatter.format_dynamic_critical_stocks(stocks_data)
+            
+            return {
+                "success": True,
+                "data": stocks_data,
+                "telegram_text": telegram_text,
+                # Единообразные поля для всех эндпоинтов
+                "orders": [],
+                "pagination": {},
+                "statistics": {},
+                "stocks": stocks_data,
+                "reviews": {},
+                "analytics": {},
+                "order": None
+            }
+            
+        except Exception as e:
+            logger.error(f"Ошибка получения критичных остатков по динамике: {e}")
+            return {
+                "success": False,
+                "error": str(e)
+            }
+
+    async def _fetch_dynamic_critical_stocks_from_db(
+        self, 
+        cabinet: WBCabinet, 
+        perspective_days: int = 3,
+        limit: int = 20,
+        offset: int = 0
+    ) -> Dict[str, Any]:
+        """Получение критичных остатков на основе динамики затрат (days_remaining <= perspective_days) с пагинацией"""
+        try:
+            # Используем DynamicStockAnalyzer для анализа остатков
+            # Фильтрация по perspective_days уже происходит внутри analyze_stock_positions
+            analyzer = DynamicStockAnalyzer(self.db)
+            at_risk_positions = await analyzer.analyze_stock_positions(cabinet.id, perspective_days=perspective_days)
+            
+            logger.info(f"Получено {len(at_risk_positions)} позиций в риске из analyze_stock_positions (уже отфильтровано по perspective_days={perspective_days})")
+            
+            # Логируем примеры позиций для диагностики
+            if at_risk_positions:
+                sample = at_risk_positions[:3]
+                for pos in sample:
+                    logger.info(f"Пример позиции: nm_id={pos.get('nm_id')}, "
+                              f"stock={pos.get('current_stock')}, "
+                              f"orders_30d={pos.get('orders_last_24h')}, "
+                              f"days_remaining={pos.get('days_remaining')}")
+            
+            total_positions = len(at_risk_positions)
+            
+            if not at_risk_positions:
+                return {
+                    "at_risk_positions": [],
+                    "summary": {
+                        "total_positions": 0
+                    },
+                    "pagination": {
+                        "limit": limit,
+                        "offset": offset,
+                        "total": 0,
+                        "has_more": False
+                    },
+                    "perspective_days": perspective_days
+                }
+            
+            # Сортируем по дням остатка (от меньшего к большему)
+            at_risk_positions.sort(key=lambda pos: pos.get("days_remaining", float('inf')))
+            
+            # Применяем пагинацию
+            paginated_positions = at_risk_positions[offset:offset + limit]
+            has_more = offset + limit < total_positions
+            
+            return {
+                "at_risk_positions": paginated_positions,
+                "summary": {
+                    "total_positions": total_positions
+                },
+                "pagination": {
+                    "limit": limit,
+                    "offset": offset,
+                    "total": total_positions,
+                    "has_more": has_more
+                },
+                "perspective_days": perspective_days  # Добавляем период перспективы для форматтера
+            }
+            
+        except Exception as e:
+            logger.error(f"Ошибка получения критичных остатков по динамике: {e}")
+            return {
+                "at_risk_positions": [],
+                "summary": {
+                    "total_positions": 0,
+                    "high_risk": 0,
+                    "medium_risk": 0,
+                    "low_risk": 0
+                },
+                "recommendations": ["Ошибка получения данных"]
+            }
+
+    async def get_reviews_summary(self, user, limit: int = 10, offset: int = 0, rating_threshold: Optional[int] = None) -> Dict[str, Any]:
         """Получение сводки по отзывам"""
         try:
             # Получаем telegram_id из объекта user
@@ -597,8 +728,8 @@ class BotAPIService:
                     "error": "Кабинет WB не найден"
                 }
             
-            # Получаем данные из БД
-            reviews_data = await self._fetch_reviews_from_db(cabinet, limit, offset)
+            # Получаем данные из БД с фильтром по рейтингу
+            reviews_data = await self._fetch_reviews_from_db(cabinet, limit, offset, rating_threshold)
             
             # Форматируем Telegram сообщение
             telegram_text = self.formatter.format_reviews(reviews_data)
@@ -1341,13 +1472,19 @@ class BotAPIService:
                 "recommendations": ["Ошибка получения данных"]
             }
 
-    async def _fetch_reviews_from_db(self, cabinet: WBCabinet, limit: int, offset: int) -> Dict[str, Any]:
-        """Получение отзывов из БД"""
+    async def _fetch_reviews_from_db(self, cabinet: WBCabinet, limit: int, offset: int, rating_threshold: Optional[int] = None) -> Dict[str, Any]:
+        """Получение отзывов из БД с фильтрацией по рейтингу"""
         try:
             # Получаем отзывы
             reviews_query = self.db.query(WBReview).filter(
                 WBReview.cabinet_id == cabinet.id
-            ).order_by(WBReview.created_date.desc())
+            )
+            
+            # Добавляем фильтр по рейтингу, если указан (≤ threshold)
+            if rating_threshold is not None:
+                reviews_query = reviews_query.filter(WBReview.rating <= rating_threshold)
+            
+            reviews_query = reviews_query.order_by(WBReview.created_date.desc())
             
             total_reviews = reviews_query.count()
             reviews = reviews_query.offset(offset).limit(limit).all()
@@ -1384,23 +1521,29 @@ class BotAPIService:
                     "supplier_product_valuation": review.supplier_product_valuation
                 })
             
-            # Статистика
-            new_reviews = len([r for r in reviews if r.created_date and r.created_date >= datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)])
-            unanswered_reviews = len([r for r in reviews if not r.is_answered])
-            avg_rating = sum(r.rating or 0 for r in reviews) / len(reviews) if reviews else 0.0
+            # Статистика рассчитывается для всех отзывов (без фильтра), а не только для отображаемых
+            all_reviews_query = self.db.query(WBReview).filter(
+                WBReview.cabinet_id == cabinet.id
+            )
+            all_reviews = all_reviews_query.all()
+            
+            new_reviews = len([r for r in all_reviews if r.created_date and r.created_date >= datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)])
+            unanswered_reviews = len([r for r in all_reviews if not r.is_answered])
+            avg_rating = sum(r.rating or 0 for r in all_reviews) / len(all_reviews) if all_reviews else 0.0
             
             return {
-                "new_reviews": reviews_list,  # Список отзывов
+                "new_reviews": reviews_list,  # Список отзывов (с фильтром)
                 "unanswered_questions": [],  # Пока пустой список вопросов
                 "statistics": {
-                    "total_reviews": total_reviews,
+                    "total_reviews": total_reviews,  # Количество отзывов с учетом фильтра
+                    "total_all_reviews": len(all_reviews),  # Общее количество всех отзывов
+                    "rating_threshold": rating_threshold,  # Примененный фильтр
                     "new_today": new_reviews,
                     "unanswered": unanswered_reviews,
                     "average_rating": round(avg_rating, 1),
-                    "answered_count": total_reviews - unanswered_reviews,
-                    "answered_percent": round((total_reviews - unanswered_reviews) / total_reviews * 100, 1) if total_reviews > 0 else 0.0,
-                    "attention_needed": len([r for r in reviews if r.rating and r.rating <= 3])
-                    # Убрали дублирование "new_today"
+                    "answered_count": len(all_reviews) - unanswered_reviews,
+                    "answered_percent": round((len(all_reviews) - unanswered_reviews) / len(all_reviews) * 100, 1) if all_reviews else 0.0,
+                    "attention_needed": len([r for r in all_reviews if r.rating and r.rating <= 3])
                 },
                 "recommendations": ["Все отзывы обработаны"] if unanswered_reviews == 0 else [f"Требуют ответа: {unanswered_reviews} отзывов"]
             }
@@ -1646,6 +1789,127 @@ class BotAPIService:
             recommendations.append("✅ Все в порядке!")
         
         return recommendations
+
+    async def get_all_stocks_report(self, user, limit: int = 15, offset: int = 0) -> Dict[str, Any]:
+        """Получение отчета по всем остаткам с группировкой по товарам, складам и размерам"""
+        try:
+            # Получаем telegram_id из объекта user
+            telegram_id = user.telegram_id if hasattr(user, 'telegram_id') else user["telegram_id"]
+            
+            cabinet = await self.get_user_cabinet(telegram_id)
+            if not cabinet:
+                return {
+                    "success": False,
+                    "error": "Кабинет WB не найден"
+                }
+            
+            # Получаем все остатки с информацией о товарах
+            stocks_query = self.db.query(WBStock, WBProduct).outerjoin(
+                WBProduct,
+                and_(
+                    WBStock.nm_id == WBProduct.nm_id,
+                    WBStock.cabinet_id == WBProduct.cabinet_id
+                )
+            ).filter(
+                WBStock.cabinet_id == cabinet.id,
+                WBStock.quantity > 0  # Только товары с остатками > 0
+            ).all()
+            
+            # Группируем данные по nm_id → warehouse_name → size
+            products_dict = {}
+            
+            for stock, product in stocks_query:
+                nm_id = stock.nm_id
+                warehouse_name = stock.warehouse_name or "Неизвестный склад"
+                size = stock.size or "ONE SIZE"
+                quantity = stock.quantity or 0
+                
+                # Получаем название товара: сначала из wb_products, потом из wb_stocks
+                product_name = None
+                if product and product.name:
+                    product_name = product.name
+                elif stock.name:
+                    product_name = stock.name
+                else:
+                    product_name = "Неизвестно"
+                
+                # Инициализируем структуру для товара, если его еще нет
+                if nm_id not in products_dict:
+                    products_dict[nm_id] = {
+                        "nm_id": nm_id,
+                        "name": product_name,
+                        "total_quantity": 0,
+                        "warehouses": {}
+                    }
+                
+                # Инициализируем структуру для склада, если его еще нет
+                if warehouse_name not in products_dict[nm_id]["warehouses"]:
+                    products_dict[nm_id]["warehouses"][warehouse_name] = {
+                        "warehouse_name": warehouse_name,
+                        "total_quantity": 0,
+                        "sizes": {}
+                    }
+                
+                # Добавляем размер и количество
+                products_dict[nm_id]["warehouses"][warehouse_name]["sizes"][size] = quantity
+                products_dict[nm_id]["warehouses"][warehouse_name]["total_quantity"] += quantity
+                products_dict[nm_id]["total_quantity"] += quantity
+            
+            # Преобразуем в список и сортируем по общему количеству остатков (убывание)
+            products_list = list(products_dict.values())
+            products_list.sort(key=lambda p: p["total_quantity"], reverse=True)
+            
+            # Сортируем склады внутри каждого товара по количеству остатков (убывание)
+            for product in products_list:
+                warehouses_list = list(product["warehouses"].values())
+                warehouses_list.sort(key=lambda w: w["total_quantity"], reverse=True)
+                product["warehouses"] = {w["warehouse_name"]: w for w in warehouses_list}
+                
+                # Сортируем размеры внутри каждого склада по алфавиту
+                for warehouse in product["warehouses"].values():
+                    sizes_dict = warehouse["sizes"]
+                    sorted_sizes = dict(sorted(sizes_dict.items()))
+                    warehouse["sizes"] = sorted_sizes
+            
+            total_products = len(products_list)
+            
+            # Применяем пагинацию
+            paginated_products = products_list[offset:offset + limit]
+            has_more = offset + limit < total_products
+            
+            stocks_data = {
+                "products": paginated_products,
+                "pagination": {
+                    "limit": limit,
+                    "offset": offset,
+                    "total": total_products,
+                    "has_more": has_more
+                }
+            }
+            
+            # Форматируем Telegram сообщение
+            telegram_text = self.formatter.format_all_stocks_report(stocks_data)
+            
+            return {
+                "success": True,
+                "data": stocks_data,
+                "telegram_text": telegram_text,
+                # Единообразные поля для всех эндпоинтов
+                "orders": [],
+                "pagination": stocks_data["pagination"],
+                "statistics": {},
+                "stocks": stocks_data,
+                "reviews": {},
+                "analytics": {},
+                "order": None
+            }
+            
+        except Exception as e:
+            logger.error(f"Ошибка получения отчета по всем остаткам: {e}")
+            return {
+                "success": False,
+                "error": str(e)
+            }
 
     async def _get_product_statistics(self, cabinet_id: int, nm_id: int) -> Dict[str, Any]:
         """Получение статистики для конкретного товара"""

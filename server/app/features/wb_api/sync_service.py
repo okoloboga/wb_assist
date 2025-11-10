@@ -767,18 +767,25 @@ class WBSyncService:
             
             for stock_data in stocks_data:
                 nm_id = stock_data.get("nmId")
-                warehouse_id = stock_data.get("warehouseId")
+                warehouse_name = stock_data.get("warehouseName")
+                size = stock_data.get("techSize")
                 
                 # Пропускаем остатки без nm_id
                 if not nm_id:
                     continue
                 
-                # Проверяем существующий остаток
+                # Пропускаем остатки без warehouse_name или size для избежания ошибок
+                if not warehouse_name or not size:
+                    logger.warning(f"Skipping stock for nm_id={nm_id}: missing warehouse_name or size")
+                    continue
+                
+                # Проверяем существующий остаток по cabinet_id, nm_id, warehouse_name, size
                 existing = self.db.query(WBStock).filter(
                     and_(
                         WBStock.cabinet_id == cabinet.id,
                         WBStock.nm_id == nm_id,
-                        WBStock.warehouse_id == warehouse_id
+                        WBStock.warehouse_name == warehouse_name,
+                        WBStock.size == size
                     )
                 ).first()
                 
@@ -860,8 +867,8 @@ class WBSyncService:
                         quantity=stock_data.get("quantity"),
                         in_way_to_client=stock_data.get("inWayToClient"),
                         in_way_from_client=stock_data.get("inWayFromClient"),
-                        warehouse_id=warehouse_id,
-                        warehouse_name=stock_data.get("warehouseName"),
+                        warehouse_id=stock_data.get("warehouseId"),  # Сохраняем для обратной совместимости API
+                        warehouse_name=warehouse_name,
                         last_updated=self._parse_datetime(stock_data.get("lastChangeDate")),
                         # Новые поля из WB API
                         category=stock_data.get("category"),
@@ -1553,6 +1560,7 @@ class WBSyncService:
                         "cabinet_id": cabinet.id,
                         "sale_id": str(sale_item.get("srid", "")),
                         "order_id": str(sale_item.get("saleID", "")),
+                        "g_number": str(sale_item.get("gNumber", "")) if sale_item.get("gNumber") else None,  # gNumber для сопоставления с заказами
                         "nm_id": sale_item.get("nmId", 0),
                         "product_name": sale_item.get("subject", ""),
                         "brand": sale_item.get("brand", ""),
@@ -1656,6 +1664,7 @@ class WBSyncService:
                         "cabinet_id": cabinet.id,
                         "sale_id": order_id,  # Используем читаемый order_id как sale_id
                         "order_id": order_id,  # Дублируем для совместимости
+                        "g_number": str(claim.get("gNumber", "")) if claim.get("gNumber") else None,  # gNumber для сопоставления с заказами (если есть в Claims API)
                         "nm_id": claim.get("nm_id", 0),
                         "product_name": claim.get("imt_name", ""),
                         "brand": "",  # В Claims API нет бренда

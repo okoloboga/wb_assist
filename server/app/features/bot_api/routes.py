@@ -19,8 +19,8 @@ from app.features.notifications.schemas import (
 )
 from .service import BotAPIService
 from .schemas import (
-    DashboardResponse, OrdersResponse, CriticalStocksAPIResponse, 
-    ReviewsSummaryAPIResponse, AnalyticsSalesAPIResponse, SyncResponse, SyncStatusResponse,
+    DashboardResponse, OrdersResponse, CriticalStocksAPIResponse, DynamicCriticalStocksAPIResponse,
+    AllStocksReportAPIResponse, ReviewsSummaryAPIResponse, AnalyticsSalesAPIResponse, SyncResponse, SyncStatusResponse,
     OrderDetailResponse, CabinetStatusResponse, CabinetConnectResponse, CabinetConnectRequest
 )
 
@@ -141,11 +141,84 @@ async def get_critical_stocks(
         raise HTTPException(status_code=500, detail="Ошибка сервера")
 
 
+@router.get("/stocks/dynamic-critical", response_model=DynamicCriticalStocksAPIResponse)
+async def get_dynamic_critical_stocks(
+    telegram_id: int = Query(..., description="Telegram ID пользователя"),
+    limit: int = Query(20, ge=1, le=100, description="Количество позиций на странице"),
+    offset: int = Query(0, ge=0, description="Смещение для пагинации"),
+    bot_service: BotAPIService = Depends(get_bot_service)
+):
+    """Получение критичных остатков на основе динамики затрат с пагинацией"""
+    try:
+        cabinet = await bot_service.get_user_cabinet(telegram_id)
+        if not cabinet:
+            raise HTTPException(status_code=404, detail="Кабинет WB не найден")
+        
+        # Получаем пользователя
+        user = await bot_service.get_user_by_telegram_id(telegram_id)
+        if not user:
+            raise HTTPException(status_code=500, detail="Ошибка создания пользователя")
+        
+        result = await bot_service.get_dynamic_critical_stocks(user, limit=limit, offset=offset)
+        
+        if not result["success"]:
+            raise HTTPException(status_code=500, detail=result["error"])
+        
+        return DynamicCriticalStocksAPIResponse(
+            status="success",
+            stocks=result["data"],
+            telegram_text=result["telegram_text"]
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Ошибка получения критичных остатков по динамике для telegram_id {telegram_id}: {e}")
+        raise HTTPException(status_code=500, detail="Ошибка сервера")
+
+
+@router.get("/stocks/all", response_model=AllStocksReportAPIResponse)
+async def get_all_stocks_report(
+    telegram_id: int = Query(..., description="Telegram ID пользователя"),
+    limit: int = Query(15, ge=1, le=100, description="Количество товаров на странице"),
+    offset: int = Query(0, ge=0, description="Смещение для пагинации"),
+    bot_service: BotAPIService = Depends(get_bot_service)
+):
+    """Получение отчета по всем остаткам с группировкой по товарам, складам и размерам"""
+    try:
+        cabinet = await bot_service.get_user_cabinet(telegram_id)
+        if not cabinet:
+            raise HTTPException(status_code=404, detail="Кабинет WB не найден")
+        
+        # Получаем пользователя
+        user = await bot_service.get_user_by_telegram_id(telegram_id)
+        if not user:
+            raise HTTPException(status_code=500, detail="Ошибка создания пользователя")
+        
+        result = await bot_service.get_all_stocks_report(user, limit=limit, offset=offset)
+        
+        if not result["success"]:
+            raise HTTPException(status_code=500, detail=result["error"])
+        
+        return AllStocksReportAPIResponse(
+            status="success",
+            stocks=result["data"],
+            telegram_text=result["telegram_text"]
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Ошибка получения отчета по всем остаткам для telegram_id {telegram_id}: {e}")
+        raise HTTPException(status_code=500, detail="Ошибка сервера")
+
+
 @router.get("/reviews/summary", response_model=ReviewsSummaryAPIResponse)
 async def get_reviews_summary(
     telegram_id: int = Query(..., description="Telegram ID пользователя"),
     limit: int = Query(10, ge=1, le=100, description="Количество отзывов"),
     offset: int = Query(0, ge=0, description="Смещение для пагинации"),
+    rating_threshold: Optional[int] = Query(None, ge=1, le=5, description="Фильтр по рейтингу (≤N звезд)"),
     bot_service: BotAPIService = Depends(get_bot_service)
 ):
     """Получение новых и проблемных отзывов"""
@@ -159,7 +232,7 @@ async def get_reviews_summary(
         if not user:
             raise HTTPException(status_code=500, detail="Ошибка создания пользователя")
         
-        result = await bot_service.get_reviews_summary(user, limit, offset)
+        result = await bot_service.get_reviews_summary(user, limit, offset, rating_threshold)
         
         if not result["success"]:
             raise HTTPException(status_code=500, detail=result["error"])

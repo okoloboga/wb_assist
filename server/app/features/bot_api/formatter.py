@@ -169,6 +169,145 @@ class BotMessageFormatter:
             logger.error(f"Ошибка форматирования критичных остатков: {e}")
             return "❌ Ошибка форматирования данных остатков"
 
+    def format_dynamic_critical_stocks(self, data: Dict[str, Any]) -> str:
+        """Форматирование сообщения о критичных остатках на основе динамики с пагинацией"""
+        try:
+            at_risk_positions = data.get("at_risk_positions", [])
+            summary = data.get("summary", {})
+            pagination = data.get("pagination", {})
+            perspective_days = data.get("perspective_days", 3)  # Период перспективы для фильтрации (по умолчанию 3 дня)
+            
+            message = "⚠️ КРИТИЧНЫЕ ОСТАТКИ\n\n"
+            
+            if not at_risk_positions:
+                message += "✅ Все остатки в норме!\n\n"
+                message += "Критичных остатков не обнаружено."
+                return message
+            
+            # Добавляем сводку
+            total_positions = summary.get('total_positions', 0)
+            offset = pagination.get('offset', 0)
+            limit = pagination.get('limit', 20)
+            current_page = (offset // limit) + 1
+            total_pages = (total_positions + limit - 1) // limit if total_positions > 0 else 1
+            
+            message += f"""📊 СВОДКА
+• Всего позиций в риске: {total_positions}
+• Страница: {current_page} из {total_pages}
+
+"""
+            
+            # Формируем список позиций для текущей страницы
+            remaining_length = self.max_length - len(message) - 200  # Резерв для завершения
+            
+            for position in at_risk_positions:
+                # Формируем строку для позиции
+                nm_id = position.get("nm_id", "N/A")
+                name = position.get("name", "Неизвестно")
+                brand = position.get("brand", "")
+                warehouse_name = position.get("warehouse_name", "Неизвестный склад")
+                size = position.get("size", "N/A")
+                current_stock = position.get("current_stock", 0)
+                orders_last_30_days = position.get("orders_last_24h", 0)  # Название поля для совместимости, но содержит данные за 30 дней
+                days_remaining = position.get("days_remaining", 0)
+                
+                # Формируем строку позиции
+                position_str = f"""⚠️ {name}"""
+                if brand:
+                    position_str += f" ({brand})"
+                position_str += f"""
+   🆔 {nm_id} | 📦 {warehouse_name} | 📏 {size}
+   📊 Остаток: {current_stock} шт | Заказов за 30 дн.: {orders_last_30_days} шт
+   ⏰ Прогноз: {int(round(days_remaining))} дн.
+
+"""
+                
+                # Проверяем, не превысим ли лимит
+                if len(message) + len(position_str) > remaining_length:
+                    break
+                
+                message += position_str
+            
+            # Блок рекомендаций убран по запросу пользователя
+            
+            # Обрезаем до лимита
+            return self._truncate_message(message)
+            
+        except Exception as e:
+            logger.error(f"Ошибка форматирования критичных остатков по динамике: {e}")
+            return "❌ Ошибка форматирования данных остатков"
+
+    def format_all_stocks_report(self, data: Dict[str, Any]) -> str:
+        """Форматирование сообщения об отчете по всем остаткам с группировкой по товарам, складам и размерам"""
+        try:
+            products = data.get("products", [])
+            pagination = data.get("pagination", {})
+            
+            message = "📦 ОТЧЕТ ПО СКЛАДАМ\n\n"
+            
+            if not products:
+                message += "❌ Остатки не найдены"
+                return message
+            
+            # Добавляем информацию о пагинации
+            total_products = pagination.get('total', 0)
+            offset = pagination.get('offset', 0)
+            limit = pagination.get('limit', 15)
+            current_page = (offset // limit) + 1
+            total_pages = (total_products + limit - 1) // limit if total_products > 0 else 1
+            
+            message += f"""📊 СВОДКА
+• Всего товаров: {total_products}
+• Страница: {current_page} из {total_pages}
+
+"""
+            
+            # Формируем список товаров
+            remaining_length = self.max_length - len(message) - 200  # Резерв для завершения
+            
+            for product in products:
+                nm_id = product.get("nm_id", "N/A")
+                name = product.get("name", "Неизвестно")
+                total_quantity = product.get("total_quantity", 0)
+                warehouses = product.get("warehouses", {})
+                
+                # Формируем заголовок товара
+                product_str = f"""📦 {nm_id} {name} - {total_quantity}:
+
+"""
+                
+                # Формируем информацию по складам
+                for warehouse_name, warehouse_data in warehouses.items():
+                    warehouse_total = warehouse_data.get("total_quantity", 0)
+                    sizes = warehouse_data.get("sizes", {})
+                    
+                    # Формируем строку размеров: [L: X | M: Y | S: Z | ...]
+                    sizes_str_parts = []
+                    for size, quantity in sizes.items():
+                        sizes_str_parts.append(f"{size}: {quantity}")
+                    sizes_str = " | ".join(sizes_str_parts)
+                    
+                    warehouse_str = f"{warehouse_name} - {warehouse_total} - [{sizes_str}]\n"
+                    product_str += warehouse_str
+                
+                product_str += "\n"
+                
+                # Проверяем, не превысим ли лимит
+                if len(message) + len(product_str) > remaining_length:
+                    # Если не помещается, добавляем информацию о том, что есть еще товары
+                    if pagination.get("has_more", False):
+                        message += f"\n... и еще {total_products - offset - len(products)} товаров"
+                    break
+                
+                message += product_str
+            
+            # Обрезаем до лимита
+            return self._truncate_message(message)
+            
+        except Exception as e:
+            logger.error(f"Ошибка форматирования отчета по всем остаткам: {e}")
+            return "❌ Ошибка форматирования данных остатков"
+
     def format_reviews(self, data: Dict[str, Any]) -> str:
         """Форматирование сообщения об отзывах"""
         try:
