@@ -2,9 +2,10 @@
 Integration tests for API endpoints.
 """
 
-import pytest
-from unittest.mock import patch, MagicMock
 from datetime import date
+from unittest.mock import AsyncMock, patch
+
+import pytest
 
 
 class TestHealthEndpoint:
@@ -23,10 +24,10 @@ class TestHealthEndpoint:
 class TestChatSendEndpoint:
     """Tests for POST /v1/chat/send endpoint."""
     
-    @patch("ai_chat.app.service._call_openai")
-    def test_send_message_success(self, mock_openai, client, headers, sample_telegram_id):
+    @patch("gpt_integration.ai_chat.app.service.run_agent", new_callable=AsyncMock)
+    def test_send_message_success(self, mock_run_agent, client, headers, sample_telegram_id):
         """Should successfully send message and get AI response."""
-        mock_openai.return_value = ("Это тестовый ответ", 100)
+        mock_run_agent.return_value = {"final": "Это тестовый ответ", "tokens_used": 100}
         
         payload = {
             "telegram_id": sample_telegram_id,

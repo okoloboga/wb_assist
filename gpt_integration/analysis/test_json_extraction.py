@@ -11,7 +11,10 @@
 
 import sys
 import json
-from pipeline import _safe_json_extract
+
+import pytest
+
+from gpt_integration.analysis.pipeline import _safe_json_extract
 
 # Тестовые случаи
 TEST_CASES = [
@@ -126,8 +129,20 @@ Some other data:
 ]
 
 
-def test_extraction():
-    """Запустить тесты извлечения JSON"""
+@pytest.mark.parametrize("test_case", TEST_CASES, ids=lambda case: case["name"])
+def test_safe_json_extract_cases(test_case):
+    """Проверяем извлечение JSON для заранее подготовленных кейсов."""
+    result = _safe_json_extract(test_case["text"])
+    
+    if test_case["should_work"]:
+        assert result is not None, f"JSON не извлечен для кейса: {test_case['name']}"
+        assert isinstance(result, dict), "Извлеченный результат должен быть словарем"
+    else:
+        assert result is None, f"Ожидали провал извлечения, но кейс '{test_case['name']}' прошел"
+
+
+def run_test_suite() -> bool:
+    """Запускает тесты извлечения JSON в ручном режиме с выводом в консоль."""
     print("=" * 80)
     print("TESTING JSON EXTRACTION")
     print("=" * 80)
@@ -139,24 +154,21 @@ def test_extraction():
         print(f"\n[Test {i}] {test_case['name']}")
         print("-" * 80)
         
-        result = _safe_json_extract(test_case['text'])
+        result = _safe_json_extract(test_case["text"])
+        success = result is not None
+        expected = test_case["should_work"]
         
-        if result is not None:
+        if success:
             print(f"✅ SUCCESS - Extracted JSON with {len(result)} keys")
             print(f"   Keys: {', '.join(result.keys())}")
-            if test_case['should_work']:
-                passed += 1
-            else:
-                print(f"   ⚠️  Expected to FAIL but PASSED")
-                failed += 1
         else:
-            print(f"❌ FAILED - Could not extract JSON")
-            if test_case['should_work']:
-                print(f"   📝 Text preview: {test_case['text'][:200]}")
-                failed += 1
-            else:
-                print(f"   ✅ Expected to fail")
-                passed += 1
+            print("❌ FAILED - Could not extract JSON")
+            print(f"   📝 Text preview: {test_case['text'][:200]}")
+        
+        if success == expected:
+            passed += 1
+        else:
+            failed += 1
     
     print("\n" + "=" * 80)
     print(f"RESULTS: {passed} passed, {failed} failed")
@@ -165,12 +177,12 @@ def test_extraction():
     return failed == 0
 
 
-def test_file(filepath: str):
-    """Тестировать извлечение JSON из файла"""
+def run_file(filepath: str) -> bool:
+    """Тестировать извлечение JSON из файла (ручной запуск)."""
     print(f"Reading file: {filepath}")
     
     try:
-        with open(filepath, 'r', encoding='utf-8') as f:
+        with open(filepath, "r", encoding="utf-8") as f:
             text = f.read()
     except Exception as e:
         print(f"❌ Error reading file: {e}")
@@ -182,27 +194,27 @@ def test_file(filepath: str):
     result = _safe_json_extract(text)
     
     if result is not None:
-        print(f"✅ SUCCESS - Extracted JSON")
+        print("✅ SUCCESS - Extracted JSON")
         print(f"Keys: {', '.join(result.keys())}")
         print("\nExtracted JSON (pretty):")
         print(json.dumps(result, indent=2, ensure_ascii=False))
         return True
-    else:
-        print(f"❌ FAILED - Could not extract JSON")
-        print(f"\nText preview (first 500 chars):")
-        print(text[:500])
-        print(f"\nText preview (last 500 chars):")
-        print(text[-500:])
-        return False
+    
+    print("❌ FAILED - Could not extract JSON")
+    print("\nText preview (first 500 chars):")
+    print(text[:500])
+    print("\nText preview (last 500 chars):")
+    print(text[-500:])
+    return False
 
 
 if __name__ == "__main__":
     if len(sys.argv) > 1:
         # Test specific file
-        success = test_file(sys.argv[1])
+        success = run_file(sys.argv[1])
         sys.exit(0 if success else 1)
-    else:
-        # Run standard tests
-        success = test_extraction()
-        sys.exit(0 if success else 1)
+    
+    # Run standard tests
+    success = run_test_suite()
+    sys.exit(0 if success else 1)
 

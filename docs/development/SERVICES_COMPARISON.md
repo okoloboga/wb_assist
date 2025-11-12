@@ -30,7 +30,7 @@
 ### Использование:
 Используется через **бот** (`bot/handlers/ai_chat.py`):
 ```python
-AI_CHAT_URL = "http://ai_chat:9001"
+AI_CHAT_URL = "http://gpt:9000"
 POST /v1/chat/send
 ```
 

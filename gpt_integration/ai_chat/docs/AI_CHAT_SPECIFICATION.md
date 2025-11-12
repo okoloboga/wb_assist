@@ -508,7 +508,7 @@ ai_chat:
 
 #### Настройки модуля:
 - `router = Router()`
-- `AI_CHAT_URL` из env (default: `"http://ai_chat:9001"`)
+- `AI_CHAT_URL` из env (default: `"http://gpt:9000"`)
 - `API_SECRET_KEY` из env
 
 #### FSM States:
@@ -650,7 +650,7 @@ curl -X POST "http://localhost:9001/v1/chat/reset-limit" \
 
 | Переменная | Описание | Значение по умолчанию |
 |------------|----------|----------------------|
-| `AI_CHAT_SERVICE_URL` | URL AI Chat сервиса | `http://ai_chat:9001` |
+| `AI_CHAT_SERVICE_URL` | URL AI Chat сервиса | `http://gpt:9000` |
 
 **Примечания:**
 - Переменные добавляются в `.env` файл в корне проекта

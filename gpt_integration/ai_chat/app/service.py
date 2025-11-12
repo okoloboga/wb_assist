@@ -7,7 +7,6 @@ Provides REST API for conversational AI chat with Wildberries focus.
 import os
 import logging
 from typing import Optional
-from contextlib import asynccontextmanager
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -20,12 +19,11 @@ else:
     # Пробуем загрузить из текущей директории (для обратной совместимости)
     load_dotenv(override=False)
 
-from fastapi import FastAPI, HTTPException, Header, Depends
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, FastAPI, HTTPException, Header, Depends
 from sqlalchemy.orm import Session
 from openai import OpenAI
 
-from .database import Base, engine, get_db, init_db
+from .database import Base, engine, get_db
 from .schemas import (
     ChatSendRequest,
     ChatSendResponse,
@@ -62,66 +60,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-
-# ============================================================================
-# Application Lifecycle
-# ============================================================================
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """Application lifespan events."""
-    # Startup
-    logger.info("🚀 Starting AI Chat Service...")
-    
-    # Check OpenAI API key
-    if not OPENAI_API_KEY:
-        logger.warning("⚠️  OPENAI_API_KEY not configured!")
-    else:
-        logger.info("✅ OpenAI API key configured")
-    
-    # Create database tables (skip in tests)
-    if not os.getenv("TESTING"):
-        try:
-            Base.metadata.create_all(bind=engine)
-            logger.info("✅ Database tables created/verified")
-        except Exception as e:
-            logger.error(f"❌ Failed to create database tables: {e}")
-            raise
-    
-    # Initialize asyncpg pool if Postgres available
-    try:
-        await init_asyncpg_pool()
-        logger.info("✅ asyncpg pool initialized (if Postgres configured)")
-    except Exception as e:
-        logger.warning(f"⚠️  asyncpg pool not initialized: {e}")
-
-    logger.info(f"🎯 Service ready on port {AI_CHAT_PORT}")
-    
-    yield
-    
-    # Shutdown
-    logger.info("👋 Shutting down AI Chat Service...")
-    try:
-        await close_asyncpg_pool()
-    except Exception:
-        pass
-
-
-# ============================================================================
-# FastAPI Application
-# ============================================================================
-
-app = FastAPI(
-    title="AI Chat Service",
-    description="AI чат-ассистент для продавцов Wildberries с ограничением запросов",
-    version="1.0.0",
-    lifespan=lifespan,
-)
-
-
-# ============================================================================
-# Helper Functions
-# ============================================================================
 
 def _verify_api_key(x_api_key: Optional[str] = Header(None, alias="X-API-KEY")) -> None:
     """
@@ -166,8 +104,8 @@ def _get_openai_client() -> OpenAI:
         )
     
     client_kwargs = {"api_key": OPENAI_API_KEY}
-    if OPENAI_BASE_URL:
-        client_kwargs["base_url"] = OPENAI_BASE_URL
+    if OPENAI_BASE_URL and OPENAI_BASE_URL.strip():
+        client_kwargs["base_url"] = OPENAI_BASE_URL.strip()
     
     return OpenAI(**client_kwargs)
 
@@ -220,11 +158,9 @@ def _call_openai(
         )
 
 
-# ============================================================================
-# API Endpoints
-# ============================================================================
+router = APIRouter(tags=["ai-chat"])
 
-@app.get("/health")
+@router.get("/health")
 async def health_check():
     """
     Health check endpoint.
@@ -238,7 +174,7 @@ async def health_check():
     }
 
 
-@app.post("/v1/chat/send", response_model=ChatSendResponse)
+@router.post("/send", response_model=ChatSendResponse)
 async def send_message(
     request: ChatSendRequest,
     db: Session = Depends(get_db),
@@ -296,9 +232,9 @@ async def send_message(
     
     # Stage 1: Call internal agent (LLM + tools in next stage)
     try:
-    agent_result = await run_agent(messages)
-    response_text = agent_result.get("final", "")
-    tokens_used = agent_result.get("tokens_used", 0)
+        agent_result = await run_agent(messages)
+        response_text = agent_result.get("final", "")
+        tokens_used = agent_result.get("tokens_used", 0)
     except RuntimeError as e:
         # Handle regional restriction and other runtime errors
         error_msg = str(e)
@@ -355,7 +291,7 @@ async def send_message(
     )
 
 
-@app.post("/v1/chat/history", response_model=ChatHistoryResponse)
+@router.post("/history", response_model=ChatHistoryResponse)
 async def get_history(
     request: ChatHistoryRequest,
     db: Session = Depends(get_db),
@@ -381,7 +317,7 @@ async def get_history(
     )
 
 
-@app.get("/v1/chat/limits/{telegram_id}", response_model=ChatLimitsResponse)
+@router.get("/limits/{telegram_id}", response_model=ChatLimitsResponse)
 async def get_limits(
     telegram_id: int,
     db: Session = Depends(get_db),
@@ -403,7 +339,7 @@ async def get_limits(
     )
 
 
-@app.post("/v1/chat/reset-limit", response_model=ResetLimitResponse)
+@router.post("/reset-limit", response_model=ResetLimitResponse)
 async def reset_limit(
     request: ResetLimitRequest,
     db: Session = Depends(get_db),
@@ -431,7 +367,7 @@ async def reset_limit(
         )
 
 
-@app.get("/v1/chat/stats/{telegram_id}")
+@router.get("/stats/{telegram_id}")
 async def get_stats(
     telegram_id: int,
     days: int = 7,
@@ -462,11 +398,87 @@ async def get_stats(
 # Application Entry Point
 # ============================================================================
 
+def setup_ai_chat(app: FastAPI) -> None:
+    """
+    Register startup/shutdown handlers for AI chat components on the main app.
+    """
+    app.add_event_handler("startup", _startup_event)
+    app.add_event_handler("shutdown", _shutdown_event)
+
+
+# ============================================================================
+# Internal lifecycle events for shared usage
+# ============================================================================
+
+_startup_registered = False
+
+
+async def _startup_event():
+    """Startup tasks for AI chat (idempotent)."""
+    global _startup_registered
+    if _startup_registered:
+        return
+    _startup_registered = True
+    
+    logger.info("🚀 Starting AI Chat Service components...")
+    
+    if not OPENAI_API_KEY:
+        logger.warning("⚠️  OPENAI_API_KEY not configured!")
+    else:
+        logger.info("✅ OpenAI API key configured")
+    
+    if not os.getenv("TESTING"):
+        try:
+            Base.metadata.create_all(bind=engine)
+            logger.info("✅ Database tables created/verified")
+        except Exception as exc:
+            logger.error("❌ Failed to create database tables: %s", exc)
+            raise
+    
+    try:
+        await init_asyncpg_pool()
+        logger.info("✅ asyncpg pool initialized (if Postgres configured)")
+    except Exception as exc:
+        logger.warning("⚠️  asyncpg pool not initialized: %s", exc)
+    
+    logger.info("🎯 AI Chat components ready")
+
+
+async def _shutdown_event():
+    """Shutdown tasks for AI chat."""
+    logger.info("👋 Shutting down AI Chat components...")
+    try:
+        await close_asyncpg_pool()
+    except Exception:
+        pass
+
+
+# ============================================================================
+# Standalone application factory (legacy / manual usage)
+# ============================================================================
+
+
+def create_app() -> FastAPI:
+    """Create a standalone FastAPI app for legacy/manual runs."""
+    standalone_app = FastAPI(
+        title="AI Chat Service",
+        description="AI чат-ассистент для продавцов Wildberries с ограничением запросов",
+        version="1.0.0",
+    )
+    setup_ai_chat(standalone_app)
+    standalone_app.include_router(router, prefix="/v1/chat")
+    standalone_app.add_api_route("/health", health_check, methods=["GET"], include_in_schema=False)
+    return standalone_app
+
+
+app = create_app()
+
+
 if __name__ == "__main__":
     import uvicorn
     
     uvicorn.run(
-        "ai_chat.service:app",
+        "gpt_integration.ai_chat.app.service:app",
         host="0.0.0.0",
         port=AI_CHAT_PORT,
         reload=True

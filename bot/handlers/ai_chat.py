@@ -29,8 +29,8 @@ logger = logging.getLogger(__name__)
 
 router = Router()
 
-# URL AI Chat Service
-AI_CHAT_URL = getattr(config, "ai_chat_service_url", None) or os.getenv("AI_CHAT_SERVICE_URL", "http://ai_chat:9001")
+# URL AI Chat Service (в составе gpt_integration)
+AI_CHAT_URL = getattr(config, "ai_chat_service_url", None) or os.getenv("AI_CHAT_SERVICE_URL", "http://gpt:9000")
 
 
 # ============================================================================

@@ -43,6 +43,7 @@ def test_db_engine():
     Base.metadata.create_all(bind=engine)
     yield engine
     Base.metadata.drop_all(bind=engine)
+    engine.dispose()
 
 
 @pytest.fixture(scope="function")
