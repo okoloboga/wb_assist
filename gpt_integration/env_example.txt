@@ -34,6 +34,15 @@ OPENAI_RETRY_DELAY_MS=500
 # Множитель экспоненциального бэк-оффа
 OPENAI_RETRY_BACKOFF=2
 
+# AI Chat module
+AI_CHAT_PORT=9001
+# Основная БД (SQLite по умолчанию; для продакшена используйте Postgres)
+DATABASE_URL=sqlite:///./ai_chat.db
+# Дополнительный DSN для asyncpg-пула (если отличается от DATABASE_URL)
+# AI_CHAT_DATABASE_URL=postgresql://wb_user:wb_password@db:5432/ai_chat
+# Уровень логирования AI-чата
+LOG_LEVEL=INFO
+
 # Photo Processing - API генерации изображений
 IMAGE_GEN_API_KEY=your_image_gen_api_key
 IMAGE_GEN_BASE_URL=https://api.example.com/v1
@@ -50,3 +59,6 @@ PHOTO_STORAGE_TYPE=url
 
 # Примечание: при локальном запуске убедитесь, что импорт bot/utils доступен,
 # например запуская из корня проекта или установив PYTHONPATH на корень.
+
+# Совместимость со standalone AI Chat (если нужно использовать старые переменные)
+# BOT_HOST=http://bot:8001  # аналог BOT_WEBHOOK_BASE

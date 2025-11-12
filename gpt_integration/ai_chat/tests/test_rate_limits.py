@@ -2,9 +2,11 @@
 Tests for rate limiting functionality.
 """
 
-import pytest
-from unittest.mock import patch
 from datetime import date, timedelta
+from unittest.mock import AsyncMock, patch
+
+import pytest
+
 from gpt_integration.ai_chat.app.crud import AIChatCRUD, DAILY_LIMIT
 from gpt_integration.ai_chat.app.models import AIChatDailyLimit
 
@@ -12,10 +14,10 @@ from gpt_integration.ai_chat.app.models import AIChatDailyLimit
 class TestRateLimiting:
     """Tests for rate limiting (30 requests per day)."""
     
-    @patch("ai_chat.app.service._call_openai")
-    def test_rate_limit_tracking(self, mock_openai, client, headers, sample_telegram_id):
+    @patch("gpt_integration.ai_chat.app.service.run_agent", new_callable=AsyncMock)
+    def test_rate_limit_tracking(self, mock_run_agent, client, headers, sample_telegram_id):
         """Should track request count correctly."""
-        mock_openai.return_value = ("Test response", 50)
+        mock_run_agent.return_value = {"final": "Test response", "tokens_used": 50}
         
         payload = {
             "telegram_id": sample_telegram_id,
@@ -29,10 +31,10 @@ class TestRateLimiting:
             data = response.json()
             assert data["remaining_requests"] == DAILY_LIMIT - (i + 1)
     
-    @patch("ai_chat.app.service._call_openai")
-    def test_rate_limit_exceeded(self, mock_openai, client, headers, test_db_session, sample_telegram_id):
+    @patch("gpt_integration.ai_chat.app.service.run_agent", new_callable=AsyncMock)
+    def test_rate_limit_exceeded(self, mock_run_agent, client, headers, test_db_session, sample_telegram_id):
         """Should reject requests after limit exceeded."""
-        mock_openai.return_value = ("Test response", 50)
+        mock_run_agent.return_value = {"final": "Test response", "tokens_used": 50}
         
         # Set limit to maximum - 1
         limit = AIChatDailyLimit(
@@ -106,10 +108,10 @@ class TestRateLimiting:
         test_db_session.refresh(limit)
         assert limit.request_count == 10
     
-    @patch("ai_chat.app.service._call_openai")
-    def test_rate_limit_per_user(self, mock_openai, client, headers):
+    @patch("gpt_integration.ai_chat.app.service.run_agent", new_callable=AsyncMock)
+    def test_rate_limit_per_user(self, mock_run_agent, client, headers):
         """Rate limits should be tracked per user."""
-        mock_openai.return_value = ("Test response", 50)
+        mock_run_agent.return_value = {"final": "Test response", "tokens_used": 50}
         
         user1 = 111111
         user2 = 222222
@@ -161,10 +163,10 @@ class TestAdminResetLimit:
 class TestContextTracking:
     """Tests for chat context tracking."""
     
-    @patch("ai_chat.app.service._call_openai")
-    def test_context_includes_previous_messages(self, mock_openai, client, headers, test_db_session, sample_telegram_id):
+    @patch("gpt_integration.ai_chat.app.service.run_agent", new_callable=AsyncMock)
+    def test_context_includes_previous_messages(self, mock_run_agent, client, headers, test_db_session, sample_telegram_id):
         """AI calls should include context from previous messages."""
-        mock_openai.return_value = ("Test response", 50)
+        mock_run_agent.return_value = {"final": "Test response", "tokens_used": 50}
         
         payload = {
             "telegram_id": sample_telegram_id,
@@ -179,17 +181,17 @@ class TestContextTracking:
         response2 = client.post("/v1/chat/send", json=payload, headers=headers)
         assert response2.status_code == 200
         
-        # Check that OpenAI was called with context
+        # Check that the agent was called with context
         # Second call should have more messages (system + context from first + new message)
-        calls = mock_openai.call_args_list
+        calls = mock_run_agent.call_args_list
         assert len(calls) == 2
         
         # First call: system prompt + user message
-        first_call_messages = calls[0][0][0]
+        first_call_messages = calls[0].args[0]
         assert len(first_call_messages) >= 2
         
         # Second call: system prompt + context + user message
-        second_call_messages = calls[1][0][0]
+        second_call_messages = calls[1].args[0]
         assert len(second_call_messages) > len(first_call_messages)
     
     def test_context_limit(self, test_db_session, create_chat_history):

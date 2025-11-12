@@ -12,12 +12,18 @@ Usage:
 """
 
 import os
-import requests
 from datetime import datetime
+
+import pytest
+import requests
+
+# This module performs manual smoke checks against a running service instance.
+# It relies on external configuration and network access, so we skip it in CI.
+pytestmark = pytest.mark.skip(reason="Manual integration smoke test; run explicitly when needed.")
 
 
 # Configuration
-AI_CHAT_URL = os.getenv("AI_CHAT_SERVICE_URL", "http://localhost:9001")
+AI_CHAT_URL = os.getenv("AI_CHAT_SERVICE_URL", "http://localhost:9000")
 API_SECRET_KEY = os.getenv("API_SECRET_KEY", "test-api-key")
 
 # Test user

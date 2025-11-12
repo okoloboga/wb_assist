@@ -30,12 +30,20 @@ from pydantic import BaseModel
 from gpt_integration.analysis.service import orchestrate_analysis
 from gpt_integration.analysis.pipeline import run_analysis
 from gpt_integration.ai_chat.service import chat as ai_chat_service
+from gpt_integration.ai_chat.app.service import (
+    router as ai_chat_router,
+    setup_ai_chat as setup_ai_chat_components,
+)
 from gpt_integration.card_generation.service import generate_card as card_generation_service
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
 app = FastAPI(title="GPT Integration Service", version="1.0.0")
+
+# Включаем полнофункциональный AI Chat Router
+setup_ai_chat_components(app)
+app.include_router(ai_chat_router, prefix="/v1/chat")
 
 
 # ============================================================================
@@ -85,10 +93,14 @@ def health() -> Dict[str, str]:
 # ============================================================================
 
 @app.post("/v1/chat", response_model=ChatResponse)
-def chat(req: ChatRequest) -> ChatResponse:
+def chat(req: ChatRequest, x_api_key: Optional[str] = Header(None)) -> ChatResponse:
     """
     Простой чат через GPT.
     """
+    expected_key = os.getenv("API_SECRET_KEY", "")
+    if not x_api_key or x_api_key != expected_key:
+        raise HTTPException(status_code=403, detail="Invalid or missing API key")
+    
     text = ai_chat_service(req.messages, req.system_prompt)
     return ChatResponse(text=text)
 
