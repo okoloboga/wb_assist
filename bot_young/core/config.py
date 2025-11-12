@@ -5,7 +5,14 @@ import os
 from dataclasses import dataclass
 from dotenv import load_dotenv
 
-load_dotenv()
+# Загружаем переменные окружения из корневого .env файла
+# В Docker переменные окружения уже установлены через docker-compose.yml
+env_file = os.path.join(os.path.dirname(__file__), '..', '..', '.env')
+if os.path.exists(env_file):
+    load_dotenv(env_file)
+else:
+    # Пробуем загрузить из текущей директории (для обратной совместимости)
+    load_dotenv(override=False)
 
 
 @dataclass

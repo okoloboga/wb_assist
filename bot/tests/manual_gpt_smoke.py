@@ -5,9 +5,8 @@ from dotenv import load_dotenv
 # Добавляем путь к корню проекта, чтобы видеть gpt_integration
 sys.path.insert(0, str(Path(__file__).parents[2]))
 
-# Загружаем переменные окружения из .env в корне и в bot/.env
-load_dotenv()  # .env в текущем рабочем каталоге
-load_dotenv(dotenv_path=Path(__file__).parents[1] / ".env")  # bot/.env
+# Загружаем переменные окружения из корневого .env файла
+load_dotenv(dotenv_path=Path(__file__).parents[2] / ".env")
 
 from gpt_integration.gpt_client import GPTClient
 

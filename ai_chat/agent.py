@@ -20,8 +20,9 @@ def _get_client() -> OpenAI:
         raise RuntimeError("OPENAI_API_KEY is not configured")
     base_url = os.getenv("OPENAI_BASE_URL")
     kwargs = {"api_key": api_key}
-    if base_url:
-        kwargs["base_url"] = base_url
+    # Only add base_url if it's set and not empty
+    if base_url and base_url.strip():
+        kwargs["base_url"] = base_url.strip()
     return OpenAI(**kwargs)
 
 async def _call_llm(messages: List[Dict[str, Any]], tools: list | None = None) -> Dict[str, Any]:

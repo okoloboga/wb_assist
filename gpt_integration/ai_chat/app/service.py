@@ -8,6 +8,17 @@ import os
 import logging
 from typing import Optional
 from contextlib import asynccontextmanager
+from pathlib import Path
+from dotenv import load_dotenv
+
+# Загружаем переменные окружения из корневого .env файла
+# В Docker переменные окружения уже установлены через docker-compose.yml
+env_file = Path(__file__).parent.parent.parent.parent / ".env"
+if env_file.exists():
+    load_dotenv(env_file)
+else:
+    # Пробуем загрузить из текущей директории (для обратной совместимости)
+    load_dotenv(override=False)
 
 from fastapi import FastAPI, HTTPException, Header, Depends
 from fastapi.responses import JSONResponse

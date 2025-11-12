@@ -1,8 +1,15 @@
 from fastapi import FastAPI
 from dotenv import load_dotenv
+import os
 
-# Загружаем переменные окружения перед импортом настроек
-load_dotenv()
+# Загружаем переменные окружения из корневого .env файла
+# В Docker переменные окружения уже установлены через docker-compose.yml
+env_file = os.path.join(os.path.dirname(__file__), '..', '.env')
+if os.path.exists(env_file):
+    load_dotenv(env_file)
+else:
+    # Пробуем загрузить из текущей директории (для обратной совместимости)
+    load_dotenv(override=False)
 
 from app.core.config import settings
 from app.core.middleware import setup_middleware, setup_exception_handlers

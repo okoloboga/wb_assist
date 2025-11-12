@@ -113,6 +113,7 @@ services:
       dockerfile: bot/Dockerfile
     depends_on:
       - server
+      - ai_chat
     ports:
       - "8001:8001"  # Webhook сервер
     environment:
@@ -145,8 +146,10 @@ services:
       - OPENAI_TEMPERATURE=${OPENAI_TEMPERATURE:-0.2}
       - OPENAI_MAX_TOKENS=${OPENAI_MAX_TOKENS:-4000}
       - OPENAI_TIMEOUT=${OPENAI_TIMEOUT:-60}
-      - OPENAI_MAX_RETRIES=${OPENAI_MAX_RETRIES:-2}
+      - OPENAI_MAX_RETRIES=${OPENAI_MAX_RETRIES:-3}
+      - OPENAI_MAX_RETRIES_CONNECTION=${OPENAI_MAX_RETRIES_CONNECTION:-8}
       - OPENAI_RETRY_DELAY_MS=${OPENAI_RETRY_DELAY_MS:-500}
+      - OPENAI_RETRY_DELAY_CONNECTION_MS=${OPENAI_RETRY_DELAY_CONNECTION_MS:-2000}
       - OPENAI_RETRY_BACKOFF=${OPENAI_RETRY_BACKOFF:-2}
       # Photo Processing - API генерации изображений
       - IMAGE_GEN_API_KEY=${IMAGE_GEN_API_KEY:-}
@@ -159,6 +162,29 @@ services:
     volumes:
       - ./gpt_integration:/app/gpt_integration
       - ./bot/utils:/app/utils
+    networks:
+      - app-network
+
+  ai_chat:
+    build:
+      context: .
+      dockerfile: ai_chat/Dockerfile
+    ports:
+      - "9001:9001"
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      - AI_CHAT_PORT=9001
+      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      - API_SECRET_KEY=${API_SECRET_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o-mini}
+      - OPENAI_TEMPERATURE=${OPENAI_TEMPERATURE:-0.7}
+      - OPENAI_MAX_TOKENS=${OPENAI_MAX_TOKENS:-1000}
+      - SERVER_HOST=http://server:8000
+    volumes:
+      - ./ai_chat:/app/ai_chat
     networks:
       - app-network
 

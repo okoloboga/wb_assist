@@ -3,8 +3,14 @@ from typing import Optional
 from dataclasses import dataclass
 from dotenv import load_dotenv
 
-# Загружаем переменные окружения
-load_dotenv()
+# Загружаем переменные окружения только если .env файл существует
+# В Docker переменные окружения уже установлены через docker-compose.yml
+env_file = os.path.join(os.path.dirname(__file__), '..', '..', '.env')
+if os.path.exists(env_file):
+    load_dotenv(env_file)
+else:
+    # Пробуем загрузить из текущей директории (для локального запуска)
+    load_dotenv(override=False)  # override=False означает, что не перезаписываем существующие переменные
 
 
 @dataclass
@@ -65,8 +71,9 @@ class BotConfig:
 
 def load_config() -> BotConfig:
     """Загрузить конфигурацию из переменных окружения"""
+    bot_token = os.getenv("BOT_TOKEN", "").strip()
     return BotConfig(
-        bot_token=os.getenv("BOT_TOKEN", ""),
+        bot_token=bot_token,
         webhook_url=os.getenv("WEBHOOK_URL"),
         webhook_secret=os.getenv("WEBHOOK_SECRET"),
         server_host=os.getenv("SERVER_HOST", "http://127.0.0.1:8000"),

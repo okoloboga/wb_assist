@@ -5,9 +5,8 @@ from dotenv import load_dotenv
 # Добавляем путь к корню проекта, чтобы видеть gpt_integration
 sys.path.insert(0, str(Path(__file__).parents[2]))
 
-# Загружаем переменные окружения из .env в корне и в bot/.env (если есть)
-load_dotenv()
-load_dotenv(dotenv_path=Path(__file__).parents[1] / ".env")
+# Загружаем переменные окружения из корневого .env файла
+load_dotenv(dotenv_path=Path(__file__).parents[2] / ".env")
 
 from gpt_integration.analysis.pipeline import compose_messages, run_analysis
 

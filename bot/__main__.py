@@ -3,7 +3,6 @@ import logging
 import os
 import sys
 from pathlib import Path
-from dotenv import load_dotenv
 from aiogram import Bot, Dispatcher
 from aiogram.filters import Command
 import uvicorn

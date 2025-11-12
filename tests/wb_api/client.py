@@ -3,9 +3,11 @@ import requests
 from typing import Dict, List, Optional
 from datetime import datetime, timedelta
 import logging
+from pathlib import Path
 from dotenv import load_dotenv
 
-load_dotenv()
+# Загружаем переменные окружения из корневого .env файла
+load_dotenv(dotenv_path=Path(__file__).parents[2] / ".env")
 
 class WildberriesAPI:
     def __init__(self):

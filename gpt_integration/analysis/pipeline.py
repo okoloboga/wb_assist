@@ -306,7 +306,9 @@ def run_analysis(
     if not telegram["chunks"] and result_error:
         # Check if it's a regional restriction error
         error_text = result_error
-        if "unsupported_country_region_territory" in error_text or "не available in your region" in error_text.lower():
+        error_lower = error_text.lower()
+        
+        if "unsupported_country_region_territory" in error_text or "не available in your region" in error_lower:
             error_text = (
                 "⚠️ OpenAI API недоступен в вашем регионе.\n\n"
                 "Для решения проблемы необходимо настроить альтернативный API endpoint:\n"
@@ -315,8 +317,39 @@ def run_analysis(
                 "3. Установите переменную окружения OPENAI_BASE_URL с адресом альтернативного endpoint\n\n"
                 f"Технические детали:\n{result_error}"
             )
+        elif "connection error" in error_lower or "connection" in error_lower:
+            # Connection error - provide helpful message
+            error_text = (
+                "⚠️ Ошибка соединения с API.\n\n"
+                "Не удалось установить соединение с сервисом. Возможные причины:\n"
+                "• Проблемы с интернет-соединением\n"
+                "• Временная недоступность сервера\n"
+                "• Неправильная настройка прокси или DNS\n"
+                "• Блокировка файрволом\n\n"
+                "Попробуйте:\n"
+                "1. Проверить интернет-соединение\n"
+                "2. Подождать несколько минут и повторить попытку\n"
+                "3. Проверить настройки сети и прокси\n\n"
+                f"Техническая информация:\n{result_error}"
+            )
+        elif "timeout" in error_lower:
+            error_text = (
+                "⚠️ Превышено время ожидания ответа от API.\n\n"
+                "Сервер не ответил в течение установленного времени. "
+                "Это может быть временная проблема с сетью или высокая загрузка сервера.\n\n"
+                "Попробуйте:\n"
+                "1. Подождать несколько минут и повторить попытку\n"
+                "2. Проверить скорость интернет-соединения\n\n"
+                f"Техническая информация:\n{result_error}"
+            )
         else:
-            error_text = f"⚠️ Ошибка запроса к LLM. Пожалуйста, повторите попытку позже.\n\n{result_error}"
+            # Generic error - provide helpful message
+            error_text = (
+                "⚠️ Ошибка запроса к LLM.\n\n"
+                "Произошла ошибка при обращении к сервису анализа. "
+                "Пожалуйста, повторите попытку через несколько минут.\n\n"
+                f"Техническая информация:\n{result_error}"
+            )
         
         telegram = _prepare_telegram_from_text(error_text)
 

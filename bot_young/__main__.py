@@ -7,7 +7,6 @@ import sys
 from pathlib import Path
 
 from aiogram import Bot, Dispatcher
-from dotenv import load_dotenv
 
 # Добавляем путь к модулям бота
 sys.path.insert(0, str(Path(__file__).parent))

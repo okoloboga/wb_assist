@@ -8,6 +8,17 @@ import os
 import logging
 from typing import Optional
 from contextlib import asynccontextmanager
+from pathlib import Path
+from dotenv import load_dotenv
+
+# Загружаем переменные окружения из корневого .env файла
+# В Docker переменные окружения уже установлены через docker-compose.yml
+env_file = Path(__file__).parent.parent.parent / ".env"
+if env_file.exists():
+    load_dotenv(env_file)
+else:
+    # Пробуем загрузить из текущей директории (для обратной совместимости)
+    load_dotenv(override=False)
 
 from fastapi import FastAPI, HTTPException, Header, Depends
 from fastapi.responses import JSONResponse
@@ -155,8 +166,9 @@ def _get_openai_client() -> OpenAI:
         )
     
     client_kwargs = {"api_key": OPENAI_API_KEY}
-    if OPENAI_BASE_URL:
-        client_kwargs["base_url"] = OPENAI_BASE_URL
+    # Only add base_url if it's set and not empty
+    if OPENAI_BASE_URL and OPENAI_BASE_URL.strip():
+        client_kwargs["base_url"] = OPENAI_BASE_URL.strip()
     
     return OpenAI(**client_kwargs)
 
