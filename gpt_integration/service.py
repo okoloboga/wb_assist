@@ -47,6 +47,21 @@ app.include_router(ai_chat_router, prefix="/v1/chat")
 
 
 # ============================================================================
+# Startup Event - Initialize Photo Processing Database
+# ============================================================================
+
+@app.on_event("startup")
+async def startup_event():
+    """Initialize photo processing database on startup"""
+    try:
+        from gpt_integration.photo_processing import init_db
+        init_db()
+        logger.info("✅ Photo processing database initialized")
+    except Exception as e:
+        logger.error(f"❌ Failed to initialize photo processing database: {e}")
+
+
+# ============================================================================
 # Pydantic Models
 # ============================================================================
 
@@ -77,6 +92,13 @@ class CardGenerationRequest(BaseModel):
     characteristics: Dict[str, str]
     target_audience: str
     selling_points: str
+
+
+class PhotoProcessingRequest(BaseModel):
+    telegram_id: int
+    photo_file_id: str
+    prompt: str
+    user_id: Optional[int] = None
 
 
 # ============================================================================
@@ -187,6 +209,107 @@ async def card_generate(
         raise
     except Exception as e:
         logger.error(f"❌ Unexpected error in card generation endpoint: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Internal server error: {str(e)}"
+        )
+
+
+# ============================================================================
+# Photo Processing Endpoints
+# ============================================================================
+
+@app.post("/v1/photo/process")
+async def photo_process(
+    req: PhotoProcessingRequest,
+    x_api_key: Optional[str] = Header(None)
+) -> Dict[str, Any]:
+    """
+    Обработка фотографии по промпту пользователя.
+    """
+    expected_key = os.getenv("API_SECRET_KEY", "")
+    if not x_api_key or x_api_key != expected_key:
+        raise HTTPException(status_code=403, detail="Invalid or missing API key")
+    
+    logger.info(f"📸 Processing photo for telegram_id={req.telegram_id}")
+    
+    try:
+        from gpt_integration.photo_processing.service import process_photo
+        
+        result = await process_photo(
+            telegram_id=req.telegram_id,
+            photo_file_id=req.photo_file_id,
+            prompt=req.prompt,
+            user_id=req.user_id
+        )
+        
+        return {
+            "status": "success",
+            "result": result
+        }
+    
+    except ValueError as e:
+        logger.error(f"❌ Validation error: {e}")
+        raise HTTPException(
+            status_code=400,
+            detail=str(e)
+        )
+    
+    except Exception as e:
+        logger.error(f"❌ Photo processing error: {e}", exc_info=True)
+        
+        # Определяем тип ошибки для понятного сообщения
+        error_message = str(e)
+        
+        if "timeout" in error_message.lower():
+            return {
+                "status": "error",
+                "error_type": "timeout",
+                "message": "Превышено время ожидания обработки"
+            }
+        elif "api" in error_message.lower() or "network" in error_message.lower():
+            return {
+                "status": "error",
+                "error_type": "api_error",
+                "message": "Ошибка при обращении к сервису обработки изображений"
+            }
+        else:
+            return {
+                "status": "error",
+                "error_type": "processing_error",
+                "message": f"Ошибка обработки: {error_message}"
+            }
+
+
+@app.get("/v1/photo/history/{telegram_id}")
+async def photo_history(
+    telegram_id: int,
+    limit: int = 20,
+    offset: int = 0,
+    x_api_key: Optional[str] = Header(None)
+) -> Dict[str, Any]:
+    """
+    Получить историю обработанных фотографий пользователя.
+    """
+    expected_key = os.getenv("API_SECRET_KEY", "")
+    if not x_api_key or x_api_key != expected_key:
+        raise HTTPException(status_code=403, detail="Invalid or missing API key")
+    
+    logger.info(f"📜 Getting photo history for telegram_id={telegram_id}")
+    
+    try:
+        from gpt_integration.photo_processing.service import get_processing_history
+        
+        history = await get_processing_history(
+            telegram_id=telegram_id,
+            limit=limit,
+            offset=offset
+        )
+        
+        return history
+    
+    except Exception as e:
+        logger.error(f"❌ Error getting photo history: {e}", exc_info=True)
         raise HTTPException(
             status_code=500,
             detail=f"Internal server error: {str(e)}"

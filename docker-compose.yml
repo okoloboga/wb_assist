@@ -163,7 +163,7 @@ services:
       - IMAGE_GEN_MAX_RETRIES=${IMAGE_GEN_MAX_RETRIES:-3}
       # Photo Processing - Хранение результатов
       - PHOTO_STORAGE_TYPE=${PHOTO_STORAGE_TYPE:-url}
-      - PHOTO_PROCESSING_DATABASE_URL=${PHOTO_PROCESSING_DATABASE_URL:-}
+      - PHOTO_PROCESSING_DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
     volumes:
       - ./gpt_integration:/app/gpt_integration
       - ./bot/utils:/app/utils
