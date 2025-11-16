@@ -820,7 +820,8 @@ class BotAPIService:
             fetch_days = max(days_window, chart_days)
             
             # Диапазоны дат по МСК
-            end_msk = TimezoneUtils.get_today_start_msk()  # начало сегодняшнего дня
+            # ВАЖНО: анализ заканчивается вчерашним днём (исключаем "сегодня" полностью)
+            end_msk = TimezoneUtils.get_today_start_msk() - timedelta(days=1)  # начало вчерашнего дня
             start_msk = end_msk - timedelta(days=fetch_days - 1)
             # Для включительного интервала по БД: [start; next_day_of_end)
             start_utc = TimezoneUtils.to_utc(start_msk)
@@ -871,12 +872,27 @@ class BotAPIService:
             for o in orders_rows:
                 day_key = TimezoneUtils.from_utc(o.order_date).date().isoformat() if o.order_date else None
                 if day_key in day_map:
+                    # Вычисляем сумму заказа с фолбэками
+                    order_amount = (
+                        (o.total_price if o.total_price is not None else None)
+                        if hasattr(o, "total_price") else None
+                    )
+                    if order_amount is None:
+                        order_amount = (o.customer_price if hasattr(o, "customer_price") and o.customer_price is not None else None)
+                    if order_amount is None:
+                        price_val = (o.price if hasattr(o, "price") and o.price is not None else 0.0)
+                        qty_val = (o.quantity if hasattr(o, "quantity") and o.quantity is not None else 1)
+                        try:
+                            order_amount = float(price_val) * float(qty_val)
+                        except Exception:
+                            order_amount = 0.0
+                    order_amount = float(order_amount or 0.0)
                     if o.status == 'canceled':
                         day_map[day_key]["cancellations"] += 1
-                        day_map[day_key]["cancellations_amount"] += float(o.total_price or 0.0)
+                        day_map[day_key]["cancellations_amount"] += order_amount
                     else:
                         day_map[day_key]["orders"] += 1
-                        day_map[day_key]["orders_amount"] += float(o.total_price or 0.0)
+                        day_map[day_key]["orders_amount"] += order_amount
             
             # Заполняем выкупы/возвраты
             for s in sales_rows:
@@ -933,7 +949,8 @@ class BotAPIService:
             return_rate = round((totals["returns"] / totals["buyouts"] * 100) if totals["buyouts"] > 0 else 0.0, 2)
             
             # Вычисляем данные за ВЧЕРА (последний полный день)
-            yesterday_date = (end_msk - timedelta(days=1)).date().isoformat()
+            # Вчера = последний день диапазона (end_msk)
+            yesterday_date = end_msk.date().isoformat()
             yesterday_data = day_map.get(yesterday_date, {
                 "orders": 0, "orders_amount": 0.0,
                 "cancellations": 0, "cancellations_amount": 0.0,
