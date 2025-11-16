@@ -82,24 +82,74 @@ def aggregate(sources: Dict[str, Any]) -> Dict[str, Any]:
     # Ensure meta exists and attach computed metrics
     meta = sources.get("meta") or {}
 
-    # Если есть daily_trends.meta.days_window — прокидываем его явно,
-    # а также синхронизируем поле period в формате "{N}d"
-    daily_trends = sources.get("daily_trends") or {}
-    try:
-        dt_meta = daily_trends.get("meta") or {}
-        days_window = int(dt_meta.get("days_window")) if dt_meta.get("days_window") is not None else None
-        if days_window:
-            meta["days_window"] = days_window
-            meta["period"] = f"{days_window}d"
-    except Exception:
-        # безопасное игнорирование, если структура неожиданная
-        pass
+    # Если есть daily_trends — подготовим "дистиллированную" версию для LLM:
+    # - убираем chart (base64)
+    # - ужимаем time_series до необходимых полей
+    # - ограничиваем time_series последними 7 днями для LLM (график отдельно и не в промпте)
+    # - проставляем meta.days_window=7 и period="7d" для согласованности промпта
+    daily_trends_raw = sources.get("daily_trends") or {}
+    daily_trends: Dict[str, Any] = {}
+    if daily_trends_raw:
+        try:
+            # Глубокая копия упрощённо
+            daily_trends = {
+                "meta": dict(daily_trends_raw.get("meta") or {}),
+                "aggregates": dict(daily_trends_raw.get("aggregates") or {}),
+                "top_products": list(daily_trends_raw.get("top_products") or []),
+            }
+            # Удаляем chart из промпта
+            # (картинка отправляется в Telegram отдельно, в промпт не нужна)
+            # daily_trends_raw.get("chart") намеренно игнорируем
+
+            # Ужимаем time_series
+            ts = daily_trends_raw.get("time_series") or []
+            # Берём последние 7 дней
+            ts_last7 = ts[-7:] if len(ts) > 7 else ts
+            daily_trends["time_series"] = [
+                {
+                    "date": p.get("date"),
+                    "orders": p.get("orders", 0),
+                    "cancellations": p.get("cancellations", 0),
+                    "buyouts": p.get("buyouts", 0),
+                    "returns": p.get("returns", 0),
+                    "avg_rating": p.get("avg_rating", 0.0),
+                }
+                for p in ts_last7
+            ]
+
+            # Обновляем meta для LLM
+            daily_trends_meta = daily_trends.get("meta") or {}
+            daily_trends_meta["days_window"] = 7
+            daily_trends_meta["period"] = "7d"
+            daily_trends["meta"] = daily_trends_meta
+        except Exception:
+            # если что-то пошло не так, мягко деградируем к исходной структуре без chart
+            try:
+                fallback = dict(daily_trends_raw)
+                fallback.pop("chart", None)
+                daily_trends = fallback
+            except Exception:
+                daily_trends = {}
+    # Прокинем синхронизированные метаданные периода в meta промпта
+    if daily_trends:
+        try:
+            dt_meta = daily_trends.get("meta") or {}
+            days_window = int(dt_meta.get("days_window")) if dt_meta.get("days_window") is not None else None
+            if days_window:
+                meta["days_window"] = days_window
+                meta["period"] = f"{days_window}d"
+        except Exception:
+            pass
     meta["computed_metrics"] = computed_metrics
     res["meta"] = meta
     
     # Пробрасываем yesterday в корень для удобства LLM
-    if daily_trends and "yesterday" in daily_trends:
-        res["yesterday"] = daily_trends["yesterday"]
+    if daily_trends_raw and "yesterday" in daily_trends_raw:
+        res["yesterday"] = daily_trends_raw["yesterday"]
+
+    # Помещаем дистиллированный daily_trends
+    if daily_trends:
+        res["daily_trends"] = daily_trends
 
     # Prefer to carry top_products list (from sales or sources)
     if top_products_list:

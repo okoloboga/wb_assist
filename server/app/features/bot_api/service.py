@@ -816,10 +816,12 @@ class BotAPIService:
             days_window = days_override or int(os.getenv("ANALYTICS_DAYS_WINDOW", "10"))
             if days_window < 3 or days_window > 60:
                 days_window = 10
+            chart_days = 14
+            fetch_days = max(days_window, chart_days)
             
             # Диапазоны дат по МСК
             end_msk = TimezoneUtils.get_today_start_msk()  # начало сегодняшнего дня
-            start_msk = end_msk - timedelta(days=days_window - 1)
+            start_msk = end_msk - timedelta(days=fetch_days - 1)
             # Для включительного интервала по БД: [start; next_day_of_end)
             start_utc = TimezoneUtils.to_utc(start_msk)
             next_day_after_end_utc = TimezoneUtils.to_utc(end_msk + timedelta(days=1))
@@ -849,11 +851,11 @@ class BotAPIService:
                 )
             ).all()
             
-            # Инициализируем временной ряд по датам (МСК)
+            # Инициализируем временной ряд по датам (МСК) для fetch_days
             day_keys = []
             day_map = {}
             cur = start_msk
-            for _ in range(days_window):
+            for _ in range(fetch_days):
                 key = cur.date().isoformat()
                 day_keys.append(key)
                 day_map[key] = {
@@ -893,7 +895,8 @@ class BotAPIService:
                 if day_key in day_map and r.rating is not None:
                     day_map[day_key]["ratings"].append(float(r.rating))
             
-            # Сериализация временного ряда
+            # Сериализация временного ряда: используем последние days_window дней
+            selected_keys = day_keys[-days_window:] if len(day_keys) > days_window else list(day_keys)
             time_series = []
             totals = {
                 "orders": 0, "orders_amount": 0.0,
@@ -901,7 +904,7 @@ class BotAPIService:
                 "buyouts": 0, "buyouts_amount": 0.0,
                 "returns": 0, "returns_amount": 0.0
             }
-            for key in day_keys:
+            for key in selected_keys:
                 d = day_map[key]
                 avg_rating = round(sum(d["ratings"]) / len(d["ratings"]), 2) if d["ratings"] else 0.0
                 time_series.append({
@@ -1015,13 +1018,17 @@ class BotAPIService:
             yesterday_products.sort(key=lambda x: x["orders"], reverse=True)
             top_yesterday_products = yesterday_products[:5]
             
-            # Генерация графика
-            chart_b64 = self._generate_trends_chart_base64(day_keys, day_map) if plt else ""
+            # Генерация графика за последние chart_days
+            chart_keys = day_keys[-chart_days:] if len(day_keys) > chart_days else list(day_keys)
+            chart_b64 = self._generate_trends_chart_base64(chart_keys, day_map) if plt else ""
             
             data = {
                 "meta": {
                     "days_window": days_window,
-                    "date_range": {"start": start_msk.date().isoformat(), "end": (end_msk.date()).isoformat()},
+                    "date_range": {
+                        "start": (end_msk - timedelta(days=days_window - 1)).date().isoformat(),
+                        "end": (end_msk.date()).isoformat()
+                    },
                     "generated_at": TimezoneUtils.now_msk().isoformat()
                 },
                 "time_series": time_series,
