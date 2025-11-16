@@ -148,9 +148,9 @@ services:
       - DAILY_LIMIT=${DAILY_LIMIT:-30}
       # OpenAI API
       - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o-mini}
-      - OPENAI_TEMPERATURE=${OPENAI_TEMPERATURE:-0.2}
-      - OPENAI_MAX_TOKENS=${OPENAI_MAX_TOKENS:-4000}
+      - OPENAI_MODEL=${OPENAI_MODEL}
+      - OPENAI_TEMPERATURE=${OPENAI_TEMPERATURE}
+      - OPENAI_MAX_TOKENS=${OPENAI_MAX_TOKENS}
       - OPENAI_TIMEOUT=${OPENAI_TIMEOUT:-60}
       - OPENAI_MAX_RETRIES=${OPENAI_MAX_RETRIES:-3}
       - OPENAI_MAX_RETRIES_CONNECTION=${OPENAI_MAX_RETRIES_CONNECTION:-8}
@@ -173,24 +173,24 @@ services:
     networks:
       - app-network
 
-  # bot_young:
-  #   build:
-  #     context: .
-  #     dockerfile: bot_young/Dockerfile
-  #   container_name: wb_assist_bot_young
-  #   depends_on:
-  #     - server
-  #     - redis
-  #   environment:
-  #     - BOT_YOUNG_TOKEN=${BOT_YOUNG_TOKEN}
-  #     - SERVER_HOST=http://server:8000
-  #     - API_SECRET_KEY=${API_SECRET_KEY}
-  #     - MAIN_BOT_USERNAME=${MAIN_BOT_USERNAME}
-  #     - LOG_LEVEL=${LOG_LEVEL:-INFO}
-  #     - DEFAULT_TIMEZONE=Europe/Moscow
-  #   networks:
-  #     - app-network
-  #   restart: unless-stopped
+  bot_young:
+    build:
+      context: .
+      dockerfile: bot_young/Dockerfile
+    container_name: wb_assist_bot_young
+    depends_on:
+      - server
+      - redis
+    environment:
+      - BOT_YOUNG_TOKEN=${BOT_YOUNG_TOKEN}
+      - SERVER_HOST=http://server:8000
+      - API_SECRET_KEY=${API_SECRET_KEY}
+      - MAIN_BOT_USERNAME=${MAIN_BOT_USERNAME}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - DEFAULT_TIMEZONE=Europe/Moscow
+    networks:
+      - app-network
+    restart: unless-stopped
 
 
 volumes:
