@@ -840,7 +840,7 @@ class BotAPIService:
                     WBSales.cabinet_id == cabinet.id,
                     WBSales.sale_date >= start_utc,
                     WBSales.sale_date < next_day_after_end_utc,
-                    WBSales.is_cancel == False
+                    or_(WBSales.is_cancel == False, WBSales.is_cancel.is_(None))
                 )
             ).all()
             reviews_rows = self.db.query(WBReview).filter(
@@ -1102,11 +1102,9 @@ class BotAPIService:
             fig, ax = plt.subplots(figsize=(8, 6))
             x = list(range(len(day_keys)))
             orders = [day_map[d]["orders"] for d in day_keys]
-            cancels = [day_map[d]["cancellations"] for d in day_keys]
             buyouts = [day_map[d]["buyouts"] for d in day_keys]
             returns = [day_map[d]["returns"] for d in day_keys]
             ax.plot(x, orders, label="Заказы", color="#1f77b4")
-            ax.plot(x, cancels, label="Отмены", color="#ff7f0e")
             ax.plot(x, buyouts, label="Выкупы", color="#2ca02c")
             ax.plot(x, returns, label="Возвраты", color="#d62728")
             ax.set_title("Динамика событий за период")
