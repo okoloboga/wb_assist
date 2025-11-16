@@ -30,6 +30,18 @@ async def _fetch_analytics_sales(telegram_id: int, period: str, server_host: str
         return data.get("analytics") or {}
 
 
+async def _fetch_daily_trends(telegram_id: int, server_host: str, api_secret_key: str) -> Dict[str, Any]:
+    """Получить ежедневную динамику событий (новый эндпоинт)."""
+    url = f"{server_host.rstrip('/')}/api/v1/bot/analytics/daily-trends"
+    headers = {"X-API-SECRET-KEY": api_secret_key}
+    params = {"telegram_id": telegram_id}
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        resp = await client.get(url, headers=headers, params=params)
+        if resp.status_code != 200:
+            raise HTTPException(status_code=resp.status_code, detail=resp.text)
+        data = resp.json()
+        return data.get("analytics") or {}
+
 async def _fetch_stocks_critical(telegram_id: int, server_host: str, api_secret_key: str) -> Any:
     """Получить критические остатки с сервера."""
     url = f"{server_host.rstrip('/')}/api/v1/bot/stocks/critical"
@@ -73,7 +85,7 @@ async def _fetch_orders_recent(telegram_id: int, server_host: str, api_secret_ke
 
 
 async def _post_bot_webhook(telegram_id: int, text: str, webhook_base: str) -> None:
-    """Отправить результат в бот через webhook."""
+    """Отправить текстовый результат в бот через webhook."""
     url = f"{webhook_base.rstrip('/')}/webhook/notifications/{telegram_id}"
     payload = {
         "telegram_id": telegram_id,
@@ -83,6 +95,37 @@ async def _post_bot_webhook(telegram_id: int, text: str, webhook_base: str) -> N
     }
     async with httpx.AsyncClient(timeout=30.0) as client:
         await client.post(url, json=payload)
+
+
+async def _send_photo_to_bot(telegram_id: int, photo_base64: str, caption: str, bot_token: str) -> None:
+    """Отправить график (изображение) пользователю через Telegram Bot API."""
+    import base64
+    from io import BytesIO
+    
+    try:
+        # Декодируем base64 в bytes
+        photo_bytes = base64.b64decode(photo_base64)
+        
+        # Отправляем через Telegram Bot API
+        url = f"https://api.telegram.org/bot{bot_token}/sendPhoto"
+        
+        # Формируем multipart/form-data запрос
+        files = {
+            "photo": ("chart.png", BytesIO(photo_bytes), "image/png")
+        }
+        data = {
+            "chat_id": telegram_id,
+            "caption": caption
+        }
+        
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(url, files=files, data=data)
+            if resp.status_code != 200:
+                logger.error(f"❌ Failed to send photo: {resp.status_code} {resp.text}")
+            else:
+                logger.info(f"✅ Photo sent to telegram_id={telegram_id}")
+    except Exception as e:
+        logger.error(f"❌ Error sending photo: {e}")
 
 
 async def orchestrate_analysis(telegram_id: int, period: str, validate_output: bool) -> None:
@@ -102,18 +145,19 @@ async def orchestrate_analysis(telegram_id: int, period: str, validate_output: b
     try:
         # 1) Fetch sources concurrently
         logger.info(f"📥 Fetching data from server for telegram_id={telegram_id}")
-        sales_task = _fetch_analytics_sales(telegram_id, period, server_host, api_secret_key)
+        # Новый источник вместо /analytics/sales
+        daily_trends_task = _fetch_daily_trends(telegram_id, server_host, api_secret_key)
         stocks_task = _fetch_stocks_critical(telegram_id, server_host, api_secret_key)
         reviews_task = _fetch_reviews_summary(telegram_id, server_host, api_secret_key)
         orders_task = _fetch_orders_recent(telegram_id, server_host, api_secret_key)
 
-        fetched = await asyncio.gather(sales_task, stocks_task, reviews_task, orders_task, return_exceptions=True)
-        sales_analytics, stocks_critical, reviews_summary, recent_orders = fetched
+        fetched = await asyncio.gather(daily_trends_task, stocks_task, reviews_task, orders_task, return_exceptions=True)
+        daily_trends, stocks_critical, reviews_summary, recent_orders = fetched
 
         # Normalize exceptions to None
-        if isinstance(sales_analytics, Exception):
-            logger.warning(f"⚠️ Sales data fetch failed: {sales_analytics}")
-            sales_analytics = {}
+        if isinstance(daily_trends, Exception):
+            logger.warning(f"⚠️ Daily trends fetch failed: {daily_trends}")
+            daily_trends = {}
         if isinstance(stocks_critical, Exception):
             logger.warning(f"⚠️ Stocks data fetch failed: {stocks_critical}")
             stocks_critical = None
@@ -130,7 +174,7 @@ async def orchestrate_analysis(telegram_id: int, period: str, validate_output: b
         logger.info(f"🔄 Aggregating data...")
         sources = {
             "meta": {"telegram_id": telegram_id, "period": period},
-            "sales": sales_analytics,
+            "daily_trends": daily_trends,
         }
         if stocks_critical:
             sources["stocks_critical"] = stocks_critical
@@ -237,7 +281,27 @@ async def orchestrate_analysis(telegram_id: int, period: str, validate_output: b
             
             chunks = [error_msg]
 
-        logger.info(f"📤 Sending {len(chunks)} chunks to bot")
+        # 4.5) Отправка графика (если есть в daily_trends)
+        chart_obj = daily_trends.get("chart") if isinstance(daily_trends, dict) else None
+        chart_base64_data = chart_obj.get("data") if isinstance(chart_obj, dict) else None
+        bot_token = os.getenv("BOT_TOKEN", "")
+        
+        if isinstance(chart_base64_data, str) and chart_base64_data and bot_token:
+            logger.info(f"📊 Sending chart to bot ({len(chart_base64_data)} chars base64)")
+            try:
+                await _send_photo_to_bot(telegram_id, chart_base64_data, "📊 Динамика за период", bot_token)
+                logger.info(f"✅ Chart sent successfully")
+            except Exception as chart_err:
+                logger.error(f"❌ Failed to send chart: {chart_err}")
+        else:
+            if not chart_obj:
+                logger.warning(f"⚠️ No chart object in daily_trends data")
+            elif not chart_base64_data:
+                logger.warning(f"⚠️ Chart object present but no 'data' base64 field")
+            if not bot_token:
+                logger.warning(f"⚠️ BOT_TOKEN not set in environment, cannot send chart")
+
+        logger.info(f"📤 Sending {len(chunks)} text chunks to bot")
         for i, chunk in enumerate(chunks):
             logger.info(f"📤 Sending chunk {i+1}/{len(chunks)} ({len(chunk)} chars)")
             await _post_bot_webhook(telegram_id, chunk, webhook_base)

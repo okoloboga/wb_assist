@@ -60,6 +60,33 @@ def _safe_json_extract(text: str) -> Optional[Dict[str, Any]]:
     # Удаляем лишние пробелы в начале и конце
     cleaned = text.strip()
     
+    def _sanitize_numeric_underscores(s: str) -> str:
+        """
+        Удаляет подчёркивания внутри чисел (например, 40_000.0 -> 40000.0), не затрагивая строки.
+        """
+        # Заменяем только вне строк JSON (грубая, но эффективная стратегия):
+        out = []
+        in_string_local = False
+        escape = False
+        for ch in s:
+            if escape:
+                out.append(ch)
+                escape = False
+                continue
+            if ch == '\\\\':
+                out.append(ch)
+                escape = True
+                continue
+            if ch == '\"':
+                in_string_local = not in_string_local
+                out.append(ch)
+                continue
+            if not in_string_local and ch == '_':
+                # пропускаем подчёркивания вне строк
+                continue
+            out.append(ch)
+        return ''.join(out)
+
     def extract_json_from_text(text_to_parse: str, description: str) -> Optional[Dict[str, Any]]:
         """Вспомогательная функция для извлечения JSON из текста."""
         start = text_to_parse.find("{")
@@ -104,8 +131,9 @@ def _safe_json_extract(text: str) -> Optional[Dict[str, Any]]:
         # Пробуем несколько стратегий исправления
         fixing_strategies = [
             lambda s: s,  # Оригинал
-            lambda s: re.sub(r',(\s*[}\]])', r'\1', s),  # Удаляем trailing commas
-            lambda s: re.sub(r',(\s*[}\]])', r'\1', s).replace('\\n', '\n'),  # Исправляем newlines
+            lambda s: _sanitize_numeric_underscores(s),  # Удаляем подчёркивания в числах
+            lambda s: re.sub(r',(\s*[}\]])', r'\\1', s),  # Удаляем trailing commas
+            lambda s: re.sub(r',(\s*[}\]])', r'\\1', s).replace('\\\\n', '\\n'),  # Исправляем newlines
         ]
         
         for strategy_idx, strategy in enumerate(fixing_strategies):

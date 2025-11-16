@@ -540,6 +540,88 @@ class AnalyticsSalesAPIResponse(BaseModel):
     telegram_text: Optional[str] = None
 
 
+# ===== Новые схемы: Daily Trends (10 дней) =====
+
+class DailyTrendPoint(BaseModel):
+    """Точка временного ряда по дню"""
+    date: str
+    orders: int
+    orders_amount: float
+    cancellations: int
+    cancellations_amount: float
+    buyouts: int
+    buyouts_amount: float
+    returns: int
+    returns_amount: float
+    avg_rating: float
+
+
+class DailyTrendTotals(BaseModel):
+    """Суммарные значения"""
+    orders: int
+    orders_amount: float
+    cancellations: int
+    cancellations_amount: float
+    buyouts: int
+    buyouts_amount: float
+    returns: int
+    returns_amount: float
+
+
+class DailyTrendConversion(BaseModel):
+    """Процентные показатели"""
+    buyout_rate_percent: float
+    return_rate_percent: float
+
+
+class DailyTrendAggregates(BaseModel):
+    """Агрегированные показатели за период"""
+    totals: DailyTrendTotals
+    conversion: DailyTrendConversion
+
+
+class DailyTrendTopProduct(BaseModel):
+    """Топ-товар за период"""
+    nm_id: int
+    name: str
+    orders: int
+    cancellations: int
+    buyouts: int
+    returns: int
+    buyout_rate_percent: float
+    return_rate_percent: float
+
+
+class ChartPayload(BaseModel):
+    """Изображение графика"""
+    format: str = "png_base64"
+    data: str
+
+
+class DailyTrendsMeta(BaseModel):
+    """Метаданные ответа"""
+    days_window: int
+    date_range: Dict[str, str]
+    generated_at: str
+
+
+class DailyTrendsData(BaseModel):
+    """Основные данные Daily Trends"""
+    meta: DailyTrendsMeta
+    time_series: List[DailyTrendPoint]
+    aggregates: DailyTrendAggregates
+    top_products: List[DailyTrendTopProduct]
+    chart: ChartPayload
+
+
+class DailyTrendsAPIResponse(BaseModel):
+    """API ответ daily-trends endpoint"""
+    status: str
+    message: Optional[str] = None
+    analytics: Optional[DailyTrendsData] = None
+    telegram_text: Optional[str] = None
+    insights: Optional[List[Dict[str, Any]]] = None
+
 class SyncResponse(BaseModel):
     """Ответ sync/start endpoint"""
     status: str

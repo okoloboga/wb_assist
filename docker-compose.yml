@@ -142,6 +142,7 @@ services:
       - SERVER_HOST=http://server:8000
       - API_SECRET_KEY=${API_SECRET_KEY}
       - BOT_WEBHOOK_BASE=http://bot:8001
+      - BOT_TOKEN=${BOT_TOKEN}
       # AI Chat - Database
       - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
       - DAILY_LIMIT=${DAILY_LIMIT:-30}
@@ -156,6 +157,8 @@ services:
       - OPENAI_RETRY_DELAY_MS=${OPENAI_RETRY_DELAY_MS:-500}
       - OPENAI_RETRY_DELAY_CONNECTION_MS=${OPENAI_RETRY_DELAY_CONNECTION_MS:-2000}
       - OPENAI_RETRY_BACKOFF=${OPENAI_RETRY_BACKOFF:-2}
+      # Analytics - период по умолчанию для daily trends
+      - ANALYTICS_DAYS_WINDOW=${ANALYTICS_DAYS_WINDOW:-10}
       # Photo Processing - API генерации изображений
       - IMAGE_GEN_API_KEY=${IMAGE_GEN_API_KEY:-}
       - IMAGE_GEN_BASE_URL=${IMAGE_GEN_BASE_URL:-}
@@ -170,24 +173,24 @@ services:
     networks:
       - app-network
 
-  bot_young:
-    build:
-      context: .
-      dockerfile: bot_young/Dockerfile
-    container_name: wb_assist_bot_young
-    depends_on:
-      - server
-      - redis
-    environment:
-      - BOT_YOUNG_TOKEN=${BOT_YOUNG_TOKEN}
-      - SERVER_HOST=http://server:8000
-      - API_SECRET_KEY=${API_SECRET_KEY}
-      - MAIN_BOT_USERNAME=${MAIN_BOT_USERNAME}
-      - LOG_LEVEL=${LOG_LEVEL:-INFO}
-      - DEFAULT_TIMEZONE=Europe/Moscow
-    networks:
-      - app-network
-    restart: unless-stopped
+  # bot_young:
+  #   build:
+  #     context: .
+  #     dockerfile: bot_young/Dockerfile
+  #   container_name: wb_assist_bot_young
+  #   depends_on:
+  #     - server
+  #     - redis
+  #   environment:
+  #     - BOT_YOUNG_TOKEN=${BOT_YOUNG_TOKEN}
+  #     - SERVER_HOST=http://server:8000
+  #     - API_SECRET_KEY=${API_SECRET_KEY}
+  #     - MAIN_BOT_USERNAME=${MAIN_BOT_USERNAME}
+  #     - LOG_LEVEL=${LOG_LEVEL:-INFO}
+  #     - DEFAULT_TIMEZONE=Europe/Moscow
+  #   networks:
+  #     - app-network
+  #   restart: unless-stopped
 
 
 volumes:

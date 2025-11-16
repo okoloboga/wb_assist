@@ -21,7 +21,8 @@ from .service import BotAPIService
 from .schemas import (
     DashboardResponse, OrdersResponse, CriticalStocksAPIResponse, DynamicCriticalStocksAPIResponse,
     AllStocksReportAPIResponse, ReviewsSummaryAPIResponse, AnalyticsSalesAPIResponse, SyncResponse, SyncStatusResponse,
-    OrderDetailResponse, CabinetStatusResponse, CabinetConnectResponse, CabinetConnectRequest
+    OrderDetailResponse, CabinetStatusResponse, CabinetConnectResponse, CabinetConnectRequest,
+    DailyTrendsAPIResponse
 )
 
 logger = logging.getLogger(__name__)
@@ -284,6 +285,39 @@ async def get_analytics_sales(
         logger.error(f"Ошибка получения аналитики для telegram_id {telegram_id}: {e}")
         raise HTTPException(status_code=500, detail="Ошибка сервера")
 
+
+@router.get("/analytics/daily-trends", response_model=DailyTrendsAPIResponse)
+async def get_analytics_daily_trends(
+    telegram_id: int = Query(..., description="Telegram ID пользователя"),
+    days: Optional[int] = Query(None, ge=3, le=60, description="Окно дней для динамики (по умолчанию из .env)"),
+    bot_service: BotAPIService = Depends(get_bot_service)
+):
+    """Получение ежедневной динамики событий (заказы, отмены, выкупы, возвраты)"""
+    try:
+        cabinet = await bot_service.get_user_cabinet(telegram_id)
+        if not cabinet:
+            raise HTTPException(status_code=404, detail="Кабинет WB не найден")
+        
+        user = await bot_service.get_user_by_telegram_id(telegram_id)
+        if not user:
+            raise HTTPException(status_code=500, detail="Ошибка создания пользователя")
+        
+        result = await bot_service.get_daily_trends(user, days_override=days)
+        if not result["success"]:
+            raise HTTPException(status_code=500, detail=result["error"])
+        
+        return DailyTrendsAPIResponse(
+            status="success",
+            analytics=result["data"],
+            telegram_text=result.get("telegram_text"),
+            message=None,
+            insights=result.get("insights", [])
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Ошибка получения daily-trends для telegram_id {telegram_id}: {e}")
+        raise HTTPException(status_code=500, detail="Ошибка сервера")
 
 @router.post("/sync/start", response_model=SyncResponse)
 async def start_sync(
