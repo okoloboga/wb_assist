@@ -69,7 +69,7 @@ async def show_analytics_menu(callback: CallbackQuery):
             reply_markup=wb_menu_keyboard(),
             user_id=callback.from_user.id
         )
-
+    
     await callback.answer()
 
 

@@ -158,7 +158,7 @@ services:
       - OPENAI_RETRY_DELAY_CONNECTION_MS=${OPENAI_RETRY_DELAY_CONNECTION_MS:-2000}
       - OPENAI_RETRY_BACKOFF=${OPENAI_RETRY_BACKOFF:-2}
       # Analytics - период по умолчанию для daily trends
-      - ANALYTICS_DAYS_WINDOW=${ANALYTICS_DAYS_WINDOW:-10}
+      - ANALYTICS_DAYS_WINDOW=${ANALYTICS_DAYS_WINDOW}
       # Photo Processing - API генерации изображений
       - IMAGE_GEN_API_KEY=${IMAGE_GEN_API_KEY:-}
       - IMAGE_GEN_BASE_URL=${IMAGE_GEN_BASE_URL:-}
