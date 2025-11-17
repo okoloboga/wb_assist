@@ -151,7 +151,6 @@ async def safe_edit_message(
         current_markup = getattr(callback.message, "reply_markup", None)
         if (current_text == text and 
             current_markup == reply_markup):
-            logger.info(f"🔍 DEBUG: Содержимое не изменилось для пользователя {user_id or callback.from_user.id}")
             await callback.answer()
             return False
         
@@ -167,7 +166,6 @@ async def safe_edit_message(
         error_msg = str(e).lower()
         
         if "message is not modified" in error_msg:
-            logger.info(f"🔍 DEBUG: Сообщение не изменилось для пользователя {user_id or callback.from_user.id}")
             await callback.answer()
             return False
         elif "message to edit not found" in error_msg:
@@ -248,7 +246,6 @@ def handle_telegram_errors(func):
             error_msg = str(e).lower()
             
             if "message is not modified" in error_msg:
-                logger.info(f"🔍 DEBUG: Сообщение не изменилось для пользователя {user_id}")
                 if callback:
                     await callback.answer()
                 return

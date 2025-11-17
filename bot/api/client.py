@@ -120,8 +120,6 @@ class BotAPIClient:
         """Обработка HTTP ответа с детальным логированием"""
         try:
             data = await response.json()
-            logger.info(f"🔍 DEBUG: _handle_response получил data = {data}")
-            
             if response.status == 200:
                 # Для dashboard эндпоинта данные находятся в корне ответа
                 if "dashboard" in data:
@@ -220,9 +218,6 @@ class BotAPIClient:
                         logger.error(f"   ❌ Ошибка парсинга JSON: Invalid response format")
                     
                     # Логируем структуру ответа для отладки
-                    logger.info(f"🔍 DEBUG: response_data structure: {response_data}")
-                    logger.info(f"🔍 DEBUG: orders from response: {response_data.get('orders') if isinstance(response_data, dict) else None}")
-                    logger.info(f"🔍 DEBUG: pagination from response: {response_data.get('pagination') if isinstance(response_data, dict) else None}")
                     
                     result = BotAPIResponse(
                         success=resp.status < 400,
@@ -234,8 +229,6 @@ class BotAPIClient:
                         orders=response_data.get("orders") if isinstance(response_data, dict) else None,
                         pagination=response_data.get("pagination") if isinstance(response_data, dict) else None
                     )
-                    
-                    logger.info(f"🔍 DEBUG: BotAPIResponse created - orders: {result.orders}, pagination: {result.pagination}")
                     
                     logger.info(f"✅ Запрос выполнен успешно: {result.success}")
                     return result
@@ -283,7 +276,6 @@ class BotAPIClient:
         logger.info(f"   🔧 Method: {method}")
         logger.info(f"   📋 Params: {params}")
         logger.info(f"   📦 JSON: {json_data}")
-        logger.info(f"🔍 DEBUG: Starting request to {url}")
         logger.info(f"   🔑 Headers: {self.headers}")
         
         try:
@@ -345,9 +337,7 @@ class BotAPIClient:
     # Dashboard и общая информация
     async def get_dashboard(self, user_id: int) -> BotAPIResponse:
         """Получить общую сводку по кабинету WB"""
-        logger.info(f"🔍 DEBUG: get_dashboard вызван с user_id={user_id}")
         params = {"telegram_id": user_id}
-        logger.info(f"🔍 DEBUG: Отправляем запрос с params={params}")
         return await self._make_request_with_retry("GET", "/dashboard", params=params)
 
     # Заказы

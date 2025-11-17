@@ -96,6 +96,7 @@ def aggregate(sources: Dict[str, Any]) -> Dict[str, Any]:
                 "meta": dict(daily_trends_raw.get("meta") or {}),
                 "aggregates": dict(daily_trends_raw.get("aggregates") or {}),
                 "top_products": list(daily_trends_raw.get("top_products") or []),
+                "yesterday": dict(daily_trends_raw.get("yesterday") or {}),
             }
             # Удаляем chart из промпта
             # (картинка отправляется в Telegram отдельно, в промпт не нужна)
@@ -109,9 +110,13 @@ def aggregate(sources: Dict[str, Any]) -> Dict[str, Any]:
                 {
                     "date": p.get("date"),
                     "orders": p.get("orders", 0),
+                    "orders_amount": float(p.get("orders_amount", 0.0) or 0.0),
                     "cancellations": p.get("cancellations", 0),
+                    "cancellations_amount": float(p.get("cancellations_amount", 0.0) or 0.0),
                     "buyouts": p.get("buyouts", 0),
+                    "buyouts_amount": float(p.get("buyouts_amount", 0.0) or 0.0),
                     "returns": p.get("returns", 0),
+                    "returns_amount": float(p.get("returns_amount", 0.0) or 0.0),
                     "avg_rating": p.get("avg_rating", 0.0),
                 }
                 for p in ts_last7
@@ -133,6 +138,10 @@ def aggregate(sources: Dict[str, Any]) -> Dict[str, Any]:
                 daily_trends = fallback
             except Exception:
                 daily_trends = {}
+    # Гарантируем наличие yesterday в дистиллированных данных
+    if daily_trends and "yesterday" not in daily_trends and daily_trends_raw.get("yesterday"):
+        daily_trends["yesterday"] = dict(daily_trends_raw.get("yesterday") or {})
+
     # Прокинем синхронизированные метаданные периода в meta промпта
     if daily_trends:
         try:

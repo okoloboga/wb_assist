@@ -47,12 +47,12 @@ async def show_analytics_menu(callback: CallbackQuery):
         async with aiohttp.ClientSession(timeout=timeout) as session:
             async with session.post(endpoint, json=payload, headers=headers) as resp:
                 if resp.status == 200:
-                    _ = await resp.text()
+                    await resp.text()
                     await safe_edit_message(
                         callback=callback,
                         text="✅ Анализ запущен. Я пришлю результаты сообщениями, как только будут готовы.",
                         reply_markup=wb_menu_keyboard(),
-                        user_id=callback.from_user.id
+                        user_id=callback.from_user.id,
                     )
                 else:
                     body = await resp.text()
@@ -60,7 +60,7 @@ async def show_analytics_menu(callback: CallbackQuery):
                         callback=callback,
                         text=f"❌ Не удалось запустить анализ.\nHTTP {resp.status}\n{body}",
                         reply_markup=wb_menu_keyboard(),
-                        user_id=callback.from_user.id
+                        user_id=callback.from_user.id,
                     )
     except Exception as e:
         await safe_edit_message(

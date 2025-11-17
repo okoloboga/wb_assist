@@ -813,7 +813,7 @@ class BotAPIService:
             if not cabinet:
                 return {"success": False, "error": "Кабинет WB не найден"}
             
-            days_window = days_override or int(os.getenv("ANALYTICS_DAYS_WINDOW", "10"))
+            days_window = days_override or int(os.getenv("ANALYTICS_DAYS_WINDOW"))
             if days_window < 3 or days_window > 60:
                 days_window = 10
             chart_days = 14

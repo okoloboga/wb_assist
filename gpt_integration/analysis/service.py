@@ -16,6 +16,17 @@ from gpt_integration.analysis.aggregator import aggregate
 
 logger = logging.getLogger(__name__)
 
+def _get_env_int(name: str) -> Optional[int]:
+    """Безопасно читать целочисленное значение из переменных окружения."""
+    raw = os.getenv(name)
+    if raw is None:
+        return None
+    try:
+        value = int(str(raw).strip())
+    except (TypeError, ValueError):
+        return None
+    return value if value > 0 else None
+
 def _format_money_no_round(value: float) -> str:
     """Форматирование суммы без округления: разделители тысяч пробелами и ₽."""
     try:
@@ -28,32 +39,27 @@ def _format_money_no_round(value: float) -> str:
 def _build_yesterday_header(dt: Dict[str, Any]) -> str:
     """Детерминированный верхний блок: берём вчера из daily_trends,
     при отсутствии — из точки time_series по дате конца диапазона."""
-    logger.debug(f"🔍 DEBUG _build_yesterday_header: входные данные (dt keys): {list(dt.keys()) if dt else 'None'}")
-    
     dt = dt or {}
     meta = dt.get("meta") or {}
-    # Используем original_days_window из ANALYTICS_DAYS_WINDOW (с сервера), чтобы соответствовать коэффициентам и топ продуктам
-    # Если original_days_window нет, используем days_window (fallback)
-    N = (meta.get("original_days_window") or meta.get("days_window") or 7)
+    env_window = _get_env_int("ANALYTICS_DAYS_WINDOW")
+    # Используем значение из .env приоритетно, затем distill/LLM window, затем original
+    N = env_window or meta.get("days_window") or meta.get("original_days_window") or 7
     y = (dt.get("yesterday") or {})
     
-    logger.debug(f"🔍 DEBUG _build_yesterday_header: meta.days_window={N}, yesterday keys: {list(y.keys()) if y else 'None'}")
-    logger.debug(f"🔍 DEBUG _build_yesterday_header: yesterday.date={y.get('date')}, yesterday.orders={y.get('orders')}")
     
     # Логируем ОРИГИНАЛЬНЫЕ значения из входных данных (до обработки)
-    logger.debug(f"📥 ORIGINAL INPUT VALUES (from daily_trends.yesterday):")
-    logger.debug(f"  yesterday.orders: {y.get('orders')}")
-    logger.debug(f"  yesterday.orders_amount: {y.get('orders_amount')}")
-    logger.debug(f"  yesterday.cancellations: {y.get('cancellations')}")
-    logger.debug(f"  yesterday.cancellations_amount: {y.get('cancellations_amount')}")
-    logger.debug(f"  yesterday.buyouts: {y.get('buyouts')}")
-    logger.debug(f"  yesterday.buyouts_amount: {y.get('buyouts_amount')}")
-    logger.debug(f"  yesterday.returns: {y.get('returns')}")
-    logger.debug(f"  yesterday.returns_amount: {y.get('returns_amount')}")
+    logger.info(f"📥 ORIGINAL INPUT VALUES (from daily_trends.yesterday):")
+    logger.info(f"  yesterday.orders: {y.get('orders')}")
+    logger.info(f"  yesterday.orders_amount: {y.get('orders_amount')}")
+    logger.info(f"  yesterday.cancellations: {y.get('cancellations')}")
+    logger.info(f"  yesterday.cancellations_amount: {y.get('cancellations_amount')}")
+    logger.info(f"  yesterday.buyouts: {y.get('buyouts')}")
+    logger.info(f"  yesterday.buyouts_amount: {y.get('buyouts_amount')}")
+    logger.info(f"  yesterday.returns: {y.get('returns')}")
+    logger.info(f"  yesterday.returns_amount: {y.get('returns_amount')}")
     
     # Fallback, если нет yesterday
     if not y or not y.get("date"):
-        logger.debug(f"🔍 DEBUG _build_yesterday_header: yesterday пустой или без date, используем fallback из time_series")
         ts = dt.get("time_series") or []
         target_date = None
         dr = meta.get("date_range") or {}
@@ -61,16 +67,13 @@ def _build_yesterday_header(dt: Dict[str, Any]) -> str:
             target_date = dr.get("end")
         picked = None
         if target_date:
-            logger.debug(f"🔍 DEBUG _build_yesterday_header: ищем точку с date={target_date} в time_series (len={len(ts)})")
             for p in ts:
                 if p.get("date") == target_date:
                     picked = p
                     break
         if picked is None and ts:
-            logger.debug(f"🔍 DEBUG _build_yesterday_header: не найдено по target_date, берём последнюю точку time_series")
             picked = ts[-1]
         if picked:
-            logger.debug(f"🔍 DEBUG _build_yesterday_header: fallback picked: date={picked.get('date')}, orders={picked.get('orders')}")
             y = {
                 "date": picked.get("date"),
                 "orders": picked.get("orders", 0),
@@ -84,7 +87,6 @@ def _build_yesterday_header(dt: Dict[str, Any]) -> str:
                 "top_products": (dt.get("yesterday") or {}).get("top_products", []),
             }
         else:
-            logger.warning(f"⚠️ DEBUG _build_yesterday_header: не удалось найти данные для yesterday, используем пустой объект")
             y = y or {}
     date = y.get("date", "")
     orders = int(y.get("orders", 0) or 0)
@@ -107,36 +109,17 @@ def _build_yesterday_header(dt: Dict[str, Any]) -> str:
         avg_rating = (ts2[-1].get("avg_rating") if ts2 else 0.0) or 0.0
     
     # Логируем ОРИГИНАЛЬНЫЕ значения из aggregates
-    logger.debug(f"📊 ORIGINAL AGGREGATES VALUES (from daily_trends.aggregates):")
-    logger.debug(f"  aggregates.conversion.buyout_rate_percent: {conv.get('buyout_rate_percent')}")
-    logger.debug(f"  aggregates.conversion.return_rate_percent: {conv.get('return_rate_percent')}")
-    logger.debug(f"  aggregates.totals.avg_rating: {totals.get('avg_rating')}")
+    logger.info(f"📊 ORIGINAL AGGREGATES VALUES (from daily_trends.aggregates):")
+    logger.info(f"  aggregates.conversion.buyout_rate_percent: {conv.get('buyout_rate_percent')}")
+    logger.info(f"  aggregates.conversion.return_rate_percent: {conv.get('return_rate_percent')}")
+    logger.info(f"  aggregates.totals.avg_rating: {totals.get('avg_rating')}")
 
-    logger.debug(f"🔍 DEBUG _build_yesterday_header: вычисленные значения:")
-    logger.debug(f"  date={date}, orders={orders}, orders_amount={orders_amount}")
-    logger.debug(f"  cancels={cancels}, cancels_amount={cancels_amount}")
-    logger.debug(f"  buyouts={buyouts}, buyouts_amount={buyouts_amount}")
-    logger.debug(f"  returns={returns}, returns_amount={returns_amount}")
-    logger.debug(f"  avg_check={avg_check}, buyout_rate={buyout_rate}%, return_rate={return_rate}%, avg_rating={avg_rating}")
-    
-    # Логируем ОРИГИНАЛЬНЫЕ значения сумм (до форматирования)
-    logger.debug(f"💰 ORIGINAL AMOUNTS (before formatting):")
-    logger.debug(f"  orders_amount (raw): {orders_amount}")
-    logger.debug(f"  cancellations_amount (raw): {cancels_amount}")
-    logger.debug(f"  buyouts_amount (raw): {buyouts_amount}")
-    logger.debug(f"  returns_amount (raw): {returns_amount}")
-    logger.debug(f"  avg_check (raw): {avg_check}")
-    logger.debug(f"  buyout_rate (raw): {buyout_rate}")
-    logger.debug(f"  return_rate (raw): {return_rate}")
-    logger.debug(f"  avg_rating (raw): {avg_rating}")
+
     
     # Получаем топ товары: только из dt.top_products (топ за период N дней)
     top_products = (dt.get("top_products") or [])[:5]
-    logger.debug(f"🔍 DEBUG _build_yesterday_header: top_products from dt.top_products: {len(top_products)}")
-    
-    logger.debug(f"🔍 DEBUG _build_yesterday_header: final top_products count={len(top_products)}")
     for i, p in enumerate(top_products, 1):
-        logger.debug(f"  {i}. {p.get('name', 'N/A')} — {p.get('orders', 0)} заказов")
+        logger.info(f"  {i}. {p.get('name', 'N/A')} — {p.get('orders', 0)} заказов")
 
     lines = [
         "📊 ДИНАМИКА",
@@ -164,8 +147,6 @@ def _build_yesterday_header(dt: Dict[str, Any]) -> str:
         lines.append(f"{i}. {name} — {cnt} заказов")
     
     result = "\n".join(lines)
-    logger.debug(f"🔍 DEBUG _build_yesterday_header: результат (первые 200 символов): {result[:200]}...")
-    logger.debug(f"🔍 DEBUG _build_yesterday_header: результат (длина): {len(result)} символов")
     return result
 
 
@@ -366,11 +347,19 @@ async def orchestrate_analysis(telegram_id: int, period: str, validate_output: b
         # Используем обработанный daily_trends из data (с original_days_window), но для графика нужен оригинальный
         processed_daily_trends = data.get("daily_trends") or {}
         # Fallback: если processed_daily_trends пустой, используем оригинальный daily_trends
-        if not processed_daily_trends and isinstance(daily_trends, dict):
-            processed_daily_trends = daily_trends.copy()
-            # Добавляем original_days_window из meta, если есть
-            if "meta" in processed_daily_trends and "days_window" in processed_daily_trends.get("meta", {}):
-                processed_daily_trends["meta"]["original_days_window"] = processed_daily_trends["meta"].get("days_window")
+        if not processed_daily_trends:
+            if isinstance(daily_trends, dict):
+                processed_daily_trends = daily_trends.copy()
+            else:
+                processed_daily_trends = {}
+        # Добавляем original_days_window из meta, если есть
+        if isinstance(processed_daily_trends, dict):
+            meta_block = processed_daily_trends.get("meta") or {}
+            if not meta_block and isinstance(daily_trends, dict):
+                meta_block = daily_trends.get("meta") or {}
+                processed_daily_trends["meta"] = meta_block
+            if "days_window" in meta_block and "original_days_window" not in meta_block:
+                meta_block["original_days_window"] = meta_block.get("days_window")
         
         chart_obj = daily_trends.get("chart") if isinstance(daily_trends, dict) else None
         chart_base64_data = chart_obj.get("data") if isinstance(chart_obj, dict) else None
@@ -378,10 +367,10 @@ async def orchestrate_analysis(telegram_id: int, period: str, validate_output: b
         
         # 4.1) Отправка графика
         if isinstance(chart_base64_data, str) and chart_base64_data and bot_token:
-            logger.debug(f"📊 Sending chart to bot ({len(chart_base64_data)} chars base64)")
+            logger.info(f"📊 Sending chart to bot ({len(chart_base64_data)} chars base64)")
             try:
                 await _send_photo_to_bot(telegram_id, chart_base64_data, "📊 Динамика за период", bot_token)
-                logger.debug(f"✅ Chart sent successfully")
+                logger.info(f"✅ Chart sent successfully")
             except Exception as chart_err:
                 logger.error(f"❌ Failed to send chart: {chart_err}")
         else:
@@ -395,34 +384,37 @@ async def orchestrate_analysis(telegram_id: int, period: str, validate_output: b
         # 4.2) Построение детерминированной шапки
         # Используем обработанный daily_trends из data (с original_days_window)
         # Но нужно добавить yesterday и top_products из оригинального daily_trends, если их нет
-        if processed_daily_trends and isinstance(daily_trends, dict):
-            if "yesterday" not in processed_daily_trends:
-                # Пробуем взять из data["yesterday"] (пробрасывается aggregator'ом) или из оригинального daily_trends
-                if "yesterday" in data:
-                    processed_daily_trends["yesterday"] = data.get("yesterday")
-                elif "yesterday" in daily_trends:
-                    processed_daily_trends["yesterday"] = daily_trends.get("yesterday")
-            if "top_products" not in processed_daily_trends and "top_products" in daily_trends:
-                processed_daily_trends["top_products"] = daily_trends.get("top_products")
+        if processed_daily_trends:
+            header_yesterday = data.get("yesterday")
+            if not header_yesterday and isinstance(daily_trends, dict):
+                header_yesterday = daily_trends.get("yesterday")
+            if header_yesterday:
+                processed_daily_trends["yesterday"] = header_yesterday
+            header_top_products = processed_daily_trends.get("top_products")
+            if not header_top_products:
+                if isinstance(daily_trends, dict) and daily_trends.get("top_products"):
+                    header_top_products = daily_trends.get("top_products")
+                elif data.get("top_products"):
+                    header_top_products = data.get("top_products")
+                else:
+                    header_top_products = []
+                processed_daily_trends["top_products"] = header_top_products
         
         # Логируем для отладки
         daily_trends_meta = (processed_daily_trends.get("meta") or {}) if isinstance(processed_daily_trends, dict) else {}
-        logger.debug(f"🔍 DEBUG header: processed_daily_trends.meta.original_days_window={daily_trends_meta.get('original_days_window')}")
-        logger.debug(f"🔍 DEBUG header: processed_daily_trends.meta.days_window={daily_trends_meta.get('days_window')}")
         
         header_text = _build_yesterday_header(processed_daily_trends)
         
         # Получаем days_window для заголовка инсайтов (соответствует ANALYTICS_DAYS_WINDOW)
-        analysis_days = (daily_trends_meta.get("original_days_window") or 
-                        daily_trends_meta.get("days_window") or 7)
-        logger.debug(f"🔍 DEBUG header: analysis_days={analysis_days}")
+        env_window = _get_env_int("ANALYTICS_DAYS_WINDOW")
+        analysis_days = env_window or daily_trends_meta.get("days_window") or daily_trends_meta.get("original_days_window") or 7
 
         # 4.3) Извлечение инсайтов и рекомендаций из GPT
         parsed_json = result.get('json', {}) or {}
         insights = parsed_json.get("insights") or []
         recs = parsed_json.get("recommendations") or []
 
-        logger.debug(f"📝 Extracted from GPT: {len(insights)} insights, {len(recs)} recommendations")
+        logger.info(f"📝 Extracted from GPT: {len(insights)} insights, {len(recs)} recommendations")
 
         # 4.4) Форматирование инсайтов
         insights_lines = ["", f"💡 ИНСАЙТЫ (анализ за {analysis_days} дней)", ""]
@@ -455,7 +447,7 @@ async def orchestrate_analysis(telegram_id: int, period: str, validate_output: b
             "\n".join(rec_lines)
         ])
 
-        logger.debug(f"📤 Sending combined message ({len(final_text)} chars)")
+        logger.info(f"📤 Sending combined message ({len(final_text)} chars)")
         await _post_bot_webhook(telegram_id, final_text, webhook_base)
 
         logger.info(f"✅ Analysis completed for telegram_id={telegram_id}")

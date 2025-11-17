@@ -14,10 +14,6 @@ from app.features.user.schemas import UserCreate
 from app.features.wb_api.models import WBCabinet, WBOrder, WBProduct, WBStock, WBReview, WBAnalyticsCache
 from main import app
 
-# Отладочная информация
-print(f"DEBUG: API_SECRET_KEY from settings: {settings.API_SECRET_KEY}")
-print(f"DEBUG: Environment API_SECRET_KEY: {os.getenv('API_SECRET_KEY')}")
-
 # Настройка тестовой базы данных
 SQLALCHEMY_DATABASE_URL = "sqlite:///./test.db"
 engine = create_engine(SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False})
@@ -60,7 +56,6 @@ def client(db_session):
                 self.client = client
                 # Используем ключ из переменной окружения напрямую
                 secret_key = os.getenv('API_SECRET_KEY') or "test-secret-key-for-development"
-                print(f"DEBUG: Using API_SECRET_KEY: {secret_key}")  # Отладочная информация
                 self.headers = {
                     "X-API-SECRET-KEY": secret_key
                 }

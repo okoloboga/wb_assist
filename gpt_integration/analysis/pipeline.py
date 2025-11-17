@@ -16,7 +16,6 @@ def _log_data_summary(data: Dict[str, Any]) -> None:
     import logging
     logger = logging.getLogger(__name__)
     
-    logger.debug("🔍 DEBUG GPT INPUT: Краткая сводка данных для анализа")
     logger.debug(f"  data keys: {list(data.keys())}")
     
     # Meta
@@ -102,8 +101,6 @@ def compose_messages(data: Dict[str, Any], template_path: Optional[str] = None) 
     
     # Логируем размер промпта
     total_size = len(system) + len(user_content)
-    logger.debug(f"🔍 DEBUG GPT INPUT: Размер промпта: system={len(system)} chars, user={len(user_content)} chars, total={total_size} chars")
-    logger.debug(f"🔍 DEBUG GPT INPUT: Количество секций в user: {len(sections)}")
 
     return [
         {"role": "system", "content": system},
@@ -174,7 +171,7 @@ def _safe_json_extract(text: str) -> Optional[Dict[str, Any]]:
         # Применяем замену
         result = re.sub(pattern, replace_currency, s)
         return result
-
+    
     def extract_json_from_text(text_to_parse: str, description: str) -> Optional[Dict[str, Any]]:
         """Вспомогательная функция для извлечения JSON из текста."""
         start = text_to_parse.find("{")

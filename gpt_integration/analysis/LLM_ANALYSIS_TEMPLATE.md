@@ -561,7 +561,7 @@ REDIS_URL=redis://redis:6379/0
      - Отмены: количество и сумма в рублях
      - Выкупы: количество и сумма в рублях
      - Возвраты: количество и сумма в рублях
-     - Средний чек
+   - Средний чек
      - Топ-5 товаров за вчера по заказам (используй `yesterday.top_products` с полем `name`)
    
    - **ПОКАЗАТЕЛИ ЗА N ДНЕЙ (из `daily_trends.aggregates`):**
@@ -622,7 +622,7 @@ REDIS_URL=redis://redis:6379/0
       "returns": 0,
       "returns_amount": 0.0,
       "avg_check": 0.0,
-      "top_products": [
+    "top_products": [
         {"name": "string", "orders": 0}
       ]
     },

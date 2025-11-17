@@ -189,8 +189,6 @@ async def help_callback(callback: CallbackQuery):
 @router.callback_query(F.data == "main_menu")
 async def main_menu_callback(callback: CallbackQuery):
     """Прямой обработчик для кнопки 'Назад в меню' - показывает дашборд"""
-    logger.info(f"🔍 DEBUG: Обработка main_menu для пользователя {callback.from_user.id}")
-    
     from api.client import bot_api_client
     
     dashboard_response = await bot_api_client.get_dashboard(
@@ -218,8 +216,6 @@ async def main_menu_callback(callback: CallbackQuery):
 @router.callback_query(F.data == "wb_menu")
 async def wb_menu_callback(callback: CallbackQuery):
     """Обработчик для кнопки 'Назад к меню' - показывает дашборд"""
-    logger.info(f"🔍 DEBUG: Обработка wb_menu для пользователя {callback.from_user.id}")
-    
     from api.client import bot_api_client
     
     dashboard_response = await bot_api_client.get_dashboard(
@@ -249,7 +245,6 @@ async def wb_menu_callback(callback: CallbackQuery):
 async def handle_export_sheets_button(callback: CallbackQuery, state: FSMContext):
     """Обработка кнопки экспорта в Google Sheets"""
     user_id = callback.from_user.id
-    logger.info(f"🔍 DEBUG: Получен callback для export_sheets от пользователя {user_id}")
     await export_to_sheets_from_callback(callback.message, user_id, state)
     await callback.answer()
 
@@ -270,8 +265,6 @@ async def menu_callback(callback: CallbackQuery):
         
     elif data.startswith("back_"):
         target_menu = navigation.get(data.replace("back_", ""), "main")
-        logger.info(f"🔍 DEBUG: Обработка back_ для {data}, target_menu: {target_menu}")
-        
         if data == "back_wb_menu" or target_menu == "wb_menu":
             # Возвращаемся в главное меню - показываем дашборд
             from api.client import bot_api_client
@@ -311,16 +304,11 @@ async def menu_callback(callback: CallbackQuery):
 
 async def export_to_sheets_from_callback(message: Message, user_id: int, state: FSMContext):
     """Экспорт данных в Google Sheets из callback"""
-    logger.info(f"🔍 DEBUG: Запуск экспорта для пользователя {user_id} (из callback)")
-    
     try:
         from api.client import bot_api_client
         
-        logger.info(f"🔍 DEBUG: Вызываем get_dashboard с user_id={user_id}")
         # Получаем информацию о кабинетах пользователя
         dashboard_response = await bot_api_client.get_dashboard(user_id=user_id)
-        logger.info(f"🔍 DEBUG: get_dashboard вернул success={dashboard_response.success}")
-        logger.info(f"🔍 DEBUG: dashboard_response.data = {dashboard_response.data}")
         
         if not dashboard_response.success or not dashboard_response.data or not dashboard_response.data.get('dashboard'):
             await safe_send_message(
@@ -369,16 +357,11 @@ async def export_to_sheets_from_callback(message: Message, user_id: int, state: 
 async def export_to_sheets(message: Message, state: FSMContext):
     """Команда экспорта данных в Google Sheets"""
     user_id = message.from_user.id
-    logger.info(f"🔍 DEBUG: Запуск экспорта для пользователя {user_id}")
-    
     try:
         from api.client import bot_api_client
         
-        logger.info(f"🔍 DEBUG: Вызываем get_dashboard с user_id={user_id}")
         # Получаем информацию о кабинетах пользователя
         dashboard_response = await bot_api_client.get_dashboard(user_id=user_id)
-        logger.info(f"🔍 DEBUG: get_dashboard вернул success={dashboard_response.success}")
-        logger.info(f"🔍 DEBUG: dashboard_response.data = {dashboard_response.data}")
         
         if not dashboard_response.success or not dashboard_response.data or not dashboard_response.data.get('dashboard'):
             await safe_send_message(
