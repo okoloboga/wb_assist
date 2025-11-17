@@ -119,7 +119,10 @@ def aggregate(sources: Dict[str, Any]) -> Dict[str, Any]:
 
             # Обновляем meta для LLM
             daily_trends_meta = daily_trends.get("meta") or {}
-            daily_trends_meta["days_window"] = 7
+            # Сохраняем оригинальное значение days_window для заголовка (соответствует ANALYTICS_DAYS_WINDOW)
+            original_days_window = daily_trends_meta.get("days_window") or 7
+            daily_trends_meta["original_days_window"] = original_days_window
+            daily_trends_meta["days_window"] = 7  # Для LLM используем 7 дней
             daily_trends_meta["period"] = "7d"
             daily_trends["meta"] = daily_trends_meta
         except Exception:

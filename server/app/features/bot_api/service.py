@@ -873,13 +873,12 @@ class BotAPIService:
                 day_key = TimezoneUtils.from_utc(o.order_date).date().isoformat() if o.order_date else None
                 if day_key in day_map:
                     # Вычисляем сумму заказа с фолбэками
-                    order_amount = (
-                        (o.total_price if o.total_price is not None else None)
-                        if hasattr(o, "total_price") else None
-                    )
-                    if order_amount is None:
-                        order_amount = (o.customer_price if hasattr(o, "customer_price") and o.customer_price is not None else None)
-                    if order_amount is None:
+                    order_amount = (o.total_price if hasattr(o, "total_price") else None)
+                    # Фолбэк на customer_price если total_price отсутствует или <=0
+                    if order_amount is None or float(order_amount or 0.0) <= 0.0:
+                        order_amount = (o.customer_price if hasattr(o, "customer_price") else None)
+                    # Если всё ещё нет — считаем price*quantity
+                    if order_amount is None or float(order_amount or 0.0) <= 0.0:
                         price_val = (o.price if hasattr(o, "price") and o.price is not None else 0.0)
                         qty_val = (o.quantity if hasattr(o, "quantity") and o.quantity is not None else 1)
                         try:
@@ -898,12 +897,17 @@ class BotAPIService:
             for s in sales_rows:
                 day_key = TimezoneUtils.from_utc(s.sale_date).date().isoformat() if s.sale_date else None
                 if day_key in day_map:
+                    # Определяем сумму операции: amount (WB totalPrice) -> customer_price -> 0.0
+                    sale_amount = getattr(s, "amount", None)
+                    if sale_amount is None or float(sale_amount or 0.0) <= 0.0:
+                        sale_amount = getattr(s, "customer_price", None)
+                    sale_amount = float(sale_amount or 0.0)
                     if s.type == 'buyout':
                         day_map[day_key]["buyouts"] += 1
-                        day_map[day_key]["buyouts_amount"] += float(s.amount or 0.0)
+                        day_map[day_key]["buyouts_amount"] += sale_amount
                     elif s.type == 'return':
                         day_map[day_key]["returns"] += 1
-                        day_map[day_key]["returns_amount"] += float(s.amount or 0.0)
+                        day_map[day_key]["returns_amount"] += sale_amount
             
             # Рейтинги
             for r in reviews_rows:
@@ -962,11 +966,18 @@ class BotAPIService:
                 yesterday_data["orders_amount"] / yesterday_data["orders"], 2
             ) if yesterday_data["orders"] > 0 else 0.0
             
-            # Топ-товары по заказам за период (для общего контекста)
+            # Топ-товары по заказам за период days_window дней (НЕ fetch_days!)
+            # ВАЖНО: фильтруем только данные из selected_keys (последние days_window дней)
+            selected_keys_set = set(selected_keys)  # Для быстрого поиска
+            
             # Подтягиваем названия из WBProduct (fallback nm_id)
             product_stats = {}
             nm_ids = set()
             for o in orders_rows:
+                # Фильтруем только заказы из selected_keys (days_window дней)
+                day_key = TimezoneUtils.from_utc(o.order_date).date().isoformat() if o.order_date else None
+                if day_key not in selected_keys_set:
+                    continue
                 nm_ids.add(o.nm_id)
                 stats = product_stats.setdefault(o.nm_id, {"orders": 0, "cancellations": 0, "buyouts": 0, "returns": 0})
                 if o.status == 'canceled':
@@ -974,6 +985,10 @@ class BotAPIService:
                 else:
                     stats["orders"] += 1
             for s in sales_rows:
+                # Фильтруем только продажи из selected_keys (days_window дней)
+                day_key = TimezoneUtils.from_utc(s.sale_date).date().isoformat() if s.sale_date else None
+                if day_key not in selected_keys_set:
+                    continue
                 nm_ids.add(s.nm_id)
                 stats = product_stats.setdefault(s.nm_id, {"orders": 0, "cancellations": 0, "buyouts": 0, "returns": 0})
                 if s.type == 'buyout':

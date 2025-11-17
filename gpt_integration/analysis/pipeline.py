@@ -11,11 +11,72 @@ from gpt_integration.analysis.template_loader import (
 from utils.formatters import escape_markdown_v2, split_telegram_message
 
 
+def _log_data_summary(data: Dict[str, Any]) -> None:
+    """Логирует краткую сводку данных, отправляемых в GPT."""
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    logger.debug("🔍 DEBUG GPT INPUT: Краткая сводка данных для анализа")
+    logger.debug(f"  data keys: {list(data.keys())}")
+    
+    # Meta
+    meta = data.get("meta") or {}
+    logger.debug(f"  meta: telegram_id={meta.get('telegram_id')}, period={meta.get('period')}, days_window={meta.get('days_window')}")
+    
+    # Yesterday
+    yesterday = data.get("yesterday") or {}
+    if yesterday:
+        logger.debug(f"  yesterday: date={yesterday.get('date')}, orders={yesterday.get('orders')}, "
+                    f"orders_amount={yesterday.get('orders_amount')}, top_products_count={len(yesterday.get('top_products', []))}")
+    else:
+        logger.debug(f"  yesterday: отсутствует")
+    
+    # Daily trends
+    daily_trends = data.get("daily_trends") or {}
+    if daily_trends:
+        dt_meta = daily_trends.get("meta") or {}
+        dt_agg = daily_trends.get("aggregates") or {}
+        ts = daily_trends.get("time_series") or []
+        logger.debug(f"  daily_trends: days_window={dt_meta.get('days_window')}, time_series_len={len(ts)}")
+        logger.debug(f"    aggregates: buyout_rate={dt_agg.get('conversion', {}).get('buyout_rate_percent')}%, "
+                    f"return_rate={dt_agg.get('conversion', {}).get('return_rate_percent')}%")
+        if ts:
+            logger.debug(f"    time_series: первая дата={ts[0].get('date')}, последняя дата={ts[-1].get('date')}")
+    else:
+        logger.debug(f"  daily_trends: отсутствует")
+    
+    # Other sources
+    for key in ["stocks_critical", "reviews_summary", "orders_recent", "sales"]:
+        val = data.get(key)
+        if val:
+            if isinstance(val, dict):
+                logger.debug(f"  {key}: присутствует (keys: {list(val.keys())[:5]})")
+            elif isinstance(val, list):
+                logger.debug(f"  {key}: присутствует (len={len(val)})")
+            else:
+                logger.debug(f"  {key}: присутствует (type={type(val).__name__})")
+        else:
+            logger.debug(f"  {key}: отсутствует")
+    
+    # Размер JSON
+    try:
+        data_json = json.dumps(data, ensure_ascii=False)
+        logger.debug(f"  JSON size: {len(data_json)} символов (~{len(data_json.encode('utf-8'))} bytes)")
+    except Exception as e:
+        logger.debug(f"  JSON size: не удалось вычислить ({e})")
+
+
 def compose_messages(data: Dict[str, Any], template_path: Optional[str] = None) -> List[Dict[str, str]]:
     """
     Compose LLM messages using SYSTEM + DATA + TASKS (+ optional schema/guides).
     Returns OpenAI chat messages list.
     """
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    # Логируем краткую сводку данных
+    _log_data_summary(data)
+    
     system = get_system_prompt(template_path) or (
         "Ты аналитик e‑commerce. Пиши кратко, по делу, на русском."
     )
@@ -38,6 +99,11 @@ def compose_messages(data: Dict[str, Any], template_path: Optional[str] = None) 
         "Начни ответ сразу с открывающей фигурной скобки { и закончи закрывающей }."
     )
     user_content = "\n\n".join(sections)
+    
+    # Логируем размер промпта
+    total_size = len(system) + len(user_content)
+    logger.debug(f"🔍 DEBUG GPT INPUT: Размер промпта: system={len(system)} chars, user={len(user_content)} chars, total={total_size} chars")
+    logger.debug(f"🔍 DEBUG GPT INPUT: Количество секций в user: {len(sections)}")
 
     return [
         {"role": "system", "content": system},
@@ -86,6 +152,28 @@ def _safe_json_extract(text: str) -> Optional[Dict[str, Any]]:
                 continue
             out.append(ch)
         return ''.join(out)
+    
+    def _sanitize_numeric_currency(s: str) -> str:
+        """
+        Удаляет символы валюты после чисел (например, 112500₽ -> 112500, 1071.43₽ -> 1071.43, -13000₽ -> -13000), не затрагивая строки.
+        """
+        # Паттерн для поиска чисел с символом валюты после них
+        # Поддерживаем отрицательные числа и числа с плавающей точкой
+        currency_chars = r'₽\$\€£¥'
+        
+        # Паттерн: опциональный минус + число (с точкой или без) + валюта + запятая/закрывающая скобка/закрывающая фигурная скобка/конец строки
+        # Примеры: "112500₽,", "-13000₽,", "1071.43₽,", "112500₽}"
+        # Экранируем } в f-string, удваивая его
+        pattern = rf'(-?\d+\.?\d*)([{currency_chars}]+)(\s*[,}}\]]|\s*$)'
+        
+        def replace_currency(match):
+            number = match.group(1)
+            after = match.group(3)
+            return number + after
+        
+        # Применяем замену
+        result = re.sub(pattern, replace_currency, s)
+        return result
 
     def extract_json_from_text(text_to_parse: str, description: str) -> Optional[Dict[str, Any]]:
         """Вспомогательная функция для извлечения JSON из текста."""
@@ -132,6 +220,8 @@ def _safe_json_extract(text: str) -> Optional[Dict[str, Any]]:
         fixing_strategies = [
             lambda s: s,  # Оригинал
             lambda s: _sanitize_numeric_underscores(s),  # Удаляем подчёркивания в числах
+            lambda s: _sanitize_numeric_currency(s),  # Удаляем символы валюты из чисел
+            lambda s: _sanitize_numeric_underscores(_sanitize_numeric_currency(s)),  # Комбинация: валюта + подчёркивания
             lambda s: re.sub(r',(\s*[}\]])', r'\\1', s),  # Удаляем trailing commas
             lambda s: re.sub(r',(\s*[}\]])', r'\\1', s).replace('\\\\n', '\\n'),  # Исправляем newlines
         ]
