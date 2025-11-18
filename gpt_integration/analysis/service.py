@@ -16,6 +16,139 @@ from gpt_integration.analysis.aggregator import aggregate
 
 logger = logging.getLogger(__name__)
 
+def _get_env_int(name: str) -> Optional[int]:
+    """Безопасно читать целочисленное значение из переменных окружения."""
+    raw = os.getenv(name)
+    if raw is None:
+        return None
+    try:
+        value = int(str(raw).strip())
+    except (TypeError, ValueError):
+        return None
+    return value if value > 0 else None
+
+def _format_money_no_round(value: float) -> str:
+    """Форматирование суммы без округления: разделители тысяч пробелами и ₽."""
+    try:
+        ivalue = int(value)
+    except Exception:
+        ivalue = 0
+    return f"{ivalue:,}".replace(",", " ") + "₽"
+
+
+def _build_yesterday_header(dt: Dict[str, Any]) -> str:
+    """Детерминированный верхний блок: берём вчера из daily_trends,
+    при отсутствии — из точки time_series по дате конца диапазона."""
+    dt = dt or {}
+    meta = dt.get("meta") or {}
+    env_window = _get_env_int("ANALYTICS_DAYS_WINDOW")
+    # Используем значение из .env приоритетно, затем distill/LLM window, затем original
+    N = env_window or meta.get("days_window") or meta.get("original_days_window") or 7
+    y = (dt.get("yesterday") or {})
+    
+    
+    # Логируем ОРИГИНАЛЬНЫЕ значения из входных данных (до обработки)
+    logger.info(f"📥 ORIGINAL INPUT VALUES (from daily_trends.yesterday):")
+    logger.info(f"  yesterday.orders: {y.get('orders')}")
+    logger.info(f"  yesterday.orders_amount: {y.get('orders_amount')}")
+    logger.info(f"  yesterday.cancellations: {y.get('cancellations')}")
+    logger.info(f"  yesterday.cancellations_amount: {y.get('cancellations_amount')}")
+    logger.info(f"  yesterday.buyouts: {y.get('buyouts')}")
+    logger.info(f"  yesterday.buyouts_amount: {y.get('buyouts_amount')}")
+    logger.info(f"  yesterday.returns: {y.get('returns')}")
+    logger.info(f"  yesterday.returns_amount: {y.get('returns_amount')}")
+    
+    # Fallback, если нет yesterday
+    if not y or not y.get("date"):
+        ts = dt.get("time_series") or []
+        target_date = None
+        dr = meta.get("date_range") or {}
+        if isinstance(dr, dict):
+            target_date = dr.get("end")
+        picked = None
+        if target_date:
+            for p in ts:
+                if p.get("date") == target_date:
+                    picked = p
+                    break
+        if picked is None and ts:
+            picked = ts[-1]
+        if picked:
+            y = {
+                "date": picked.get("date"),
+                "orders": picked.get("orders", 0),
+                "cancellations": picked.get("cancellations", 0),
+                "buyouts": picked.get("buyouts", 0),
+                "returns": picked.get("returns", 0),
+                "orders_amount": picked.get("orders_amount", 0.0),
+                "cancellations_amount": picked.get("cancellations_amount", 0.0),
+                "buyouts_amount": picked.get("buyouts_amount", 0.0),
+                "returns_amount": picked.get("returns_amount", 0.0),
+                "top_products": (dt.get("yesterday") or {}).get("top_products", []),
+            }
+        else:
+            y = y or {}
+    date = y.get("date", "")
+    orders = int(y.get("orders", 0) or 0)
+    cancels = int(y.get("cancellations", 0) or 0)
+    buyouts = int(y.get("buyouts", 0) or 0)
+    returns = int(y.get("returns", 0) or 0)
+    orders_amount = float(y.get("orders_amount", 0.0) or 0.0)
+    cancels_amount = float(y.get("cancellations_amount", 0.0) or 0.0)
+    buyouts_amount = float(y.get("buyouts_amount", 0.0) or 0.0)
+    returns_amount = float(y.get("returns_amount", 0.0) or 0.0)
+    avg_check = (orders_amount / orders) if orders > 0 else 0.0
+
+    conv = (dt.get("aggregates") or {}).get("conversion") or {}
+    buyout_rate = conv.get("buyout_rate_percent", 0.0)
+    return_rate = conv.get("return_rate_percent", 0.0)
+    totals = (dt.get("aggregates") or {}).get("totals") or {}
+    avg_rating = totals.get("avg_rating")
+    if avg_rating is None:
+        ts2 = dt.get("time_series") or []
+        avg_rating = (ts2[-1].get("avg_rating") if ts2 else 0.0) or 0.0
+    
+    # Логируем ОРИГИНАЛЬНЫЕ значения из aggregates
+    logger.info(f"📊 ORIGINAL AGGREGATES VALUES (from daily_trends.aggregates):")
+    logger.info(f"  aggregates.conversion.buyout_rate_percent: {conv.get('buyout_rate_percent')}")
+    logger.info(f"  aggregates.conversion.return_rate_percent: {conv.get('return_rate_percent')}")
+    logger.info(f"  aggregates.totals.avg_rating: {totals.get('avg_rating')}")
+
+
+    
+    # Получаем топ товары: только из dt.top_products (топ за период N дней)
+    top_products = (dt.get("top_products") or [])[:5]
+    for i, p in enumerate(top_products, 1):
+        logger.info(f"  {i}. {p.get('name', 'N/A')} — {p.get('orders', 0)} заказов")
+
+    lines = [
+        "📊 ДИНАМИКА",
+        "",
+        f"Вчера ({date}):",
+        "",
+        f"Заказы: {orders} шт. — {_format_money_no_round(orders_amount)}",
+        f"Отмены: {cancels} шт. — {_format_money_no_round(cancels_amount)}",
+        f"Выкупы: {buyouts} шт. — {_format_money_no_round(buyouts_amount)}",
+        f"Возвраты: {returns} шт. — {_format_money_no_round(returns_amount)}",
+        "",
+        f"Средний чек: {_format_money_no_round(avg_check)}",
+        "",
+        f"📈 ПОКАЗАТЕЛИ ЗА {N} ДНЕЙ",
+        "",
+        f"• Коэффициент выкупа: {buyout_rate}%",
+        f"• Коэффициент возврата: {return_rate}%",
+        f"• Средняя оценка: {avg_rating}",
+        "",
+        f"🛍️ ТОП ТОВАРОВ ЗА {N} ДНЕЙ",
+    ]
+    for i, p in enumerate(top_products, 1):
+        name = p.get("name", "")
+        cnt = int(p.get("orders", 0) or 0)
+        lines.append(f"{i}. {name} — {cnt} заказов")
+    
+    result = "\n".join(lines)
+    return result
+
 
 async def _fetch_analytics_sales(telegram_id: int, period: str, server_host: str, api_secret_key: str) -> Dict[str, Any]:
     """Получить аналитику продаж с сервера."""
@@ -29,6 +162,19 @@ async def _fetch_analytics_sales(telegram_id: int, period: str, server_host: str
         data = resp.json()
         return data.get("analytics") or {}
 
+
+async def _fetch_daily_trends(telegram_id: int, server_host: str, api_secret_key: str) -> Dict[str, Any]:
+    """Получить ежедневную динамику событий (новый эндпоинт)."""
+    url = f"{server_host.rstrip('/')}/api/v1/bot/analytics/daily-trends"
+    headers = {"X-API-SECRET-KEY": api_secret_key}
+    params = {"telegram_id": telegram_id}
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        resp = await client.get(url, headers=headers, params=params)
+        if resp.status_code != 200:
+            raise HTTPException(status_code=resp.status_code, detail=resp.text)
+        data = resp.json()
+        # Предпочитаем "data", фолбэк на daily_trends/analytics
+        return data.get("data") or data.get("daily_trends") or data.get("analytics") or {}
 
 async def _fetch_stocks_critical(telegram_id: int, server_host: str, api_secret_key: str) -> Any:
     """Получить критические остатки с сервера."""
@@ -73,7 +219,7 @@ async def _fetch_orders_recent(telegram_id: int, server_host: str, api_secret_ke
 
 
 async def _post_bot_webhook(telegram_id: int, text: str, webhook_base: str) -> None:
-    """Отправить результат в бот через webhook."""
+    """Отправить текстовый результат в бот через webhook."""
     url = f"{webhook_base.rstrip('/')}/webhook/notifications/{telegram_id}"
     payload = {
         "telegram_id": telegram_id,
@@ -83,6 +229,35 @@ async def _post_bot_webhook(telegram_id: int, text: str, webhook_base: str) -> N
     }
     async with httpx.AsyncClient(timeout=30.0) as client:
         await client.post(url, json=payload)
+
+
+async def _send_photo_to_bot(telegram_id: int, photo_base64: str, caption: str, bot_token: str) -> None:
+    """Отправить график (изображение) пользователю через Telegram Bot API."""
+    import base64
+    from io import BytesIO
+    
+    try:
+        # Декодируем base64 в bytes
+        photo_bytes = base64.b64decode(photo_base64)
+        
+        # Отправляем через Telegram Bot API
+        url = f"https://api.telegram.org/bot{bot_token}/sendPhoto"
+        
+        # Формируем multipart/form-data запрос
+        files = {
+            "photo": ("chart.png", BytesIO(photo_bytes), "image/png")
+        }
+        data = {
+            "chat_id": telegram_id,
+            "caption": caption
+        }
+        
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(url, files=files, data=data)
+            if resp.status_code != 200:
+                logger.error(f"❌ Failed to send photo: {resp.status_code} {resp.text}")
+    except Exception as e:
+        logger.error(f"❌ Error sending photo: {e}")
 
 
 async def orchestrate_analysis(telegram_id: int, period: str, validate_output: bool) -> None:
@@ -102,18 +277,19 @@ async def orchestrate_analysis(telegram_id: int, period: str, validate_output: b
     try:
         # 1) Fetch sources concurrently
         logger.info(f"📥 Fetching data from server for telegram_id={telegram_id}")
-        sales_task = _fetch_analytics_sales(telegram_id, period, server_host, api_secret_key)
+        # Новый источник вместо /analytics/sales
+        daily_trends_task = _fetch_daily_trends(telegram_id, server_host, api_secret_key)
         stocks_task = _fetch_stocks_critical(telegram_id, server_host, api_secret_key)
         reviews_task = _fetch_reviews_summary(telegram_id, server_host, api_secret_key)
         orders_task = _fetch_orders_recent(telegram_id, server_host, api_secret_key)
 
-        fetched = await asyncio.gather(sales_task, stocks_task, reviews_task, orders_task, return_exceptions=True)
-        sales_analytics, stocks_critical, reviews_summary, recent_orders = fetched
+        fetched = await asyncio.gather(daily_trends_task, stocks_task, reviews_task, orders_task, return_exceptions=True)
+        daily_trends, stocks_critical, reviews_summary, recent_orders = fetched
 
         # Normalize exceptions to None
-        if isinstance(sales_analytics, Exception):
-            logger.warning(f"⚠️ Sales data fetch failed: {sales_analytics}")
-            sales_analytics = {}
+        if isinstance(daily_trends, Exception):
+            logger.warning(f"⚠️ Daily trends fetch failed: {daily_trends}")
+            daily_trends = {}
         if isinstance(stocks_critical, Exception):
             logger.warning(f"⚠️ Stocks data fetch failed: {stocks_critical}")
             stocks_critical = None
@@ -130,7 +306,7 @@ async def orchestrate_analysis(telegram_id: int, period: str, validate_output: b
         logger.info(f"🔄 Aggregating data...")
         sources = {
             "meta": {"telegram_id": telegram_id, "period": period},
-            "sales": sales_analytics,
+            "daily_trends": daily_trends,
         }
         if stocks_critical:
             sources["stocks_critical"] = stocks_critical
@@ -167,80 +343,112 @@ async def orchestrate_analysis(telegram_id: int, period: str, validate_output: b
         
         logger.info(f"📊 Result telegram: {result.get('telegram', {})}")
 
-        # 4) Deliver to bot via webhook (send chunks sequentially)
-        telegram = result.get("telegram", {})
-        chunks = telegram.get("chunks") or []
-        if not chunks and isinstance(telegram.get("mdv2"), str):
-            chunks = [telegram["mdv2"]]
-        if not chunks:
-            logger.error(f"❌ NO CHUNKS! Detailed debugging info:")
-            logger.error(f"❌ Result keys: {list(result.keys())}")
-            logger.error(f"❌ telegram object: {telegram}")
-            logger.error(f"❌ telegram type: {type(telegram)}")
-            logger.error(f"❌ parsed JSON keys: {list(parsed_json.keys()) if parsed_json else 'None'}")
-            logger.error(f"❌ raw_response length: {len(raw_response)} chars")
-            logger.error(f"❌ raw_response (first 1000 chars): {raw_response[:1000]}")
-            logger.error(f"❌ raw_response (last 1000 chars): {raw_response[-1000:]}")
-            
-            # Check for markdown blocks
-            import re
-            markdown_blocks = re.findall(r'```(.*?)```', raw_response, re.DOTALL)
-            logger.error(f"❌ Found {len(markdown_blocks)} markdown blocks in response")
-            for idx, block in enumerate(markdown_blocks[:3]):  # Log first 3 blocks
-                block_preview = block[:200] + "..." if len(block) > 200 else block
-                logger.error(f"❌ Markdown block {idx+1} preview: {block_preview}")
-            
-            # Try to provide more helpful error message
-            if len(raw_response) < 100:
-                error_msg = f"❌ Ответ от GPT слишком короткий ({len(raw_response)} символов). Возможно, ошибка API или недостаточно токенов."
-            elif not parsed_json:
-                # JSON extraction completely failed
-                if "```json" in raw_response or "```" in raw_response:
-                    error_msg = (
-                        "❌ Ответ содержит markdown блоки, но не удалось извлечь валидный JSON.\n\n"
-                        "Возможные причины:\n"
-                        "• JSON содержит синтаксические ошибки\n"
-                        "• Ответ был обрезан (недостаточно max_tokens)\n"
-                        "• Неожиданный формат markdown блока\n\n"
-                        "Попробуйте запустить анализ снова."
-                    )
-                elif "{" in raw_response:
-                    error_msg = (
-                        "❌ Ответ содержит JSON, но не в markdown блоке, и парсинг не удался.\n\n"
-                        "Попробуйте запустить анализ снова."
-                    )
-                else:
-                    error_msg = (
-                        "❌ Ответ от GPT не содержит JSON данных.\n\n"
-                        "Возможно, модель вернула текстовый ответ вместо JSON. "
-                        "Попробуйте запустить анализ снова."
-                    )
-            elif "telegram" not in parsed_json:
-                error_msg = (
-                    "❌ В ответе отсутствует секция 'telegram'.\n\n"
-                    f"Найденные секции: {', '.join(parsed_json.keys())}\n\n"
-                    "Возможно, ответ был обрезан. Увеличьте max_tokens в настройках."
-                )
-            elif not isinstance(parsed_json.get("telegram"), dict):
-                error_msg = (
-                    f"❌ Секция 'telegram' имеет неверный тип: {type(parsed_json.get('telegram')).__name__}\n\n"
-                    "Ожидается объект с полем 'chunks' или 'mdv2'."
-                )
+        # 4) Отправка графика и составного сообщения
+        # Используем обработанный daily_trends из data (с original_days_window), но для графика нужен оригинальный
+        processed_daily_trends = data.get("daily_trends") or {}
+        # Fallback: если processed_daily_trends пустой, используем оригинальный daily_trends
+        if not processed_daily_trends:
+            if isinstance(daily_trends, dict):
+                processed_daily_trends = daily_trends.copy()
             else:
-                tg_obj = parsed_json.get("telegram", {})
-                tg_keys = list(tg_obj.keys()) if isinstance(tg_obj, dict) else []
-                error_msg = (
-                    f"❌ Секция 'telegram' не содержит данных для отправки.\n\n"
-                    f"Найденные поля: {', '.join(tg_keys) if tg_keys else 'нет'}\n\n"
-                    "Ожидается поле 'chunks' (список строк) или 'mdv2' (строка)."
-                )
-            
-            chunks = [error_msg]
+                processed_daily_trends = {}
+        # Добавляем original_days_window из meta, если есть
+        if isinstance(processed_daily_trends, dict):
+            meta_block = processed_daily_trends.get("meta") or {}
+            if not meta_block and isinstance(daily_trends, dict):
+                meta_block = daily_trends.get("meta") or {}
+                processed_daily_trends["meta"] = meta_block
+            if "days_window" in meta_block and "original_days_window" not in meta_block:
+                meta_block["original_days_window"] = meta_block.get("days_window")
+        
+        chart_obj = daily_trends.get("chart") if isinstance(daily_trends, dict) else None
+        chart_base64_data = chart_obj.get("data") if isinstance(chart_obj, dict) else None
+        bot_token = os.getenv("BOT_TOKEN", "")
+        
+        # 4.1) Отправка графика
+        if isinstance(chart_base64_data, str) and chart_base64_data and bot_token:
+            logger.info(f"📊 Sending chart to bot ({len(chart_base64_data)} chars base64)")
+            try:
+                await _send_photo_to_bot(telegram_id, chart_base64_data, "📊 Динамика за период", bot_token)
+                logger.info(f"✅ Chart sent successfully")
+            except Exception as chart_err:
+                logger.error(f"❌ Failed to send chart: {chart_err}")
+        else:
+            if not chart_obj:
+                logger.warning(f"⚠️ No chart object in daily_trends data")
+            elif not chart_base64_data:
+                logger.warning(f"⚠️ Chart object present but no 'data' base64 field")
+            if not bot_token:
+                logger.warning(f"⚠️ BOT_TOKEN not set in environment, cannot send chart")
 
-        logger.info(f"📤 Sending {len(chunks)} chunks to bot")
-        for i, chunk in enumerate(chunks):
-            logger.info(f"📤 Sending chunk {i+1}/{len(chunks)} ({len(chunk)} chars)")
-            await _post_bot_webhook(telegram_id, chunk, webhook_base)
+        # 4.2) Построение детерминированной шапки
+        # Используем обработанный daily_trends из data (с original_days_window)
+        # Но нужно добавить yesterday и top_products из оригинального daily_trends, если их нет
+        if processed_daily_trends:
+            header_yesterday = data.get("yesterday")
+            if not header_yesterday and isinstance(daily_trends, dict):
+                header_yesterday = daily_trends.get("yesterday")
+            if header_yesterday:
+                processed_daily_trends["yesterday"] = header_yesterday
+            header_top_products = processed_daily_trends.get("top_products")
+            if not header_top_products:
+                if isinstance(daily_trends, dict) and daily_trends.get("top_products"):
+                    header_top_products = daily_trends.get("top_products")
+                elif data.get("top_products"):
+                    header_top_products = data.get("top_products")
+                else:
+                    header_top_products = []
+                processed_daily_trends["top_products"] = header_top_products
+        
+        # Логируем для отладки
+        daily_trends_meta = (processed_daily_trends.get("meta") or {}) if isinstance(processed_daily_trends, dict) else {}
+        
+        header_text = _build_yesterday_header(processed_daily_trends)
+        
+        # Получаем days_window для заголовка инсайтов (соответствует ANALYTICS_DAYS_WINDOW)
+        env_window = _get_env_int("ANALYTICS_DAYS_WINDOW")
+        analysis_days = env_window or daily_trends_meta.get("days_window") or daily_trends_meta.get("original_days_window") or 7
+
+        # 4.3) Извлечение инсайтов и рекомендаций из GPT
+        parsed_json = result.get('json', {}) or {}
+        insights = parsed_json.get("insights") or []
+        recs = parsed_json.get("recommendations") or []
+
+        logger.info(f"📝 Extracted from GPT: {len(insights)} insights, {len(recs)} recommendations")
+
+        # 4.4) Форматирование инсайтов
+        insights_lines = ["", f"💡 ИНСАЙТЫ (анализ за {analysis_days} дней)", ""]
+        for insight in insights[:5]:  # Максимум 5 инсайтов
+            title = insight.get("title") or ""
+            detail = insight.get("detail") or ""
+            if title and detail:
+                insights_lines.append(f"• {title} — {detail}")
+            elif title:
+                insights_lines.append(f"• {title}")
+            elif detail:
+                insights_lines.append(f"• {detail}")
+
+        # 4.5) Форматирование рекомендаций
+        rec_lines = ["", "🔍 РЕКОМЕНДАЦИИ", ""]
+        for rec in recs[:3]:  # Максимум 3 рекомендации
+            action = rec.get("action") or ""
+            why = rec.get("why") or ""
+            if action and why:
+                rec_lines.append(f"• {action} — {why}")
+            elif action:
+                rec_lines.append(f"• {action}")
+            elif why:
+                rec_lines.append(f"• {why}")
+
+        # 4.6) Объединение всех частей
+        final_text = "\n".join([
+            header_text,
+            "\n".join(insights_lines),
+            "\n".join(rec_lines)
+        ])
+
+        logger.info(f"📤 Sending combined message ({len(final_text)} chars)")
+        await _post_bot_webhook(telegram_id, final_text, webhook_base)
 
         logger.info(f"✅ Analysis completed for telegram_id={telegram_id}")
 

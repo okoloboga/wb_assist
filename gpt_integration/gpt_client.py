@@ -24,7 +24,7 @@ class GPTClient:
         # Resolve from environment if not provided
         self.api_key = api_key or os.getenv("OPENAI_API_KEY") or ""
         self.base_url = (base_url or os.getenv("OPENAI_BASE_URL") or "").strip() or None
-        self.model = model or os.getenv("OPENAI_MODEL") or "gpt-4o-mini"
+        self.model = model or os.getenv("OPENAI_MODEL") or "gpt-4.1"
         self.temperature = float(os.getenv("OPENAI_TEMPERATURE", str(temperature)))
         self.max_tokens = int(os.getenv("OPENAI_MAX_TOKENS", str(max_tokens)))
         # Timeout is optional; library may not accept it directly

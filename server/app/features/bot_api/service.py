@@ -3,6 +3,9 @@ Bot API сервис для интеграции с Telegram ботом
 """
 
 import logging
+import os
+import io
+import base64
 import json
 from typing import Dict, Any, Optional, List
 from sqlalchemy.orm import Session, joinedload, selectinload
@@ -14,6 +17,16 @@ from app.features.wb_api.sync_service import WBSyncService
 from app.utils.timezone import TimezoneUtils
 from app.features.stock_alerts.stock_analyzer import DynamicStockAnalyzer
 from .formatter import BotMessageFormatter
+from app.features.wb_api.models_sales import WBSales
+from app.features.wb_api.models import WBReview
+
+# matplotlib импортируем лениво, чтобы не падать без зависимости при старте
+try:
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+except Exception:  # pragma: no cover
+    plt = None
 
 logger = logging.getLogger(__name__)
 
@@ -792,6 +805,341 @@ class BotAPIService:
                 "error": str(e)
             }
 
+    async def get_daily_trends(self, user: Dict[str, Any], days_override: Optional[int] = None) -> Dict[str, Any]:
+        """Динамика событий по дням (заказы, отмены, выкупы, возвраты, средний рейтинг)"""
+        try:
+            telegram_id = user["telegram_id"] if isinstance(user, dict) else getattr(user, "telegram_id", None)
+            cabinet = await self.get_user_cabinet(telegram_id)
+            if not cabinet:
+                return {"success": False, "error": "Кабинет WB не найден"}
+            
+            days_window = days_override or int(os.getenv("ANALYTICS_DAYS_WINDOW"))
+            if days_window < 3 or days_window > 60:
+                days_window = 10
+            chart_days = 14
+            fetch_days = max(days_window, chart_days)
+            
+            # Диапазоны дат по МСК
+            # ВАЖНО: анализ заканчивается вчерашним днём (исключаем "сегодня" полностью)
+            end_msk = TimezoneUtils.get_today_start_msk() - timedelta(days=1)  # начало вчерашнего дня
+            start_msk = end_msk - timedelta(days=fetch_days - 1)
+            # Для включительного интервала по БД: [start; next_day_of_end)
+            start_utc = TimezoneUtils.to_utc(start_msk)
+            next_day_after_end_utc = TimezoneUtils.to_utc(end_msk + timedelta(days=1))
+            
+            # Предвыборки из БД
+            orders_rows = self.db.query(WBOrder).filter(
+                and_(
+                    WBOrder.cabinet_id == cabinet.id,
+                    WBOrder.order_date >= start_utc,
+                    WBOrder.order_date < next_day_after_end_utc
+                )
+            ).all()
+            sales_rows = self.db.query(WBSales).filter(
+                and_(
+                    WBSales.cabinet_id == cabinet.id,
+                    WBSales.sale_date >= start_utc,
+                    WBSales.sale_date < next_day_after_end_utc,
+                    or_(WBSales.is_cancel == False, WBSales.is_cancel.is_(None))
+                )
+            ).all()
+            reviews_rows = self.db.query(WBReview).filter(
+                and_(
+                    WBReview.cabinet_id == cabinet.id,
+                    WBReview.created_date >= start_utc,
+                    WBReview.created_date < next_day_after_end_utc,
+                    WBReview.rating.isnot(None)
+                )
+            ).all()
+            
+            # Инициализируем временной ряд по датам (МСК) для fetch_days
+            day_keys = []
+            day_map = {}
+            cur = start_msk
+            for _ in range(fetch_days):
+                key = cur.date().isoformat()
+                day_keys.append(key)
+                day_map[key] = {
+                    "orders": 0, "orders_amount": 0.0,
+                    "cancellations": 0, "cancellations_amount": 0.0,
+                    "buyouts": 0, "buyouts_amount": 0.0,
+                    "returns": 0, "returns_amount": 0.0,
+                    "ratings": []
+                }
+                cur += timedelta(days=1)
+            
+            # Заполняем заказы/отмены
+            for o in orders_rows:
+                day_key = TimezoneUtils.from_utc(o.order_date).date().isoformat() if o.order_date else None
+                if day_key in day_map:
+                    # Вычисляем сумму заказа с фолбэками
+                    order_amount = (o.total_price if hasattr(o, "total_price") else None)
+                    # Фолбэк на customer_price если total_price отсутствует или <=0
+                    if order_amount is None or float(order_amount or 0.0) <= 0.0:
+                        order_amount = (o.customer_price if hasattr(o, "customer_price") else None)
+                    # Если всё ещё нет — считаем price*quantity
+                    if order_amount is None or float(order_amount or 0.0) <= 0.0:
+                        price_val = (o.price if hasattr(o, "price") and o.price is not None else 0.0)
+                        qty_val = (o.quantity if hasattr(o, "quantity") and o.quantity is not None else 1)
+                        try:
+                            order_amount = float(price_val) * float(qty_val)
+                        except Exception:
+                            order_amount = 0.0
+                    order_amount = float(order_amount or 0.0)
+                    if o.status == 'canceled':
+                        day_map[day_key]["cancellations"] += 1
+                        day_map[day_key]["cancellations_amount"] += order_amount
+                    else:
+                        day_map[day_key]["orders"] += 1
+                        day_map[day_key]["orders_amount"] += order_amount
+            
+            # Заполняем выкупы/возвраты
+            for s in sales_rows:
+                day_key = TimezoneUtils.from_utc(s.sale_date).date().isoformat() if s.sale_date else None
+                if day_key in day_map:
+                    # Определяем сумму операции: amount (WB totalPrice) -> customer_price -> 0.0
+                    sale_amount = getattr(s, "amount", None)
+                    if sale_amount is None or float(sale_amount or 0.0) <= 0.0:
+                        sale_amount = getattr(s, "customer_price", None)
+                    sale_amount = float(sale_amount or 0.0)
+                    if s.type == 'buyout':
+                        day_map[day_key]["buyouts"] += 1
+                        day_map[day_key]["buyouts_amount"] += sale_amount
+                    elif s.type == 'return':
+                        day_map[day_key]["returns"] += 1
+                        day_map[day_key]["returns_amount"] += sale_amount
+            
+            # Рейтинги
+            for r in reviews_rows:
+                day_key = TimezoneUtils.from_utc(r.created_date).date().isoformat() if r.created_date else None
+                if day_key in day_map and r.rating is not None:
+                    day_map[day_key]["ratings"].append(float(r.rating))
+            
+            # Сериализация временного ряда: используем последние days_window дней
+            selected_keys = day_keys[-days_window:] if len(day_keys) > days_window else list(day_keys)
+            time_series = []
+            totals = {
+                "orders": 0, "orders_amount": 0.0,
+                "cancellations": 0, "cancellations_amount": 0.0,
+                "buyouts": 0, "buyouts_amount": 0.0,
+                "returns": 0, "returns_amount": 0.0
+            }
+            for key in selected_keys:
+                d = day_map[key]
+                avg_rating = round(sum(d["ratings"]) / len(d["ratings"]), 2) if d["ratings"] else 0.0
+                time_series.append({
+                    "date": key,
+                    "orders": d["orders"],
+                    "orders_amount": round(float(d["orders_amount"]), 2),
+                    "cancellations": d["cancellations"],
+                    "cancellations_amount": round(float(d["cancellations_amount"]), 2),
+                    "buyouts": d["buyouts"],
+                    "buyouts_amount": round(float(d["buyouts_amount"]), 2),
+                    "returns": d["returns"],
+                    "returns_amount": round(float(d["returns_amount"]), 2),
+                    "avg_rating": avg_rating
+                })
+                totals["orders"] += d["orders"]
+                totals["orders_amount"] += d["orders_amount"]
+                totals["cancellations"] += d["cancellations"]
+                totals["cancellations_amount"] += d["cancellations_amount"]
+                totals["buyouts"] += d["buyouts"]
+                totals["buyouts_amount"] += d["buyouts_amount"]
+                totals["returns"] += d["returns"]
+                totals["returns_amount"] += d["returns_amount"]
+            
+            # Конверсии
+            buyout_rate = round((totals["buyouts"] / totals["orders"] * 100) if totals["orders"] > 0 else 0.0, 2)
+            return_rate = round((totals["returns"] / totals["buyouts"] * 100) if totals["buyouts"] > 0 else 0.0, 2)
+            
+            # Вычисляем данные за ВЧЕРА (последний полный день)
+            # Вчера = последний день диапазона (end_msk)
+            yesterday_date = end_msk.date().isoformat()
+            yesterday_data = day_map.get(yesterday_date, {
+                "orders": 0, "orders_amount": 0.0,
+                "cancellations": 0, "cancellations_amount": 0.0,
+                "buyouts": 0, "buyouts_amount": 0.0,
+                "returns": 0, "returns_amount": 0.0,
+                "ratings": []
+            })
+            yesterday_avg_check = round(
+                yesterday_data["orders_amount"] / yesterday_data["orders"], 2
+            ) if yesterday_data["orders"] > 0 else 0.0
+            
+            # Топ-товары по заказам за период days_window дней (НЕ fetch_days!)
+            # ВАЖНО: фильтруем только данные из selected_keys (последние days_window дней)
+            selected_keys_set = set(selected_keys)  # Для быстрого поиска
+            
+            # Подтягиваем названия из WBProduct (fallback nm_id)
+            product_stats = {}
+            nm_ids = set()
+            for o in orders_rows:
+                # Фильтруем только заказы из selected_keys (days_window дней)
+                day_key = TimezoneUtils.from_utc(o.order_date).date().isoformat() if o.order_date else None
+                if day_key not in selected_keys_set:
+                    continue
+                nm_ids.add(o.nm_id)
+                stats = product_stats.setdefault(o.nm_id, {"orders": 0, "cancellations": 0, "buyouts": 0, "returns": 0})
+                if o.status == 'canceled':
+                    stats["cancellations"] += 1
+                else:
+                    stats["orders"] += 1
+            for s in sales_rows:
+                # Фильтруем только продажи из selected_keys (days_window дней)
+                day_key = TimezoneUtils.from_utc(s.sale_date).date().isoformat() if s.sale_date else None
+                if day_key not in selected_keys_set:
+                    continue
+                nm_ids.add(s.nm_id)
+                stats = product_stats.setdefault(s.nm_id, {"orders": 0, "cancellations": 0, "buyouts": 0, "returns": 0})
+                if s.type == 'buyout':
+                    stats["buyouts"] += 1
+                elif s.type == 'return':
+                    stats["returns"] += 1
+            
+            products = []
+            if nm_ids:
+                products_db = self.db.query(WBProduct).filter(
+                    and_(WBProduct.cabinet_id == cabinet.id, WBProduct.nm_id.in_(list(nm_ids)))
+                ).all()
+                name_by_nm = {p.nm_id: (p.name or str(p.nm_id)) for p in products_db}
+            else:
+                name_by_nm = {}
+            for nm_id, st in product_stats.items():
+                name = name_by_nm.get(nm_id, str(nm_id))
+                buyout_rate_p = round((st["buyouts"] / st["orders"] * 100) if st["orders"] > 0 else 0.0, 2)
+                return_rate_p = round((st["returns"] / st["buyouts"] * 100) if st["buyouts"] > 0 else 0.0, 2)
+                products.append({
+                    "nm_id": nm_id,
+                    "name": name,
+                    "orders": st["orders"],
+                    "cancellations": st["cancellations"],
+                    "buyouts": st["buyouts"],
+                    "returns": st["returns"],
+                    "buyout_rate_percent": buyout_rate_p,
+                    "return_rate_percent": return_rate_p
+                })
+            products.sort(key=lambda x: x["orders"], reverse=True)
+            top_products = products[:5]
+            
+            # Топ-5 товаров за ВЧЕРА по заказам
+            yesterday_start_utc = TimezoneUtils.to_utc(end_msk - timedelta(days=1))
+            yesterday_end_utc = TimezoneUtils.to_utc(end_msk)
+            yesterday_orders = self.db.query(WBOrder).filter(
+                and_(
+                    WBOrder.cabinet_id == cabinet.id,
+                    WBOrder.order_date >= yesterday_start_utc,
+                    WBOrder.order_date < yesterday_end_utc,
+                    WBOrder.status != 'canceled'
+                )
+            ).all()
+            yesterday_product_stats = {}
+            yesterday_nm_ids = set()
+            for o in yesterday_orders:
+                yesterday_nm_ids.add(o.nm_id)
+                yesterday_product_stats.setdefault(o.nm_id, {"orders": 0})
+                yesterday_product_stats[o.nm_id]["orders"] += 1
+            
+            yesterday_products = []
+            for nm_id, st in yesterday_product_stats.items():
+                name = name_by_nm.get(nm_id, str(nm_id))
+                yesterday_products.append({
+                    "nm_id": nm_id,
+                    "name": name,
+                    "orders": st["orders"]
+                })
+            yesterday_products.sort(key=lambda x: x["orders"], reverse=True)
+            top_yesterday_products = yesterday_products[:5]
+            
+            # Генерация графика за последние chart_days
+            chart_keys = day_keys[-chart_days:] if len(day_keys) > chart_days else list(day_keys)
+            chart_b64 = self._generate_trends_chart_base64(chart_keys, day_map) if plt else ""
+            
+            data = {
+                "meta": {
+                    "days_window": days_window,
+                    "date_range": {
+                        "start": (end_msk - timedelta(days=days_window - 1)).date().isoformat(),
+                        "end": (end_msk.date()).isoformat()
+                    },
+                    "generated_at": TimezoneUtils.now_msk().isoformat()
+                },
+                "time_series": time_series,
+                "aggregates": {
+                    "totals": {
+                        "orders": totals["orders"],
+                        "orders_amount": round(float(totals["orders_amount"]), 2),
+                        "cancellations": totals["cancellations"],
+                        "cancellations_amount": round(float(totals["cancellations_amount"]), 2),
+                        "buyouts": totals["buyouts"],
+                        "buyouts_amount": round(float(totals["buyouts_amount"]), 2),
+                        "returns": totals["returns"],
+                        "returns_amount": round(float(totals["returns_amount"]), 2),
+                    },
+                    "conversion": {
+                        "buyout_rate_percent": buyout_rate,
+                        "return_rate_percent": return_rate
+                    }
+                },
+                "yesterday": {
+                    "date": yesterday_date,
+                    "orders": yesterday_data["orders"],
+                    "orders_amount": round(float(yesterday_data["orders_amount"]), 2),
+                    "cancellations": yesterday_data["cancellations"],
+                    "cancellations_amount": round(float(yesterday_data["cancellations_amount"]), 2),
+                    "buyouts": yesterday_data["buyouts"],
+                    "buyouts_amount": round(float(yesterday_data["buyouts_amount"]), 2),
+                    "returns": yesterday_data["returns"],
+                    "returns_amount": round(float(yesterday_data["returns_amount"]), 2),
+                    "avg_check": yesterday_avg_check,
+                    "top_products": top_yesterday_products
+                },
+                "top_products": top_products,
+                "chart": {"format": "png_base64", "data": chart_b64}
+            }
+            
+            telegram_text = self.formatter.format_analytics({
+                "sales_periods": {},  # не используется здесь, но реиспользуем форматтер позже при необходимости
+                "dynamics": {},
+                "top_products": [],
+                "stocks_summary": {},
+                "recommendations": []
+            }) if hasattr(self.formatter, "format_analytics") else None
+            
+            return {"success": True, "data": data, "telegram_text": telegram_text, "insights": []}
+        except Exception as e:
+            logger.error(f"Ошибка получения daily trends: {e}")
+            return {"success": False, "error": str(e)}
+
+    def _generate_trends_chart_base64(self, day_keys: List[str], day_map: Dict[str, Dict[str, Any]]) -> str:
+        """Строит график и возвращает его в base64"""
+        try:
+            # 4:3 соотношение сторон (например, 8x6 дюймов)
+            fig, ax = plt.subplots(figsize=(8, 6))
+            x = list(range(len(day_keys)))
+            orders = [day_map[d]["orders"] for d in day_keys]
+            buyouts = [day_map[d]["buyouts"] for d in day_keys]
+            returns = [day_map[d]["returns"] for d in day_keys]
+            ax.plot(x, orders, label="Заказы", color="#1f77b4")
+            ax.plot(x, buyouts, label="Выкупы", color="#2ca02c")
+            ax.plot(x, returns, label="Возвраты", color="#d62728")
+            ax.set_title("Динамика событий за период")
+            ax.set_xlabel("День")
+            ax.set_ylabel("Количество")
+            ax.set_xticks(x)
+            # метки DD.MM
+            labels = [f"{k[8:10]}.{k[5:7]}" for k in day_keys]
+            ax.set_xticklabels(labels, rotation=0)
+            ax.grid(True, which="major", linestyle="--", alpha=0.3)
+            ax.legend()
+            buf = io.BytesIO()
+            fig.tight_layout()
+            fig.savefig(buf, format="png", dpi=150)
+            plt.close(fig)
+            buf.seek(0)
+            return base64.b64encode(buf.read()).decode("utf-8")
+        except Exception as e:
+            logger.error(f"Ошибка генерации графика: {e}")
+            return ""
     async def start_sync(self, user: Dict[str, Any]) -> Dict[str, Any]:
         """Запуск синхронизации данных"""
         try:
