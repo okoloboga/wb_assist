@@ -14,6 +14,8 @@ import aiohttp
 import asyncio
 from typing import Optional, Dict, Any
 from datetime import datetime
+from io import BytesIO
+from PIL import Image
 
 logger = logging.getLogger(__name__)
 
@@ -37,8 +39,9 @@ class ImageGenerationClient:
             timeout: Таймаут запросов в секундах
             max_retries: Максимальное количество попыток при ошибках
         """
-        self.api_key = api_key or os.getenv("IMAGE_GEN_API_KEY")
-        self.base_url = base_url or os.getenv("IMAGE_GEN_BASE_URL", "")
+        # Используем IMAGE_GEN_API_KEY, если пустой - берём OPENAI_API_KEY
+        self.api_key = api_key or os.getenv("IMAGE_GEN_API_KEY") or os.getenv("OPENAI_API_KEY")
+        self.base_url = base_url or os.getenv("IMAGE_GEN_BASE_URL", "https://api.openai.com/v1")
         self.timeout = timeout or int(os.getenv("IMAGE_GEN_TIMEOUT", "60"))
         self.max_retries = max_retries or int(os.getenv("IMAGE_GEN_MAX_RETRIES", "3"))
         
@@ -77,27 +80,70 @@ class ImageGenerationClient:
         
         logger.info(f"Processing image: {image_url[:50]}... with prompt: {prompt[:50]}...")
         
-        # Формируем данные запроса
-        request_data = {
-            "image_url": image_url,
-            "prompt": prompt
-        }
+        # Скачиваем изображение для отправки
+        async with aiohttp.ClientSession() as session:
+            async with session.get(image_url) as resp:
+                if resp.status != 200:
+                    raise ValueError(f"Failed to download image: {resp.status}")
+                image_data = await resp.read()
+        
+        # Конвертируем изображение в PNG формат с RGBA (OpenAI требует RGBA)
+        try:
+            image = Image.open(BytesIO(image_data))
+            # Конвертируем в RGBA (обязательно для /images/edits)
+            if image.mode != 'RGBA':
+                image = image.convert('RGBA')
+            
+            # Сохраняем в PNG формат
+            png_buffer = BytesIO()
+            image.save(png_buffer, format='PNG')
+            png_data = png_buffer.getvalue()
+            
+            logger.info(f"✅ Converted image to PNG RGBA: {len(png_data)} bytes")
+        except Exception as e:
+            logger.error(f"❌ Failed to convert image to PNG: {e}")
+            raise ValueError(f"Failed to convert image to PNG: {e}")
+        
+        # Получаем модель из переменных окружения
+        model = os.getenv("IMAGE_GEN_MODEL", "dall-e-2")
+        
+        # Создаём multipart/form-data для отправки изображения
+        form_data = aiohttp.FormData()
+        form_data.add_field('image', png_data, filename='image.png', content_type='image/png')
+        form_data.add_field('prompt', prompt)
+        form_data.add_field('model', model)
+        form_data.add_field('n', '1')
+        form_data.add_field('size', '1024x1024')
         
         try:
-            # Вызываем API с retry логикой
+            # Используем /images/edits для редактирования изображений
             result = await self._make_request(
-                endpoint="/process",
+                endpoint="/images/edits",
                 method="POST",
-                data=request_data
+                data=form_data,
+                use_form_data=True
             )
             
             processing_time = (datetime.now() - start_time).total_seconds()
             
-            # Извлекаем URL обработанного изображения
-            photo_url = result.get("result_url") or result.get("image_url") or result.get("url", "")
+            # Извлекаем URL или base64 изображения из ответа
+            # Формат ответа: {"data": [{"url": "..." или "b64_json": "..."}]}
+            photo_url = ""
+            if "data" in result and len(result["data"]) > 0:
+                # Проверяем наличие URL
+                photo_url = result["data"][0].get("url", "")
+                # Если нет URL, проверяем base64
+                if not photo_url:
+                    b64_json = result["data"][0].get("b64_json", "")
+                    if b64_json:
+                        # Конвертируем base64 в data URL для отправки в Telegram
+                        photo_url = f"data:image/png;base64,{b64_json}"
+            else:
+                # Пробуем альтернативные форматы
+                photo_url = result.get("result_url") or result.get("image_url") or result.get("url", "")
             
             if not photo_url:
-                raise ValueError("No image URL in API response")
+                raise ValueError(f"No image URL or base64 data in API response. Response: {result}")
             
             logger.info(f"✅ Image processed successfully in {processing_time:.2f}s")
             
@@ -117,7 +163,8 @@ class ImageGenerationClient:
         endpoint: str,
         method: str = "POST",
         data: Optional[Dict[str, Any]] = None,
-        retry_count: int = 0
+        retry_count: int = 0,
+        use_form_data: bool = False
     ) -> Dict[str, Any]:
         """
         Выполнить HTTP запрос к API с retry логикой.
@@ -125,8 +172,9 @@ class ImageGenerationClient:
         Args:
             endpoint: Endpoint API
             method: HTTP метод
-            data: Данные запроса
+            data: Данные запроса (dict или FormData)
             retry_count: Текущий номер попытки
+            use_form_data: Использовать multipart/form-data вместо JSON
         
         Returns:
             Ответ API в виде словаря
@@ -137,15 +185,25 @@ class ImageGenerationClient:
         """
         url = f"{self.base_url.rstrip('/')}{endpoint}"
         headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json"
+            "Authorization": f"Bearer {self.api_key}"
         }
+        
+        # Для FormData не добавляем Content-Type, aiohttp сделает это автоматически
+        if not use_form_data:
+            headers["Content-Type"] = "application/json"
         
         timeout = aiohttp.ClientTimeout(total=self.timeout)
         
         try:
             async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.request(method, url, json=data, headers=headers) as response:
+                # Выбираем способ отправки данных
+                request_kwargs = {"method": method, "url": url, "headers": headers}
+                if use_form_data:
+                    request_kwargs["data"] = data
+                else:
+                    request_kwargs["json"] = data
+                
+                async with session.request(**request_kwargs) as response:
                     
                     # Успешный ответ
                     if response.status == 200:
@@ -174,7 +232,7 @@ class ImageGenerationClient:
                             delay = 2 ** retry_count  # Экспоненциальная задержка: 1s, 2s, 4s
                             logger.info(f"Retrying in {delay}s... (attempt {retry_count + 1}/{self.max_retries})")
                             await asyncio.sleep(delay)
-                            return await self._make_request(endpoint, method, data, retry_count + 1)
+                            return await self._make_request(endpoint, method, data, retry_count + 1, use_form_data)
                         else:
                             raise Exception(f"Service unavailable after {self.max_retries} retries: {error_text}")
                     
@@ -190,7 +248,7 @@ class ImageGenerationClient:
                 delay = 2 ** retry_count
                 logger.info(f"Retrying after timeout in {delay}s... (attempt {retry_count + 1}/{self.max_retries})")
                 await asyncio.sleep(delay)
-                return await self._make_request(endpoint, method, data, retry_count + 1)
+                return await self._make_request(endpoint, method, data, retry_count + 1, use_form_data)
             else:
                 raise Exception(f"Request timeout after {self.max_retries} retries")
         
@@ -202,7 +260,7 @@ class ImageGenerationClient:
                 delay = 2 ** retry_count
                 logger.info(f"Retrying after network error in {delay}s... (attempt {retry_count + 1}/{self.max_retries})")
                 await asyncio.sleep(delay)
-                return await self._make_request(endpoint, method, data, retry_count + 1)
+                return await self._make_request(endpoint, method, data, retry_count + 1, use_form_data)
             else:
                 raise Exception(f"Network error after {self.max_retries} retries: {e}")
 

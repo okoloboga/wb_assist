@@ -257,16 +257,41 @@ async def process_photo_with_api(message: Message, state: FSMContext):
                         processing_time = result.get("result", {}).get("processing_time", 0)
                         
                         if photo_url:
-                            # Отправляем обработанное фото
-                            await message.answer_photo(
-                                photo=photo_url,
-                                caption=(
-                                    "✅ <b>Фото обработано!</b>\n\n"
-                                    f"⏱️ Время обработки: {processing_time:.1f} сек\n\n"
-                                    "💾 Результат сохранен в вашей галерее."
-                                ),
-                                parse_mode="HTML"
-                            )
+                            # Проверяем формат фото (base64 или URL)
+                            if photo_url.startswith("data:image"):
+                                # Это base64, конвертируем в байты
+                                import base64
+                                import io
+                                
+                                # Извлекаем base64 данные
+                                base64_data = photo_url.split(",")[1] if "," in photo_url else photo_url
+                                image_bytes = base64.b64decode(base64_data)
+                                
+                                # Создаем BufferedInputFile для отправки
+                                from aiogram.types import BufferedInputFile
+                                photo_file = BufferedInputFile(image_bytes, filename="processed_photo.png")
+                                
+                                # Отправляем обработанное фото
+                                await message.answer_photo(
+                                    photo=photo_file,
+                                    caption=(
+                                        "✅ <b>Фото обработано!</b>\n\n"
+                                        f"⏱️ Время обработки: {processing_time:.1f} сек\n\n"
+                                        "💾 Результат сохранен в вашей галерее."
+                                    ),
+                                    parse_mode="HTML"
+                                )
+                            else:
+                                # Это URL, отправляем как есть
+                                await message.answer_photo(
+                                    photo=photo_url,
+                                    caption=(
+                                        "✅ <b>Фото обработано!</b>\n\n"
+                                        f"⏱️ Время обработки: {processing_time:.1f} сек\n\n"
+                                        "💾 Результат сохранен в вашей галерее."
+                                    ),
+                                    parse_mode="HTML"
+                                )
                             success = True
                             logger.info(f"✅ Photo processed for user {telegram_id}")
                         else:
