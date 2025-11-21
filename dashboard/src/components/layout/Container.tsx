@@ -6,7 +6,7 @@ interface ContainerProps {
 
 export const Container = ({ children }: ContainerProps) => {
   return (
-    <div className="container mx-auto px-4 py-8 max-w-7xl">
+    <div className="container mx-auto px-4 py-4 sm:py-6 lg:py-8 max-w-7xl">
       {children}
     </div>
   )

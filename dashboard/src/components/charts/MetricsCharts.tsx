@@ -6,6 +6,7 @@ import {
   YAxis,
   CartesianGrid,
   Tooltip,
+  Legend,
   ResponsiveContainer,
 } from 'recharts'
 import { Eye, EyeOff } from 'lucide-react'
@@ -57,7 +58,7 @@ export const MetricsCharts = ({ data }: MetricsChartsProps) => {
   return (
     <div className="space-y-6">
       {/* Toggle Buttons */}
-      <div className="flex flex-wrap gap-3">
+      <div className="flex flex-wrap justify-center sm:justify-start gap-3">
         {metrics.map(({ key, label, color }) => {
           const isVisible = visibleMetrics.has(key)
           return (
@@ -83,55 +84,57 @@ export const MetricsCharts = ({ data }: MetricsChartsProps) => {
         })}
       </div>
 
-      {/* Charts Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {metrics.map(({ key, label, color }) => {
-          if (!visibleMetrics.has(key)) return null
-
-          return (
-            <div
-              key={key}
-              className="bg-white rounded-lg shadow-sm border border-gray-200 p-6"
-            >
-              <h3 className="text-lg font-semibold text-gray-900 mb-4">{label}</h3>
-              <ResponsiveContainer width="100%" height={250}>
-                <LineChart data={data}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                  <XAxis
-                    dataKey="date"
-                    tick={{ fill: '#6b7280', fontSize: 12 }}
-                    tickLine={{ stroke: '#e5e7eb' }}
-                  />
-                  <YAxis
-                    tick={{ fill: '#6b7280', fontSize: 12 }}
-                    tickLine={{ stroke: '#e5e7eb' }}
-                  />
-                  <Tooltip
-                    contentStyle={{
-                      backgroundColor: '#fff',
-                      border: '1px solid #e5e7eb',
-                      borderRadius: '8px',
-                      boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)',
-                    }}
-                    formatter={(value: number) => [value.toLocaleString('ru-RU'), label]}
-                  />
+      {/* Single Chart with All Metrics */}
+      {visibleMetrics.size > 0 ? (
+        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 sm:p-6">
+          <h3 className="text-base sm:text-lg font-semibold text-gray-900 mb-4">
+            Динамика метрик
+          </h3>
+          <ResponsiveContainer width="100%" height={400}>
+            <LineChart data={data}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+              <XAxis
+                dataKey="date"
+                tick={{ fill: '#6b7280', fontSize: 12 }}
+                tickLine={{ stroke: '#e5e7eb' }}
+              />
+              <YAxis
+                tick={{ fill: '#6b7280', fontSize: 12 }}
+                tickLine={{ stroke: '#e5e7eb' }}
+              />
+              <Tooltip
+                contentStyle={{
+                  backgroundColor: '#fff',
+                  border: '1px solid #e5e7eb',
+                  borderRadius: '8px',
+                  boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)',
+                }}
+                formatter={(value: number) => value.toLocaleString('ru-RU')}
+              />
+              <Legend
+                wrapperStyle={{ paddingTop: '20px' }}
+                iconType="line"
+              />
+              {metrics.map(({ key, label, color }) => {
+                if (!visibleMetrics.has(key)) return null
+                return (
                   <Line
+                    key={key}
                     type="monotone"
                     dataKey={key}
+                    name={label}
                     stroke={color}
                     strokeWidth={2}
                     dot={{ fill: color, r: 4 }}
                     activeDot={{ r: 6 }}
                   />
-                </LineChart>
-              </ResponsiveContainer>
-            </div>
-          )
-        })}
-      </div>
-
-      {/* Empty State */}
-      {visibleMetrics.size === 0 && (
+                )
+              })}
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      ) : (
+        /* Empty State */
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-12 text-center">
           <EyeOff size={48} className="mx-auto text-gray-300 mb-4" />
           <p className="text-gray-500 text-lg">
