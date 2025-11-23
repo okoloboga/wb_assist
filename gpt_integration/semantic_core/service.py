@@ -36,7 +36,7 @@ def generate_semantic_core(descriptions_text: str) -> Dict[str, Any]:
     
     logger.info("Generating semantic core with GPT...")
     try:
-        response_text = client.send_request(prompt)
+        response_text = client.complete_messages([{"role": "user", "content": prompt}])
         logger.info("Semantic core generated successfully.")
         return {"status": "success", "core": response_text}
     except Exception as e:

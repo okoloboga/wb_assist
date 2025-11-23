@@ -268,6 +268,33 @@ class CompetitorProductCRUD:
             .all()
         return [c[0] for c in categories if c[0]] # Фильтруем пустые строки
 
+    @staticmethod
+    def get_price_range_by_competitor(db: Session, competitor_link_id: int) -> Dict[str, float]:
+        """Получить диапазон цен (min, max) для товаров конкурента"""
+        price_range = db.query(
+            sql_func.min(CompetitorProduct.current_price),
+            sql_func.max(CompetitorProduct.current_price)
+        ).filter(
+            CompetitorProduct.competitor_link_id == competitor_link_id
+        ).first()
+        
+        return {
+            "min_price": float(price_range[0]) if price_range and price_range[0] is not None else 0.0,
+            "max_price": float(price_range[1]) if price_range and price_range[1] is not None else 0.0
+        }
+
+    @staticmethod
+    def get_average_rating_by_competitor(db: Session, competitor_link_id: int) -> float:
+        """Получить средний рейтинг для товаров конкурента"""
+        avg_rating = db.query(
+            sql_func.avg(CompetitorProduct.rating)
+        ).filter(
+            CompetitorProduct.competitor_link_id == competitor_link_id,
+            CompetitorProduct.rating.isnot(None)
+        ).scalar()
+        
+        return float(avg_rating) if avg_rating is not None else 0.0
+
 
 class CompetitorSemanticCoreCRUD:
     """CRUD операции для CompetitorSemanticCore"""

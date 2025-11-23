@@ -210,6 +210,12 @@ async def receive_auto_webhook(
                         logger.error(f"Fallback sync completion failed for telegram_id {telegram_id}: {fallback_error}")
         elif notification_type == "semantic_core_ready":
             # Уведомление о готовности семантического ядра
+            data = notification_data.get("data", {})
+            core = data.get("core")
+            
+            if core:
+                telegram_text += f"\n\n{core}"
+
             try:
                 await bot.send_message(
                     chat_id=telegram_id,

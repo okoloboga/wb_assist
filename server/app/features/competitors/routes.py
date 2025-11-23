@@ -543,7 +543,7 @@ async def generate_semantic_core(
         )
         
         # Запускаем Celery задачу
-        generate_semantic_core_task.delay(semantic_core_entry.id)
+        generate_semantic_core_task.apply_async(args=[semantic_core_entry.id], queue='scraping_queue')
         
         logger.info(f"Запущена генерация семантического ядра для конкурента {competitor_id}, категория '{request.category_name}'. ID задачи: {semantic_core_entry.id}")
         

@@ -554,20 +554,44 @@ async def delete_competitor_confirm(callback: CallbackQuery):
     await callback.answer()
 
 
-@router.callback_query(F.data.startswith("select_semantic_core_category_"))
+@router.callback_query(F.data.startswith("select_semantic_core_category:"))
 @handle_telegram_errors
 async def start_semantic_core_generation(callback: CallbackQuery):
     """Запустить генерацию семантического ядра для выбранной категории"""
     try:
-        parts = callback.data.split("_")
-        competitor_id = int(parts[3])
-        category_name = "_".join(parts[4:]) # Категория может содержать пробелы, поэтому объединяем оставшиеся части
+        parts = callback.data.split(":")
+        competitor_id = int(parts[1])
+        category_index = int(parts[2])
     except (ValueError, IndexError):
         await callback.answer("❌ Ошибка: неверные параметры категории", show_alert=True)
         return
     
     user_id = callback.from_user.id
     
+    # Получаем категории еще раз, чтобы получить имя по индексу
+    response = await bot_api_client.get_competitor_categories(
+        competitor_id=competitor_id,
+        user_id=user_id
+    )
+    
+    if not response.success or not response.data or not response.data.get("categories"):
+        await safe_edit_message(
+            callback=callback,
+            text="❌ Ошибка: не удалось получить категории для запуска анализа.",
+            reply_markup=create_competitors_list_keyboard([], 0, 10, 0, False), # Пустая клавиатура
+            user_id=user_id
+        )
+        await callback.answer()
+        return
+        
+    categories = response.data.get("categories")
+    
+    try:
+        category_name = categories[category_index]
+    except IndexError:
+        await callback.answer("❌ Ошибка: неверный индекс категории", show_alert=True)
+        return
+
     await callback.answer("💎 Запускаю анализ семантического ядра...", show_alert=False)
     
     response = await bot_api_client.generate_semantic_core(

@@ -160,10 +160,10 @@ def create_semantic_core_categories_keyboard(competitor_id: int, categories: lis
     Создает клавиатуру со списком категорий для выбора семантического ядра.
     """
     buttons = []
-    for category in categories:
+    for i, category in enumerate(categories):
         buttons.append([InlineKeyboardButton(
             text=category,
-            callback_data=f"select_semantic_core_category_{competitor_id}_{category}"
+            callback_data=f"select_semantic_core_category:{competitor_id}:{i}"
         )])
     
     buttons.append([InlineKeyboardButton(text="🔙 Назад", callback_data=f"select_competitor_{competitor_id}")])
