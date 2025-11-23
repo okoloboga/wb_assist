@@ -25,6 +25,7 @@ class CompetitorLink(Base):
     
     # Связи
     products = relationship("CompetitorProduct", back_populates="competitor_link", cascade="all, delete-orphan")
+    semantic_cores = relationship("CompetitorSemanticCore", back_populates="competitor_link", cascade="all, delete-orphan")
     
     # Индексы и ограничения
     __table_args__ = (
@@ -67,4 +68,29 @@ class CompetitorProduct(Base):
     
     def __repr__(self):
         return f"<CompetitorProduct {self.nm_id} - {self.name[:50] if self.name else 'N/A'}>"
+
+
+class CompetitorSemanticCore(Base):
+    """Модель семантического ядра, собранного для конкурента по категории"""
+    __tablename__ = "competitor_semantic_cores"
+
+    id = Column(Integer, primary_key=True, index=True)
+    competitor_link_id = Column(Integer, ForeignKey("competitor_links.id", ondelete="CASCADE"), nullable=False, index=True)
+    category_name = Column(String(255), nullable=False)
+    core_data = Column(Text, nullable=True)
+    status = Column(String(20), nullable=False, default='pending')  # pending, processing, completed, error
+    error_message = Column(Text, nullable=True) # New column
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+
+    # Связи
+    competitor_link = relationship("CompetitorLink", back_populates="semantic_cores")
+
+    # Индексы и ограничения
+    __table_args__ = (
+        Index('idx_semantic_core_link_category', 'competitor_link_id', 'category_name'),
+    )
+
+    def __repr__(self):
+        return f"<CompetitorSemanticCore {self.id} for competitor {self.competitor_link_id}>"
 

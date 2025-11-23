@@ -5,15 +5,15 @@ API роуты для работы с конкурентами
 import os
 import logging
 import re
-from typing import Optional
+from typing import Optional, Dict, Any
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from ...core.database import get_db
 from ...features.wb_api.models import WBCabinet
 from ...features.bot_api.service import BotAPIService
-from .crud import CompetitorLinkCRUD, CompetitorProductCRUD
-from .tasks import scrape_competitor_task
+from .crud import CompetitorLinkCRUD, CompetitorProductCRUD, CompetitorSemanticCoreCRUD
+from .tasks import scrape_competitor_task, generate_semantic_core_task
 from .schemas import (
     CompetitorsListResponse,
     CompetitorProductsResponse,
@@ -23,10 +23,15 @@ from .schemas import (
     CompetitorProductResponse,
     CompetitorProductDetailResponse
 )
+from pydantic import BaseModel # New import
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/competitors", tags=["Competitors"])
+
+
+class SemanticCoreGenerateRequest(BaseModel):
+    category_name: str
 
 
 def validate_competitor_url(url: str) -> bool:
@@ -389,6 +394,55 @@ async def get_competitor_product_detail(
         )
 
 
+@router.get("/{competitor_id}/categories", response_model=Dict[str, Any])
+async def get_competitor_categories(
+    competitor_id: int,
+    telegram_id: int = Query(..., description="Telegram ID пользователя"),
+    db: Session = Depends(get_db)
+):
+    """
+    Получить список уникальных категорий товаров для конкурента.
+    """
+    try:
+        # Проверяем доступ к конкуренту (принадлежит кабинету пользователя)
+        bot_service = BotAPIService(db, None, None)
+        cabinet = await bot_service.get_user_cabinet(telegram_id)
+        if not cabinet:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Кабинет WB не найден"
+            )
+        
+        competitor = CompetitorLinkCRUD.get_by_id(db, competitor_id)
+        if not competitor:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Конкурент не найден"
+            )
+        
+        if competitor.cabinet_id != cabinet.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Доступ запрещен"
+            )
+        
+        categories = CompetitorProductCRUD.get_distinct_categories_by_competitor(db, competitor_id)
+        
+        return {
+            "status": "success",
+            "categories": categories
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Ошибка получения категорий для конкурента {competitor_id}, telegram_id {telegram_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Ошибка сервера"
+        )
+
+
 @router.delete("/{competitor_id}", status_code=status.HTTP_200_OK)
 async def delete_competitor(
     competitor_id: int,
@@ -441,6 +495,68 @@ async def delete_competitor(
         raise
     except Exception as e:
         logger.error(f"Ошибка удаления конкурента {competitor_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Ошибка сервера"
+        )
+
+
+@router.post("/{competitor_id}/semantic-core", status_code=status.HTTP_202_ACCEPTED)
+async def generate_semantic_core(
+    competitor_id: int,
+    request: SemanticCoreGenerateRequest,
+    telegram_id: int = Query(..., description="Telegram ID пользователя"),
+    db: Session = Depends(get_db)
+):
+    """
+    Запустить генерацию семантического ядра для конкурента по выбранной категории.
+    """
+    try:
+        # Проверяем доступ к конкуренту (принадлежит кабинету пользователя)
+        bot_service = BotAPIService(db, None, None)
+        cabinet = await bot_service.get_user_cabinet(telegram_id)
+        if not cabinet:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Кабинет WB не найден"
+            )
+        
+        competitor = CompetitorLinkCRUD.get_by_id(db, competitor_id)
+        if not competitor:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Конкурент не найден"
+            )
+        
+        if competitor.cabinet_id != cabinet.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Доступ запрещен"
+            )
+        
+        # Создаем запись в БД для семантического ядра
+        semantic_core_entry = CompetitorSemanticCoreCRUD.create(
+            db,
+            competitor_link_id=competitor_id,
+            category_name=request.category_name,
+            status="pending"
+        )
+        
+        # Запускаем Celery задачу
+        generate_semantic_core_task.delay(semantic_core_entry.id)
+        
+        logger.info(f"Запущена генерация семантического ядра для конкурента {competitor_id}, категория '{request.category_name}'. ID задачи: {semantic_core_entry.id}")
+        
+        return {
+            "status": "accepted",
+            "message": "Генерация семантического ядра запущена. Результат будет отправлен по завершении.",
+            "semantic_core_id": semantic_core_entry.id
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Ошибка запуска генерации семантического ядра для конкурента {competitor_id}, telegram_id {telegram_id}: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Ошибка сервера"

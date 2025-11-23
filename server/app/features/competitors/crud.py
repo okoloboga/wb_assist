@@ -9,7 +9,7 @@ from typing import List, Optional, Dict, Any
 import logging
 import os
 
-from .models import CompetitorLink, CompetitorProduct
+from .models import CompetitorLink, CompetitorProduct, CompetitorSemanticCore
 
 logger = logging.getLogger(__name__)
 
@@ -267,4 +267,69 @@ class CompetitorProductCRUD:
             .order_by(CompetitorProduct.category)\
             .all()
         return [c[0] for c in categories if c[0]] # Фильтруем пустые строки
+
+
+class CompetitorSemanticCoreCRUD:
+    """CRUD операции для CompetitorSemanticCore"""
+
+    @staticmethod
+    def create(
+        db: Session,
+        competitor_link_id: int,
+        category_name: str,
+        status: str = 'pending'
+    ) -> CompetitorSemanticCore:
+        """Создать новую запись семантического ядра"""
+        semantic_core = CompetitorSemanticCore(
+            competitor_link_id=competitor_link_id,
+            category_name=category_name,
+            status=status
+        )
+        db.add(semantic_core)
+        db.commit()
+        db.refresh(semantic_core)
+        return semantic_core
+
+    @staticmethod
+    def get_by_id(db: Session, semantic_core_id: int) -> Optional[CompetitorSemanticCore]:
+        """Получить запись семантического ядра по ID"""
+        return db.query(CompetitorSemanticCore).filter(CompetitorSemanticCore.id == semantic_core_id).first()
+
+    @staticmethod
+    def update_status(
+        db: Session,
+        semantic_core_id: int,
+        status: str,
+        error_message: Optional[str] = None
+    ) -> Optional[CompetitorSemanticCore]:
+        """Обновить статус записи семантического ядра"""
+        semantic_core = db.query(CompetitorSemanticCore).filter(CompetitorSemanticCore.id == semantic_core_id).first()
+        if not semantic_core:
+            return None
+        
+        semantic_core.status = status
+        if error_message:
+            semantic_core.error_message = error_message
+        db.commit()
+        db.refresh(semantic_core)
+        return semantic_core
+
+    @staticmethod
+    def update_core_data(
+        db: Session,
+        semantic_core_id: int,
+        core_data: str
+    ) -> Optional[CompetitorSemanticCore]:
+        """Обновить данные семантического ядра и установить статус "completed" """
+        semantic_core = db.query(CompetitorSemanticCore).filter(CompetitorSemanticCore.id == semantic_core_id).first()
+        if not semantic_core:
+            return None
+        
+        semantic_core.core_data = core_data
+        semantic_core.status = "completed"
+        semantic_core.completed_at = datetime.now(timezone.utc)
+        db.commit()
+        db.refresh(semantic_core)
+        return semantic_core
+
 

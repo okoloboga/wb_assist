@@ -869,6 +869,34 @@ class BotAPIClient:
         
         return await self._make_request("DELETE", endpoint, params=params)
 
+    async def get_competitor_categories(
+        self,
+        competitor_id: int,
+        user_id: int
+    ) -> BotAPIResponse:
+        """Получить список уникальных категорий для товаров конкурента"""
+        logger.info(f"🗂️ Получение категорий для конкурента {competitor_id} для пользователя {user_id}")
+        
+        endpoint = f"/competitors/{competitor_id}/categories"
+        params = {"telegram_id": user_id}
+        
+        return await self._make_request("GET", endpoint, params=params)
+
+    async def generate_semantic_core(
+        self,
+        competitor_id: int,
+        category_name: str,
+        user_id: int
+    ) -> BotAPIResponse:
+        """Запустить генерацию семантического ядра для конкурента по категории"""
+        logger.info(f"💎 Запуск генерации семантического ядра для конкурента {competitor_id}, категория '{category_name}' для пользователя {user_id}")
+        
+        endpoint = f"/competitors/{competitor_id}/semantic-core"
+        params = {"telegram_id": user_id}
+        json_data = {"category_name": category_name}
+        
+        return await self._make_request("POST", endpoint, params=params, json_data=json_data)
+
 
 bot_api_client = BotAPIClient()
 

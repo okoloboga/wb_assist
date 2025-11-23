@@ -17,6 +17,7 @@ from app.features.notifications.schemas import (
     NotificationSettingsUpdate,
     APIResponse
 )
+from app.features.competitors.models import CompetitorSemanticCore, CompetitorLink # New import
 from .service import BotAPIService
 from .schemas import (
     DashboardResponse, OrdersResponse, CriticalStocksAPIResponse, DynamicCriticalStocksAPIResponse,
@@ -24,10 +25,18 @@ from .schemas import (
     OrderDetailResponse, CabinetStatusResponse, CabinetConnectResponse, CabinetConnectRequest,
     DailyTrendsAPIResponse
 )
+from pydantic import BaseModel # New import
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["Bot API"])
+
+
+class SemanticCoreReadyWebhookRequest(BaseModel):
+    semantic_core_id: int
+    core_data: str
+    status: str
+    error_message: Optional[str] = None
 
 
 def get_bot_service(db: Session = Depends(get_db)) -> BotAPIService:
@@ -628,3 +637,58 @@ async def update_notification_settings(
             message=f"Internal server error: {str(e)}",
             error=str(e)
         )
+
+
+@router.post("/webhook/semantic-core-ready", response_model=APIResponse)
+async def semantic_core_ready_webhook(
+    request: SemanticCoreReadyWebhookRequest,
+    db: Session = Depends(get_db),
+    bot_service: BotAPIService = Depends(get_bot_service)
+):
+    """
+    Webhook для уведомления бота о готовности семантического ядра.
+    """
+    logger.info(f"🔔 Получен webhook о готовности семантического ядра ID: {request.semantic_core_id}")
+    
+    try:
+        semantic_core_entry = db.query(CompetitorSemanticCore).filter(CompetitorSemanticCore.id == request.semantic_core_id).first()
+        if not semantic_core_entry:
+            logger.error(f"SemanticCoreReadyWebhook: Запись семантического ядра с ID {request.semantic_core_id} не найдена.")
+            raise HTTPException(status_code=404, detail="Semantic core entry not found")
+        
+        competitor_link = db.query(CompetitorLink).filter(CompetitorLink.id == semantic_core_entry.competitor_link_id).first()
+        if not competitor_link:
+            logger.error(f"SemanticCoreReadyWebhook: Ссылка на конкурента с ID {semantic_core_entry.competitor_link_id} не найдена.")
+            raise HTTPException(status_code=404, detail="Competitor link not found")
+        
+        user = UserCRUD(db).get_user_by_cabinet_id(competitor_link.cabinet_id)
+        if not user:
+            logger.error(f"SemanticCoreReadyWebhook: Пользователь для cabinet_id {competitor_link.cabinet_id} не найден.")
+            raise HTTPException(status_code=404, detail="User not found for cabinet")
+
+        telegram_id = user.telegram_id
+        
+        if request.status == "completed":
+            text = (
+                f"✅ Семантическое ядро для категории '{semantic_core_entry.category_name}' "
+                f"конкурента '{competitor_link.competitor_name or 'Без названия'}' готово!\n\n"
+                f"{request.core_data}"
+            )
+            await bot_service.send_telegram_message(telegram_id, text, parse_mode="Markdown")
+            logger.info(f"SemanticCoreReadyWebhook: Результат для telegram_id {telegram_id} отправлен.")
+        elif request.status == "error":
+            text = (
+                f"❌ Ошибка при генерации семантического ядра для категории '{semantic_core_entry.category_name}' "
+                f"конкурента '{competitor_link.competitor_name or 'Без названия'}'\n\n"
+                f"Подробности: {request.error_message or 'Неизвестная ошибка.'}"
+            )
+            await bot_service.send_telegram_message(telegram_id, text)
+            logger.error(f"SemanticCoreReadyWebhook: Ошибка для telegram_id {telegram_id} отправлена.")
+        
+        return APIResponse(success=True, message="Webhook processed successfully")
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Ошибка обработки webhook semantic-core-ready: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error")

@@ -208,6 +208,28 @@ async def receive_auto_webhook(
                         )
                     except Exception as fallback_error:
                         logger.error(f"Fallback sync completion failed for telegram_id {telegram_id}: {fallback_error}")
+        elif notification_type == "semantic_core_ready":
+            # Уведомление о готовности семантического ядра
+            try:
+                await bot.send_message(
+                    chat_id=telegram_id,
+                    text=telegram_text,
+                    parse_mode="Markdown"
+                )
+                logger.info(f"💎 Semantic core ready notification sent to telegram_id {telegram_id}")
+            except Exception as e:
+                logger.error(f"Error sending semantic core ready notification to telegram_id {telegram_id}: {e}")
+        elif notification_type == "scraping_completed":
+            # Уведомление о завершении скрапинга
+            try:
+                await bot.send_message(
+                    chat_id=telegram_id,
+                    text=telegram_text,
+                    parse_mode="Markdown"
+                )
+                logger.info(f"✅ Scraping completed notification sent to telegram_id {telegram_id}")
+            except Exception as e:
+                logger.error(f"Error sending scraping completed notification to telegram_id {telegram_id}: {e}")
         else:
             # Для других типов уведомлений проверяем наличие image_url
             data = notification_data.get("data", {})
@@ -241,7 +263,7 @@ async def receive_auto_webhook(
                     await bot.send_message(
                         chat_id=telegram_id,
                         text=telegram_text,
-                        parse_mode=None  # ← ОТКЛЮЧАЕМ MARKDOWN!
+                        parse_mode="None"  # ← ОТКЛЮЧАЕМ MARKDOWN!
                     )
                     logger.info(f"📱 Message sent to telegram_id {telegram_id}")
                 except Exception as e:

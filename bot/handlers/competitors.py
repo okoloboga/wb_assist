@@ -13,7 +13,12 @@ from aiogram import Router, F
 from aiogram.types import CallbackQuery, Message, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters import Command
 
-from keyboards.keyboards import wb_menu_keyboard, main_keyboard, competitors_keyboard
+from keyboards.keyboards import (
+    wb_menu_keyboard,
+    main_keyboard,
+    create_competitors_list_keyboard, # New import
+    create_semantic_core_categories_keyboard # New import
+)
 from utils.formatters import format_error_message, safe_edit_message, safe_send_message, handle_telegram_errors
 from api.client import bot_api_client
 
@@ -24,56 +29,6 @@ def validate_competitor_url(url: str) -> bool:
     """Валидация URL конкурента"""
     pattern = r'https?://(www\.)?wildberries\.ru/(brands|seller)/[\w\-]+'
     return bool(re.match(pattern, url))
-
-
-def create_competitors_keyboard(competitors: list, offset: int = 0, has_more: bool = False) -> InlineKeyboardMarkup:
-    """Создать клавиатуру для списка конкурентов"""
-    buttons = []
-    
-    # Кнопки для каждого конкурента
-    for competitor in competitors:
-        name = competitor.get('competitor_name') or 'Без названия'
-        products_count = competitor.get('products_count', 0)
-        status = competitor.get('status')
-        
-        status_icon = {
-            "completed": "✅",
-            "scraping": "🔄",
-            "pending": "⏳",
-            "error": "❌"
-        }.get(status, "❓")
-        
-        text = f"{status_icon} {name}"
-        callback_data = f"competitor_{competitor.get('id')}"
-        buttons.append([InlineKeyboardButton(text=text, callback_data=callback_data)])
-    
-    # Навигационные кнопки
-    nav_buttons = []
-    if offset > 0:
-        nav_buttons.append(InlineKeyboardButton(
-            text="◀️ Назад",
-            callback_data=f"competitors_page_{offset - 10}"
-        ))
-    
-    if has_more:
-        nav_buttons.append(InlineKeyboardButton(
-            text="Вперёд ▶️",
-            callback_data=f"competitors_page_{offset + 10}"
-        ))
-    
-    if nav_buttons:
-        buttons.append(nav_buttons)
-    
-    # Кнопка "Добавить конкурента"
-    buttons.append([InlineKeyboardButton(
-        text="➕ Добавить конкурента",
-        callback_data="add_competitor"
-    )])
-    
-    # Кнопка "Назад"
-    buttons.append([InlineKeyboardButton(text="🔙 Назад", callback_data="wb_menu")])
-    
-    return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
 def create_competitor_products_keyboard(
@@ -114,6 +69,12 @@ def create_competitor_products_keyboard(
     if nav_buttons:
         buttons.append(nav_buttons)
 
+    # Кнопка "Семантическое ядро"
+    buttons.append([InlineKeyboardButton(
+        text="💎 Семантическое ядро",
+        callback_data=f"competitor_semantic_core_{competitor_id}"
+    )])
+
     # Кнопка "Удалить конкурента"
     buttons.append([InlineKeyboardButton(
         text="🗑️ Удалить конкурента",
@@ -145,9 +106,11 @@ async def show_competitors_menu(callback: CallbackQuery):
         competitors = response.data.get("competitors", [])
         pagination = response.data.get("pagination", {})
         
-        keyboard = create_competitors_keyboard(
-            competitors=competitors,
+        keyboard = create_competitors_list_keyboard(
+            competitors_data=competitors,
             offset=0,
+            limit=10,
+            total=pagination.get("total", 0),
             has_more=pagination.get("has_more", False)
         )
         
@@ -192,9 +155,11 @@ async def show_competitors_page(callback: CallbackQuery):
         competitors = response.data.get("competitors", [])
         pagination = response.data.get("pagination", {})
         
-        keyboard = create_competitors_keyboard(
-            competitors=competitors,
+        keyboard = create_competitors_list_keyboard(
+            competitors_data=competitors,
             offset=offset,
+            limit=10,
+            total=pagination.get("total", 0),
             has_more=pagination.get("has_more", False)
         )
         
@@ -373,62 +338,10 @@ async def handle_competitor_url(message: Message):
     )
 
 
-@router.callback_query(F.data.startswith("competitor_product_"))
+@router.callback_query(F.data.startswith("select_competitor_"))
 @handle_telegram_errors
-async def show_competitor_product_detail(callback: CallbackQuery):
-    """Показать детальную информацию о товаре конкурента"""
-    try:
-        parts = callback.data.split("_")
-        competitor_id = int(parts[2])
-        product_id = int(parts[3])
-    except (ValueError, IndexError):
-        await callback.answer("❌ Ошибка: неверный ID товара", show_alert=True)
-        return
-
-    user_id = callback.from_user.id
-
-    # Получаем детали товара
-    response = await bot_api_client.get_competitor_product_detail(
-        product_id=product_id,
-        user_id=user_id
-    )
-
-    if response.success and response.data and response.data.get("product"):
-        text = response.data.get("telegram_text") or "📦 Детали товара"
-        
-        # Клавиатура с кнопкой "Назад" к списку товаров конкурента
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🔙 Назад к товарам", callback_data=f"competitor_{competitor_id}")]
-        ])
-        
-        await safe_edit_message(
-            callback=callback,
-            text=text,
-            reply_markup=keyboard,
-            user_id=user_id,
-            parse_mode="Markdown",
-            disable_web_page_preview=False # Включаем превью для ссылки на товар
-        )
-    else:
-        error_message = format_error_message(response.error, response.status_code)
-        # Клавиатура для возврата к списку товаров
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🔙 Назад к товарам", callback_data=f"competitor_{competitor_id}")]
-        ])
-        await safe_edit_message(
-            callback=callback,
-            text=f"❌ Ошибка загрузки товара:\n\n{error_message}",
-            reply_markup=keyboard,
-            user_id=user_id
-        )
-
-    await callback.answer()
-
-
-@router.callback_query(F.data.startswith("competitor_"))
-@handle_telegram_errors
-async def show_competitor_products(callback: CallbackQuery):
-    """Показать товары конкурента"""
+async def select_competitor(callback: CallbackQuery):
+    """Показать меню для выбранного конкурента"""
     try:
         competitor_id = int(callback.data.split("_")[-1])
     except (ValueError, IndexError):
@@ -468,11 +381,66 @@ async def show_competitor_products(callback: CallbackQuery):
         await safe_edit_message(
             callback=callback,
             text=f"❌ Ошибка загрузки товаров:\n\n{error_message}",
-            reply_markup=competitors_keyboard(),
+            reply_markup=create_competitors_list_keyboard([], 0, 10, 0, False), # Пустая клавиатура
             user_id=user_id
         )
     
     await callback.answer()
+
+
+@router.callback_query(F.data.startswith("competitor_product_"))
+@handle_telegram_errors
+async def show_competitor_product_detail(callback: CallbackQuery):
+    """Показать детальную информацию о товаре конкурента"""
+    try:
+        parts = callback.data.split("_")
+        competitor_id = int(parts[2])
+        product_id = int(parts[3])
+    except (ValueError, IndexError):
+        await callback.answer("❌ Ошибка: неверный ID товара", show_alert=True)
+        return
+
+    user_id = callback.from_user.id
+
+    # Получаем детали товара
+    response = await bot_api_client.get_competitor_product_detail(
+        product_id=product_id,
+        user_id=user_id
+    )
+
+    if response.success and response.data and response.data.get("product"):
+        text = response.data.get("telegram_text") or "📦 Детали товара"
+        
+        # Клавиатура с кнопкой "Назад" к списку товаров конкурента
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔙 Назад к товарам", callback_data=f"select_competitor_{competitor_id}")]
+        ])
+        
+        await safe_edit_message(
+            callback=callback,
+            text=text,
+            reply_markup=keyboard,
+            user_id=user_id,
+            parse_mode="Markdown",
+            disable_web_page_preview=False # Включаем превью для ссылки на товар
+        )
+    else:
+        error_message = format_error_message(response.error, response.status_code)
+        # Клавиатура для возврата к списку товаров
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔙 Назад к товарам", callback_data=f"select_competitor_{competitor_id}")]
+        ])
+        await safe_edit_message(
+            callback=callback,
+            text=f"❌ Ошибка загрузки товара:\n\n{error_message}",
+            reply_markup=keyboard,
+            user_id=user_id
+        )
+
+    await callback.answer()
+
+
+
 
 
 @router.callback_query(F.data.startswith("competitor_products_page_"))
@@ -516,6 +484,48 @@ async def show_competitor_products_page(callback: CallbackQuery):
     await callback.answer()
 
 
+@router.callback_query(F.data.startswith("competitor_semantic_core_"))
+@handle_telegram_errors
+async def show_semantic_core_categories(callback: CallbackQuery):
+    """Показать категории для выбора семантического ядра"""
+    try:
+        competitor_id = int(callback.data.split("_")[-1])
+    except (ValueError, IndexError):
+        await callback.answer("❌ Ошибка: неверный ID конкурента", show_alert=True)
+        return
+    
+    user_id = callback.from_user.id
+    
+    response = await bot_api_client.get_competitor_categories(
+        competitor_id=competitor_id,
+        user_id=user_id
+    )
+    
+    if response.success and response.data and response.data.get("categories"):
+        categories = response.data.get("categories")
+        
+        keyboard = create_semantic_core_categories_keyboard(competitor_id, categories)
+        
+        text = "🗂️ Выберите категорию для анализа семантического ядра:"
+        
+        await safe_edit_message(
+            callback=callback,
+            text=text,
+            reply_markup=keyboard,
+            user_id=user_id
+        )
+    else:
+        error_message = format_error_message(response.error, response.status_code)
+        await safe_edit_message(
+            callback=callback,
+            text=f"❌ Ошибка загрузки категорий:\n\n{error_message}",
+            reply_markup=create_competitors_list_keyboard([], 0, 10, 0, False), # Пустая клавиатура
+            user_id=user_id
+        )
+    
+    await callback.answer()
+
+
 @router.callback_query(F.data.startswith("delete_competitor_confirm_"))
 @handle_telegram_errors
 async def delete_competitor_confirm(callback: CallbackQuery):
@@ -531,7 +541,7 @@ async def delete_competitor_confirm(callback: CallbackQuery):
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(text="✅ Да, удалить", callback_data=f"delete_competitor_do_{competitor_id}"),
-            InlineKeyboardButton(text="🚫 Отмена", callback_data=f"competitor_{competitor_id}")
+            InlineKeyboardButton(text="🚫 Отмена", callback_data=f"select_competitor_{competitor_id}") # Changed callback
         ]
     ])
     
@@ -541,6 +551,51 @@ async def delete_competitor_confirm(callback: CallbackQuery):
         reply_markup=keyboard,
         user_id=callback.from_user.id
     )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("select_semantic_core_category_"))
+@handle_telegram_errors
+async def start_semantic_core_generation(callback: CallbackQuery):
+    """Запустить генерацию семантического ядра для выбранной категории"""
+    try:
+        parts = callback.data.split("_")
+        competitor_id = int(parts[3])
+        category_name = "_".join(parts[4:]) # Категория может содержать пробелы, поэтому объединяем оставшиеся части
+    except (ValueError, IndexError):
+        await callback.answer("❌ Ошибка: неверные параметры категории", show_alert=True)
+        return
+    
+    user_id = callback.from_user.id
+    
+    await callback.answer("💎 Запускаю анализ семантического ядра...", show_alert=False)
+    
+    response = await bot_api_client.generate_semantic_core(
+        competitor_id=competitor_id,
+        category_name=category_name,
+        user_id=user_id
+    )
+    
+    if response.success:
+        text = (
+            f"✅ Генерация семантического ядра для категории '{category_name}' запущена.\n\n"
+            "Это может занять несколько минут. Я пришлю результат, как только он будет готов."
+        )
+        await safe_edit_message(
+            callback=callback,
+            text=text,
+            reply_markup=create_competitors_list_keyboard([], 0, 10, 0, False), # Пустая клавиатура
+            user_id=user_id
+        )
+    else:
+        error_message = format_error_message(response.error, response.status_code)
+        await safe_edit_message(
+            callback=callback,
+            text=f"❌ Ошибка запуска генерации семантического ядра:\n\n{error_message}",
+            reply_markup=create_competitors_list_keyboard([], 0, 10, 0, False), # Пустая клавиатура
+            user_id=user_id
+        )
+    
     await callback.answer()
 
 
@@ -575,9 +630,7 @@ async def delete_competitor_do(callback: CallbackQuery):
         await safe_edit_message(
             callback=callback,
             text=f"❌ Ошибка удаления:\n\n{error_message}",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="🔙 Назад", callback_data=f"competitor_{competitor_id}")]
-            ]),
+            reply_markup=create_competitors_list_keyboard([], 0, 10, 0, False), # Пустая клавиатура
             user_id=user_id
         )
         await callback.answer()
