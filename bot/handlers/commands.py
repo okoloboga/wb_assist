@@ -622,15 +622,11 @@ async def handle_change_spreadsheet(callback: CallbackQuery, state: FSMContext):
         logger.error(f"Ошибка смены таблицы: {e}")
         await callback.answer("❌ Произошла ошибка", show_alert=True)
 
-@router.message(F.text.startswith("http"))
+@router.message(F.text.startswith("http") & F.text.contains("docs.google.com/spreadsheets"))
 @handle_telegram_errors
 async def check_export_state(message: Message, state: FSMContext):
-    """Проверяет состояние для экспорта при получении ссылки"""
+    """Проверяет состояние для экспорта при получении ссылки на Google Sheets"""
     from core.states import ExportStates
-    
-    # Проверяем, что это ссылка на Google Sheets
-    if 'docs.google.com/spreadsheets' not in message.text:
-        return  # Не обрабатываем, пропускаем другим handlers
     
     current_state = await state.get_state()
     

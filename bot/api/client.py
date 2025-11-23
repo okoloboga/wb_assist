@@ -27,6 +27,8 @@ class BotAPIResponse:
     pagination: Optional[Dict[str, Any]] = None
     order: Optional[Dict[str, Any]] = None
     stocks: Optional[Dict[str, Any]] = None
+    competitors: Optional[List[Dict[str, Any]]] = None
+    products: Optional[List[Dict[str, Any]]] = None
 
 
 class BotAPIClient:
@@ -139,7 +141,9 @@ class BotAPIClient:
                         orders=data.get("orders"),
                         pagination=data.get("pagination"),
                         order=data.get("order"),
-                        stocks=data.get("stocks")
+                        stocks=data.get("stocks"),
+                        competitors=data.get("competitors"),
+                        products=data.get("products")
                     )
             elif response.status == 404:
                 logger.warning(f"🔍 Resource not found: {response.url}")
@@ -303,7 +307,11 @@ class BotAPIClient:
                         data=response_data,
                         telegram_text=response_data.get("telegram_text"),
                         error=response_data.get("error"),
-                        status_code=resp.status
+                        status_code=resp.status,
+                        # Единообразная структура - поля в корне ответа
+                        competitors=response_data.get("competitors"),
+                        products=response_data.get("products"),
+                        pagination=response_data.get("pagination")
                     )
                     
                     logger.info(f"✅ Результат запроса: success={result.success}, status_code={result.status_code}")
@@ -782,6 +790,60 @@ class BotAPIClient:
 
 
 # Создаем глобальный экземпляр клиента
+    # ===== МЕТОДЫ ДЛЯ РАБОТЫ С КОНКУРЕНТАМИ =====
+
+    async def add_competitor(
+        self,
+        user_id: int,
+        competitor_url: str
+    ) -> BotAPIResponse:
+        """Добавить ссылку конкурента"""
+        logger.info(f"➕ Добавление конкурента для пользователя {user_id}")
+        
+        endpoint = "/competitors/add"
+        params = {"telegram_id": user_id}
+        json_data = {"competitor_url": competitor_url}
+        
+        return await self._make_request("POST", endpoint, params=params, json_data=json_data)
+
+    async def get_competitors(
+        self,
+        user_id: int,
+        offset: int = 0,
+        limit: int = 10
+    ) -> BotAPIResponse:
+        """Получить список конкурентов с пагинацией"""
+        logger.info(f"📊 Получение конкурентов для пользователя {user_id}, offset={offset}, limit={limit}")
+        
+        endpoint = "/competitors"
+        params = {
+            "telegram_id": user_id,
+            "offset": offset,
+            "limit": limit
+        }
+        
+        return await self._make_request("GET", endpoint, params=params)
+
+    async def get_competitor_products(
+        self,
+        competitor_id: int,
+        user_id: int,
+        offset: int = 0,
+        limit: int = 10
+    ) -> BotAPIResponse:
+        """Получить товары конкурента с пагинацией"""
+        logger.info(f"🛍️ Получение товаров конкурента {competitor_id} для пользователя {user_id}")
+        
+        endpoint = f"/competitors/{competitor_id}/products"
+        params = {
+            "telegram_id": user_id,
+            "offset": offset,
+            "limit": limit
+        }
+        
+        return await self._make_request("GET", endpoint, params=params)
+
+
 bot_api_client = BotAPIClient()
 
 

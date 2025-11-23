@@ -24,6 +24,7 @@ from handlers.analytics import router as analytics_router
 from handlers.sync import router as sync_router
 from handlers.notifications import router as notifications_router
 from handlers.prices import router as prices_router
+from handlers.competitors import router as competitors_router
 from handlers.webhook import router as webhook_router, webhook_app
 from handlers.gpt import router as gpt_router
 from handlers.ai_chat import router as ai_chat_router
@@ -67,6 +68,7 @@ dp.include_router(analytics_router)
 dp.include_router(sync_router)
 dp.include_router(notifications_router)
 dp.include_router(prices_router)
+dp.include_router(competitors_router)
 dp.include_router(webhook_router)
 dp.include_router(gpt_router)
 

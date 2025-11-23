@@ -21,7 +21,7 @@ def wb_menu_keyboard() -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="📈 Аналитика", callback_data="analytics")
         ],
         [
-            InlineKeyboardButton(text="💰 Цены", callback_data="prices"),
+            InlineKeyboardButton(text="⚖️ Конкуренты", callback_data="competitors"),
             InlineKeyboardButton(text="🔔 Уведомления", callback_data="notifications")
         ],
         [
@@ -84,6 +84,14 @@ def prices_keyboard() -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="📤 Выгрузка в Google Sheets", callback_data="export_prices")
         ],
         [InlineKeyboardButton(text="🔙 Назад", callback_data="main_menu")]
+    ])
+
+
+def competitors_keyboard() -> InlineKeyboardMarkup:
+    """Клавиатура для меню конкурентов"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="➕ Добавить конкурента", callback_data="add_competitor")],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="prices")]
     ])
 
 
