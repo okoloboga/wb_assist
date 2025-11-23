@@ -3,7 +3,10 @@ Cabinet Manager - управление кабинетами WB с автомат
 """
 
 import logging
-from typing import Dict, Any, Optional
+import os
+import asyncio
+import aiohttp
+from typing import Dict, Any, Optional, List
 from sqlalchemy.orm import Session
 from sqlalchemy import and_
 
@@ -65,33 +68,78 @@ class CabinetManager:
             # Если API невалиден (статус 401), удаляем кабинет
             logger.error(f"API validation failed for cabinet {cabinet.id}. Removing cabinet.")
             
-            # Получаем всех пользователей кабинета для уведомления
+            # КРИТИЧНО: Получаем полные данные пользователей ДО удаления кабинета
             from .crud_cabinet_users import CabinetUserCRUD
             cabinet_user_crud = CabinetUserCRUD()
             user_ids = cabinet_user_crud.get_cabinet_users(self.db, cabinet.id)
             
-            if not user_ids:
-                logger.error(f"No users found for cabinet {cabinet.id}")
-                return {
-                    "success": False,
-                    "valid": False,
-                    "message": "API key invalid and no users found",
-                    "attempts": 1,
-                    "cabinet_removed": False
-                }
+            # Сохраняем полные данные пользователей с telegram_id ДО удаления
+            users_data: List[Dict[str, Any]] = []
+            for user_id in user_ids:
+                user_data = self._get_user_data(user_id)
+                if user_data and user_data.get("telegram_id"):
+                    users_data.append(user_data)
+            
+            # Сохраняем информацию о кабинете ДО удаления
+            cabinet_info = {
+                "id": cabinet.id,
+                "name": cabinet.name or "Неизвестный кабинет",
+                "api_key_preview": cabinet.api_key[:10] + "..." if cabinet.api_key and len(cabinet.api_key) > 10 else "N/A"
+            }
+            
+            if not users_data:
+                logger.warning(f"No users with telegram_id found for cabinet {cabinet.id}, proceeding with deletion")
             
             # Удаляем кабинет и все связанные данные
             cleanup_result = await self._cleanup_cabinet_data(cabinet)
             
+            # КРИТИЧНО: Логируем факт удаления ВСЕГДА, независимо от отправки уведомлений
+            deleted_counts = cleanup_result.get("deleted_counts", {})
+            logger.error(
+                f"🗑️ CABINET REMOVED - ID: {cabinet_info['id']}, "
+                f"Name: {cabinet_info['name']}, "
+                f"Users affected: {len(users_data)}, "
+                f"Deleted data: orders={deleted_counts.get('orders', 0)}, "
+                f"products={deleted_counts.get('products', 0)}, "
+                f"stocks={deleted_counts.get('stocks', 0)}, "
+                f"reviews={deleted_counts.get('reviews', 0)}, "
+                f"sales={deleted_counts.get('sales', 0)}, "
+                f"Reason: API key invalid (status {validation_result.get('status_code', 'N/A')}), "
+                f"Error: {validation_result.get('message', 'N/A')}"
+            )
+            
             # Отправляем уведомления всем пользователям кабинета
             notification_results = []
-            for user_id in user_ids:
-                user_data = self._get_user_data(user_id)
-                if user_data:
-                    notification_result = await self._send_cabinet_removal_notification(
-                        user_data, cabinet, validation_result
-                    )
-                    notification_results.append(notification_result)
+            if users_data and cleanup_result.get("success", False):
+                for user_data in users_data:
+                    try:
+                        notification_result = await self._send_cabinet_removal_notification(
+                            user_data, 
+                            cabinet_info, 
+                            validation_result,
+                            cleanup_result
+                        )
+                        notification_results.append(notification_result)
+                    except Exception as notify_error:
+                        # Логируем ошибку отправки, но не прерываем процесс
+                        logger.error(
+                            f"Failed to send notification to user {user_data.get('user_id')} "
+                            f"(telegram_id: {user_data.get('telegram_id')}): {notify_error}",
+                            exc_info=True
+                        )
+                        notification_results.append({
+                            "success": False,
+                            "user_id": user_data.get("user_id"),
+                            "telegram_id": user_data.get("telegram_id"),
+                            "error": str(notify_error)
+                        })
+            
+            # Логируем результаты отправки уведомлений
+            successful_notifications = sum(1 for r in notification_results if r.get("success", False))
+            logger.info(
+                f"📨 Cabinet removal notifications: {successful_notifications}/{len(notification_results)} "
+                f"sent successfully for cabinet {cabinet_info['id']}"
+            )
             
             return {
                 "success": True,
@@ -99,12 +147,20 @@ class CabinetManager:
                 "message": "API key invalid, cabinet removed",
                 "attempts": 1,
                 "cabinet_removed": cleanup_result["success"],
-                "notifications_sent": len(notification_results),
-                "validation_error": validation_result
+                "cabinet_id": cabinet_info["id"],
+                "cabinet_name": cabinet_info["name"],
+                "users_affected": len(users_data),
+                "notifications_sent": successful_notifications,
+                "notifications_total": len(notification_results),
+                "validation_error": validation_result,
+                "deleted_counts": cleanup_result.get("deleted_counts", {})
             }
             
         except Exception as e:
-            logger.error(f"Unexpected error during cabinet validation for cabinet {cabinet.id}: {e}")
+            logger.error(
+                f"Unexpected error during cabinet validation for cabinet {cabinet.id if hasattr(cabinet, 'id') else 'unknown'}: {e}",
+                exc_info=True
+            )
             return {
                 "success": False,
                 "valid": False,
@@ -194,62 +250,171 @@ class CabinetManager:
             }
             
         except Exception as e:
-            logger.error(f"Error cleaning up cabinet {cabinet.id}: {e}")
+            logger.error(f"Error cleaning up cabinet {cabinet.id}: {e}", exc_info=True)
             self.db.rollback()
             return {
                 "success": False,
                 "error": str(e)
             }
     
+    async def _send_telegram_message_direct(
+        self, 
+        telegram_id: int, 
+        text: str
+    ) -> Dict[str, Any]:
+        """
+        Прямая отправка сообщения через Telegram Bot API
+        
+        Args:
+            telegram_id: Telegram ID пользователя
+            text: Текст сообщения
+            
+        Returns:
+            Dict с результатом отправки
+        """
+        try:
+            bot_token = os.getenv("BOT_TOKEN", "").strip()
+            if not bot_token:
+                logger.warning("BOT_TOKEN not found in environment variables, cannot send Telegram message")
+                return {"ok": False, "description": "BOT_TOKEN not configured"}
+            
+            url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+            data = {
+                "chat_id": telegram_id,
+                "text": text,
+                "parse_mode": "HTML"
+            }
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    url, 
+                    json=data, 
+                    timeout=aiohttp.ClientTimeout(total=10)
+                ) as resp:
+                    result = await resp.json()
+                    
+                    if result.get("ok"):
+                        logger.info(f"✅ Telegram message sent to {telegram_id}")
+                    else:
+                        logger.warning(
+                            f"❌ Failed to send Telegram message to {telegram_id}: "
+                            f"{result.get('description', 'Unknown error')}"
+                        )
+                    
+                    return result
+                    
+        except asyncio.TimeoutError:
+            logger.error(f"Timeout sending Telegram message to {telegram_id}")
+            return {"ok": False, "description": "Timeout"}
+        except Exception as e:
+            logger.error(f"Error sending Telegram message to {telegram_id}: {e}", exc_info=True)
+            return {"ok": False, "description": str(e)}
+    
     async def _send_cabinet_removal_notification(
         self, 
         user_data: Dict[str, Any], 
-        cabinet: WBCabinet, 
-        validation_result: Dict[str, Any]
+        cabinet_info: Dict[str, Any],
+        validation_result: Dict[str, Any],
+        cleanup_result: Dict[str, Any]
     ) -> Dict[str, Any]:
-        """Отправка уведомления боту об удалении кабинета"""
+        """
+        Отправка уведомления пользователю об удалении кабинета напрямую в Telegram
+        
+        Args:
+            user_data: Данные пользователя (user_id, telegram_id, etc.)
+            cabinet_info: Информация о кабинете (id, name)
+            validation_result: Результат валидации API ключа
+            cleanup_result: Результат удаления данных
+            
+        Returns:
+            Dict с результатом отправки
+        """
         try:
-            # Формируем данные для уведомления
-            notification_data = {
-                "cabinet_id": cabinet.id,
-                "cabinet_name": cabinet.name,
-                "user_id": user_data["user_id"],
-                "telegram_id": user_data["telegram_id"],
-                "validation_error": validation_result,
-                "removal_reason": "API key invalid or withdrawn",
-                "removal_timestamp": cabinet.updated_at.isoformat() if cabinet.updated_at else None
-            }
+            telegram_id = user_data.get("telegram_id")
+            if not telegram_id:
+                logger.warning(f"No telegram_id for user {user_data.get('user_id')}")
+                return {"success": False, "error": "No telegram_id"}
             
-            # Ленивый импорт для избежания циклических зависимостей
-            from app.features.bot_api.webhook import WebhookSender
+            # Формируем детальное сообщение с причиной удаления
             from app.features.bot_api.formatter import BotMessageFormatter
-            
-            webhook_sender = WebhookSender()
             message_formatter = BotMessageFormatter()
             
-            # Формируем сообщение для бота
+            # Формируем данные для форматирования
+            notification_data = {
+                "cabinet_id": cabinet_info.get("id"),
+                "cabinet_name": cabinet_info.get("name", "Неизвестный кабинет"),
+                "user_id": user_data.get("user_id"),
+                "telegram_id": telegram_id,
+                "validation_error": validation_result,
+                "removal_reason": self._get_removal_reason(validation_result),
+                "deleted_counts": cleanup_result.get("deleted_counts", {})
+            }
+            
+            # Формируем сообщение
             message = message_formatter.format_cabinet_removal_notification(notification_data)
             
-            # Отправляем webhook
-            webhook_result = await webhook_sender.send_cabinet_removal_notification(
-                user_data["telegram_id"], 
-                notification_data
-            )
+            # Отправляем напрямую через Telegram Bot API
+            result = await self._send_telegram_message_direct(telegram_id, message)
             
-            logger.info(f"Cabinet removal notification sent for cabinet {cabinet.id}: {webhook_result}")
+            success = result.get("ok", False)
+            
+            if success:
+                logger.info(
+                    f"✅ Cabinet removal notification sent to user {user_data.get('user_id')} "
+                    f"(telegram_id: {telegram_id}) for cabinet {cabinet_info.get('id')}"
+                )
+            else:
+                logger.warning(
+                    f"❌ Failed to send cabinet removal notification to user {user_data.get('user_id')} "
+                    f"(telegram_id: {telegram_id}): {result.get('description', 'Unknown error')}"
+                )
             
             return {
-                "success": webhook_result.get("success", False),
+                "success": success,
+                "user_id": user_data.get("user_id"),
+                "telegram_id": telegram_id,
                 "message": message,
-                "webhook_result": webhook_result
+                "telegram_result": result
             }
             
         except Exception as e:
-            logger.error(f"Error sending cabinet removal notification for cabinet {cabinet.id}: {e}")
+            logger.error(
+                f"Error sending cabinet removal notification to user {user_data.get('user_id', 'unknown')}: {e}",
+                exc_info=True
+            )
             return {
                 "success": False,
+                "user_id": user_data.get("user_id"),
+                "telegram_id": user_data.get("telegram_id"),
                 "error": str(e)
             }
+    
+    def _get_removal_reason(self, validation_result: Dict[str, Any]) -> str:
+        """
+        Получить понятную причину удаления кабинета
+        
+        Args:
+            validation_result: Результат валидации API ключа
+            
+        Returns:
+            Строка с причиной удаления
+        """
+        status_code = validation_result.get("status_code")
+        message = validation_result.get("message", "")
+        error_code = validation_result.get("error_code", "")
+        
+        if status_code == 401:
+            message_lower = message.lower() if message else ""
+            if "unauthorized" in message_lower or "invalid" in message_lower:
+                return "API ключ недействителен или отозван"
+            elif "expired" in message_lower:
+                return "API ключ истек"
+            else:
+                return f"Ошибка авторизации (401): {message}"
+        elif error_code:
+            return f"Ошибка API: {error_code} - {message}"
+        else:
+            return f"API ключ недействителен: {message}"
     
     async def validate_all_cabinets(self, max_retries: int = 3) -> Dict[str, Any]:
         """Валидация всех кабинетов с автоматическим удалением невалидных"""
@@ -288,30 +453,21 @@ class CabinetManager:
                     else:
                         results["errors"] += 1
                     
-                    # Получаем пользователей кабинета для деталей
-                    from .crud_cabinet_users import CabinetUserCRUD
-                    cabinet_user_crud = CabinetUserCRUD()
-                    user_ids = cabinet_user_crud.get_cabinet_users(self.db, cabinet.id)
-                    
+                    # Сохраняем детали результата
                     results["details"].append({
-                        "cabinet_id": cabinet.id,
-                        "user_ids": user_ids,
-                        "cabinet_name": cabinet.name,
+                        "cabinet_id": result.get("cabinet_id", cabinet.id),
+                        "cabinet_name": result.get("cabinet_name", cabinet.name),
+                        "users_affected": result.get("users_affected", 0),
+                        "notifications_sent": result.get("notifications_sent", 0),
                         "result": result
                     })
                     
                 except Exception as e:
-                    logger.error(f"Error validating cabinet {cabinet.id}: {e}")
+                    logger.error(f"Error validating cabinet {cabinet.id}: {e}", exc_info=True)
                     results["errors"] += 1
-                    
-                    # Получаем пользователей кабинета для деталей
-                    from .crud_cabinet_users import CabinetUserCRUD
-                    cabinet_user_crud = CabinetUserCRUD()
-                    user_ids = cabinet_user_crud.get_cabinet_users(self.db, cabinet.id)
                     
                     results["details"].append({
                         "cabinet_id": cabinet.id,
-                        "user_ids": user_ids,
                         "cabinet_name": cabinet.name,
                         "error": str(e)
                     })
@@ -320,7 +476,7 @@ class CabinetManager:
             return results
             
         except Exception as e:
-            logger.error(f"Error during cabinet validation: {e}")
+            logger.error(f"Error during cabinet validation: {e}", exc_info=True)
             return {
                 "success": False,
                 "error": str(e)
