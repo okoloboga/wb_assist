@@ -170,6 +170,23 @@ def create_semantic_core_categories_keyboard(competitor_id: int, categories: lis
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
+def create_existing_semantic_core_keyboard(competitor_id: int, category_index: int) -> InlineKeyboardMarkup:
+    """
+    Создает клавиатуру для существующего семантического ядра с кнопкой перезапуска.
+    """
+    buttons = [
+        [InlineKeyboardButton(
+            text="🔄 Перезапустить анализ",
+            callback_data=f"regenerate_semantic_core:{competitor_id}:{category_index}"
+        )],
+        [InlineKeyboardButton(
+            text="🔙 Назад к категориям",
+            callback_data=f"competitor_semantic_core_{competitor_id}"
+        )]
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
 def content_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [

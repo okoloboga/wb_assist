@@ -886,13 +886,14 @@ class BotAPIClient:
         self,
         competitor_id: int,
         category_name: str,
-        user_id: int
+        user_id: int,
+        force: bool = False
     ) -> BotAPIResponse:
         """Запустить генерацию семантического ядра для конкурента по категории"""
-        logger.info(f"💎 Запуск генерации семантического ядра для конкурента {competitor_id}, категория '{category_name}' для пользователя {user_id}")
+        logger.info(f"💎 Запуск генерации семантического ядра для конкурента {competitor_id}, категория '{category_name}' для пользователя {user_id}, force={force}")
         
         endpoint = f"/competitors/{competitor_id}/semantic-core"
-        params = {"telegram_id": user_id}
+        params = {"telegram_id": user_id, "force": str(force).lower()}
         json_data = {"category_name": category_name}
         
         return await self._make_request("POST", endpoint, params=params, json_data=json_data)

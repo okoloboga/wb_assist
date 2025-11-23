@@ -323,6 +323,20 @@ class CompetitorSemanticCoreCRUD:
         return db.query(CompetitorSemanticCore).filter(CompetitorSemanticCore.id == semantic_core_id).first()
 
     @staticmethod
+    def get_by_competitor_and_category(
+        db: Session,
+        competitor_link_id: int,
+        category_name: str
+    ) -> Optional[CompetitorSemanticCore]:
+        """Получить запись семантического ядра по ID конкурента и названию категории"""
+        return db.query(CompetitorSemanticCore).filter(
+            and_(
+                CompetitorSemanticCore.competitor_link_id == competitor_link_id,
+                CompetitorSemanticCore.category_name == category_name
+            )
+        ).first()
+
+    @staticmethod
     def update_status(
         db: Session,
         semantic_core_id: int,
@@ -355,6 +369,24 @@ class CompetitorSemanticCoreCRUD:
         semantic_core.core_data = core_data
         semantic_core.status = "completed"
         semantic_core.completed_at = datetime.now(timezone.utc)
+        db.commit()
+        db.refresh(semantic_core)
+        return semantic_core
+
+    @staticmethod
+    def reset_semantic_core(
+        db: Session,
+        semantic_core_id: int
+    ) -> Optional[CompetitorSemanticCore]:
+        """Сбросить статус семантического ядра для повторной генерации"""
+        semantic_core = db.query(CompetitorSemanticCore).filter(CompetitorSemanticCore.id == semantic_core_id).first()
+        if not semantic_core:
+            return None
+        
+        semantic_core.status = "pending"
+        semantic_core.core_data = None
+        semantic_core.error_message = None
+        semantic_core.completed_at = None
         db.commit()
         db.refresh(semantic_core)
         return semantic_core

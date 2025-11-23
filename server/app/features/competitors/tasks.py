@@ -34,6 +34,9 @@ def send_semantic_core_completion_notification(semantic_core_id: int, status: st
 
         competitor_link = CompetitorLinkCRUD.get_by_id(db, semantic_core_entry.competitor_link_id)
         if not competitor_link:
+            logger.error(f"send_semantic_core_completion_notification: CompetitorLink with id {semantic_core_entry.competitor_link_id} not found.")
+            return
+
         cabinet_user = db.query(CabinetUser).filter(CabinetUser.cabinet_id == competitor_link.cabinet_id).first()
         if not cabinet_user:
             logger.error(f"send_semantic_core_completion_notification: CabinetUser not found for cabinet_id {competitor_link.cabinet_id}")
@@ -58,7 +61,7 @@ def send_semantic_core_completion_notification(semantic_core_id: int, status: st
                 "competitor_name": competitor_name,
                 "category_name": category_name,
                 "error_message": error_message,
-                "core": semantic_core_entry.core if status == "success" else None
+                "core": semantic_core_entry.core_data if status == "success" else None
             }
         }
         

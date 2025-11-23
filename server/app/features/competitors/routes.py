@@ -506,51 +506,71 @@ async def generate_semantic_core(
     competitor_id: int,
     request: SemanticCoreGenerateRequest,
     telegram_id: int = Query(..., description="Telegram ID пользователя"),
+    force: bool = Query(False, description="Принудительно перезаписать существующее ядро"),
     db: Session = Depends(get_db)
 ):
     """
     Запустить генерацию семантического ядра для конкурента по выбранной категории.
+    Если ядро уже существует, возвращает его.
+    Для перезаписи используйте параметр ?force=true.
     """
     try:
-        # Проверяем доступ к конкуренту (принадлежит кабинету пользователя)
+        # Проверяем доступ к конкуренту
         bot_service = BotAPIService(db, None, None)
         cabinet = await bot_service.get_user_cabinet(telegram_id)
         if not cabinet:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Кабинет WB не найден"
-            )
-        
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Кабинет WB не найден")
+
         competitor = CompetitorLinkCRUD.get_by_id(db, competitor_id)
-        if not competitor:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Конкурент не найден"
-            )
-        
-        if competitor.cabinet_id != cabinet.id:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Доступ запрещен"
-            )
-        
-        # Создаем запись в БД для семантического ядра
-        semantic_core_entry = CompetitorSemanticCoreCRUD.create(
+        if not competitor or competitor.cabinet_id != cabinet.id:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Доступ запрещен")
+
+        # Проверяем, существует ли уже семантическое ядро
+        existing_core = CompetitorSemanticCoreCRUD.get_by_competitor_and_category(
             db,
             competitor_link_id=competitor_id,
-            category_name=request.category_name,
-            status="pending"
+            category_name=request.category_name
         )
+
+        if existing_core and not force:
+            # Если ядро существует и не требуется перезапись, возвращаем его
+            return {
+                "status": "already_exists",
+                "message": "Семантическое ядро для этой категории уже было сгенерировано.",
+                "semantic_core": {
+                    "id": existing_core.id,
+                    "core_data": existing_core.core_data,
+                    "created_at": existing_core.created_at,
+                    "competitor_name": competitor.competitor_name,
+                    "category_name": existing_core.category_name
+                }
+            }
+        
+        semantic_core_id_to_process: int
+        if existing_core and force:
+            # Если ядро существует и force=true, сбрасываем его для перезаписи
+            logger.info(f"Сброс существующего семантического ядра (id={existing_core.id}) для перезаписи.")
+            CompetitorSemanticCoreCRUD.reset_semantic_core(db, existing_core.id)
+            semantic_core_id_to_process = existing_core.id
+        else:
+            # Создаем новую запись в БД для семантического ядра
+            new_core = CompetitorSemanticCoreCRUD.create(
+                db,
+                competitor_link_id=competitor_id,
+                category_name=request.category_name,
+                status="pending"
+            )
+            semantic_core_id_to_process = new_core.id
         
         # Запускаем Celery задачу
-        generate_semantic_core_task.apply_async(args=[semantic_core_entry.id], queue='scraping_queue')
+        generate_semantic_core_task.apply_async(args=[semantic_core_id_to_process], queue='scraping_queue')
         
-        logger.info(f"Запущена генерация семантического ядра для конкурента {competitor_id}, категория '{request.category_name}'. ID задачи: {semantic_core_entry.id}")
+        logger.info(f"Запущена генерация семантического ядра для конкурента {competitor_id}, категория '{request.category_name}'. ID задачи: {semantic_core_id_to_process}")
         
         return {
             "status": "accepted",
             "message": "Генерация семантического ядра запущена. Результат будет отправлен по завершении.",
-            "semantic_core_id": semantic_core_entry.id
+            "semantic_core_id": semantic_core_id_to_process
         }
 
     except HTTPException:

@@ -217,11 +217,16 @@ async def receive_auto_webhook(
                 telegram_text += f"\n\n{core}"
 
             try:
-                await bot.send_message(
-                    chat_id=telegram_id,
-                    text=telegram_text,
-                    parse_mode="Markdown"
-                )
+                # Разбиваем сообщение на части, если оно слишком длинное
+                from utils.formatters import split_telegram_message
+                message_parts = split_telegram_message(telegram_text)
+                
+                for part in message_parts:
+                    await bot.send_message(
+                        chat_id=telegram_id,
+                        text=part,
+                        parse_mode="Markdown"
+                    )
                 logger.info(f"💎 Semantic core ready notification sent to telegram_id {telegram_id}")
             except Exception as e:
                 logger.error(f"Error sending semantic core ready notification to telegram_id {telegram_id}: {e}")
