@@ -160,9 +160,24 @@ class CompetitorLinkCRUD:
             )
         ).limit(limit).all()
 
+    @staticmethod
+    def delete(db: Session, competitor_id: int) -> bool:
+        """Удалить конкурента по ID"""
+        competitor = db.query(CompetitorLink).filter(CompetitorLink.id == competitor_id).first()
+        if competitor:
+            db.delete(competitor)
+            db.commit()
+            return True
+        return False
+
 
 class CompetitorProductCRUD:
     """CRUD операции для competitor_products"""
+
+    @staticmethod
+    def get_by_id(db: Session, product_id: int) -> Optional[CompetitorProduct]:
+        """Получить товар по его уникальному ID"""
+        return db.query(CompetitorProduct).filter(CompetitorProduct.id == product_id).first()
     
     @staticmethod
     def create_or_update(
@@ -241,4 +256,15 @@ class CompetitorProductCRUD:
         ).delete()
         db.commit()
         return deleted
+
+    @staticmethod
+    def get_distinct_categories_by_competitor(db: Session, competitor_link_id: int) -> List[str]:
+        """Получить список уникальных категорий для товаров конкурента"""
+        categories = db.query(CompetitorProduct.category)\
+            .filter(CompetitorProduct.competitor_link_id == competitor_link_id)\
+            .filter(CompetitorProduct.category.isnot(None))\
+            .distinct()\
+            .order_by(CompetitorProduct.category)\
+            .all()
+        return [c[0] for c in categories if c[0]] # Фильтруем пустые строки
 

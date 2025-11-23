@@ -34,7 +34,16 @@ def create_competitors_keyboard(competitors: list, offset: int = 0, has_more: bo
     for competitor in competitors:
         name = competitor.get('competitor_name') or 'Без названия'
         products_count = competitor.get('products_count', 0)
-        text = f"{name} ({products_count} товаров)"
+        status = competitor.get('status')
+        
+        status_icon = {
+            "completed": "✅",
+            "scraping": "🔄",
+            "pending": "⏳",
+            "error": "❌"
+        }.get(status, "❓")
+        
+        text = f"{status_icon} {name}"
         callback_data = f"competitor_{competitor.get('id')}"
         buttons.append([InlineKeyboardButton(text=text, callback_data=callback_data)])
     
@@ -84,7 +93,8 @@ def create_competitor_products_keyboard(
             text = f"{name[:40]} - {price:.0f}₽"
         else:
             text = name[:50]
-        callback_data = f"competitor_product_{product.get('id')}"
+        # Включаем ID конкурента в callback для возврата
+        callback_data = f"competitor_product_{competitor_id}_{product.get('id')}"
         buttons.append([InlineKeyboardButton(text=text, callback_data=callback_data)])
     
     # Навигационные кнопки
@@ -103,6 +113,12 @@ def create_competitor_products_keyboard(
     
     if nav_buttons:
         buttons.append(nav_buttons)
+
+    # Кнопка "Удалить конкурента"
+    buttons.append([InlineKeyboardButton(
+        text="🗑️ Удалить конкурента",
+        callback_data=f"delete_competitor_confirm_{competitor_id}"
+    )])
     
     # Кнопка "Назад"
     buttons.append([InlineKeyboardButton(
@@ -357,6 +373,58 @@ async def handle_competitor_url(message: Message):
     )
 
 
+@router.callback_query(F.data.startswith("competitor_product_"))
+@handle_telegram_errors
+async def show_competitor_product_detail(callback: CallbackQuery):
+    """Показать детальную информацию о товаре конкурента"""
+    try:
+        parts = callback.data.split("_")
+        competitor_id = int(parts[2])
+        product_id = int(parts[3])
+    except (ValueError, IndexError):
+        await callback.answer("❌ Ошибка: неверный ID товара", show_alert=True)
+        return
+
+    user_id = callback.from_user.id
+
+    # Получаем детали товара
+    response = await bot_api_client.get_competitor_product_detail(
+        product_id=product_id,
+        user_id=user_id
+    )
+
+    if response.success and response.data and response.data.get("product"):
+        text = response.data.get("telegram_text") or "📦 Детали товара"
+        
+        # Клавиатура с кнопкой "Назад" к списку товаров конкурента
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔙 Назад к товарам", callback_data=f"competitor_{competitor_id}")]
+        ])
+        
+        await safe_edit_message(
+            callback=callback,
+            text=text,
+            reply_markup=keyboard,
+            user_id=user_id,
+            parse_mode="Markdown",
+            disable_web_page_preview=False # Включаем превью для ссылки на товар
+        )
+    else:
+        error_message = format_error_message(response.error, response.status_code)
+        # Клавиатура для возврата к списку товаров
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔙 Назад к товарам", callback_data=f"competitor_{competitor_id}")]
+        ])
+        await safe_edit_message(
+            callback=callback,
+            text=f"❌ Ошибка загрузки товара:\n\n{error_message}",
+            reply_markup=keyboard,
+            user_id=user_id
+        )
+
+    await callback.answer()
+
+
 @router.callback_query(F.data.startswith("competitor_"))
 @handle_telegram_errors
 async def show_competitor_products(callback: CallbackQuery):
@@ -445,12 +513,71 @@ async def show_competitor_products_page(callback: CallbackQuery):
             text=text,
             reply_markup=keyboard
         )
-    else:
-        error_message = format_error_message(response.error, response.status_code)
-        await callback.message.edit_text(
-            f"❌ Ошибка загрузки товаров:\n\n{error_message}",
-            reply_markup=competitors_keyboard()
-        )
-    
     await callback.answer()
 
+
+@router.callback_query(F.data.startswith("delete_competitor_confirm_"))
+@handle_telegram_errors
+async def delete_competitor_confirm(callback: CallbackQuery):
+    """Показать подтверждение удаления конкурента"""
+    try:
+        competitor_id = int(callback.data.split("_")[-1])
+    except (ValueError, IndexError):
+        await callback.answer("❌ Ошибка: неверный ID конкурента", show_alert=True)
+        return
+
+    text = "❓ Вы уверены, что хотите удалить этого конкурента и все его товары?"
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="✅ Да, удалить", callback_data=f"delete_competitor_do_{competitor_id}"),
+            InlineKeyboardButton(text="🚫 Отмена", callback_data=f"competitor_{competitor_id}")
+        ]
+    ])
+    
+    await safe_edit_message(
+        callback=callback,
+        text=text,
+        reply_markup=keyboard,
+        user_id=callback.from_user.id
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("delete_competitor_do_"))
+@handle_telegram_errors
+async def delete_competitor_do(callback: CallbackQuery):
+    """Выполнить удаление конкурента"""
+    try:
+        competitor_id = int(callback.data.split("_")[-1])
+    except (ValueError, IndexError):
+        await callback.answer("❌ Ошибка: неверный ID конкурента", show_alert=True)
+        return
+
+    user_id = callback.from_user.id
+    
+    # Показываем уведомление об удалении
+    await callback.answer("🗑️ Удаление конкурента...", show_alert=False)
+
+    # Вызываем API для удаления
+    response = await bot_api_client.delete_competitor(
+        competitor_id=competitor_id,
+        user_id=user_id
+    )
+
+    if response.success:
+        # Показываем обновленный список конкурентов
+        await callback.message.answer("✅ Конкурент успешно удален.")
+        # Вызываем хендлер для отображения основного меню конкурентов
+        await show_competitors_menu(callback)
+    else:
+        error_message = format_error_message(response.error, response.status_code)
+        await safe_edit_message(
+            callback=callback,
+            text=f"❌ Ошибка удаления:\n\n{error_message}",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🔙 Назад", callback_data=f"competitor_{competitor_id}")]
+            ]),
+            user_id=user_id
+        )
+        await callback.answer()

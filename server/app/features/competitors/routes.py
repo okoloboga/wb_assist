@@ -20,7 +20,8 @@ from .schemas import (
     AddCompetitorRequest,
     AddCompetitorResponse,
     CompetitorLinkResponse,
-    CompetitorProductResponse
+    CompetitorProductResponse,
+    CompetitorProductDetailResponse
 )
 
 logger = logging.getLogger(__name__)
@@ -135,39 +136,53 @@ async def get_competitors(
                 detail="Кабинет WB не найден"
             )
         
-        # Получаем список конкурентов (только завершенные)
+        # Получаем список конкурентов (все статусы)
         competitors = CompetitorLinkCRUD.get_by_cabinet(
             db,
             cabinet.id,
-            status='completed',
+            status=None,  # Убираем фильтр по статусу
             offset=offset,
             limit=limit
         )
         
         # Подсчитываем общее количество
-        total_count = CompetitorLinkCRUD.count_by_cabinet(db, cabinet.id, status='completed')
+        total_count = CompetitorLinkCRUD.count_by_cabinet(db, cabinet.id, status=None)
         has_more = (offset + limit) < total_count
         
         # Формируем ответ
-        competitors_data = [
-            CompetitorLinkResponse(
-                id=c.id,
-                competitor_url=c.competitor_url,
-                competitor_name=c.competitor_name,
-                status=c.status,
-                products_count=c.products_count,
-                last_scraped_at=c.last_scraped_at,
-                created_at=c.created_at
+        competitors_data = []
+        for c in competitors:
+            categories = CompetitorProductCRUD.get_distinct_categories_by_competitor(db, c.id)
+            competitors_data.append(
+                CompetitorLinkResponse(
+                    id=c.id,
+                    competitor_url=c.competitor_url,
+                    competitor_name=c.competitor_name,
+                    status=c.status,
+                    products_count=c.products_count,
+                    categories=categories, # Добавляем категории
+                    last_scraped_at=c.last_scraped_at,
+                    created_at=c.created_at
+                )
             )
-            for c in competitors
-        ]
         
         telegram_text = None
         if competitors_data:
             telegram_text = f"📊 Конкуренты ({total_count}):\n\n"
             for i, comp in enumerate(competitors_data, 1):
+                status_icon = {
+                    "completed": "✅",
+                    "scraping": "🔄",
+                    "pending": "⏳",
+                    "error": "❌"
+                }.get(comp.status, "❓")
+                
                 telegram_text += f"{i}. {comp.competitor_name or 'Без названия'}\n"
-                telegram_text += f"   Товаров: {comp.products_count}\n\n"
+                if comp.categories:
+                    telegram_text += f"   Категории: {', '.join(comp.categories)}\n"
+                else:
+                    telegram_text += f"   Товаров: {comp.products_count}\n" # Если нет категорий, показываем количество товаров
+                telegram_text += "\n"
         else:
             telegram_text = "📊 Конкуренты не найдены.\n\nОтправьте ссылку на бренд или селлера для добавления."
         
@@ -293,6 +308,139 @@ async def get_competitor_products(
         raise
     except Exception as e:
         logger.error(f"Ошибка получения товаров конкурента {competitor_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Ошибка сервера"
+        )
+
+
+@router.get("/products/{product_id}", response_model=CompetitorProductDetailResponse)
+async def get_competitor_product_detail(
+    product_id: int,
+    telegram_id: int = Query(..., description="Telegram ID пользователя"),
+    db: Session = Depends(get_db)
+):
+    """
+    Получить детальную информацию о товаре конкурента.
+    """
+    try:
+        # Проверяем, что у пользователя есть активный кабинет
+        bot_service = BotAPIService(db, None, None)
+        cabinet = await bot_service.get_user_cabinet(telegram_id)
+        if not cabinet:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Кабинет WB не найден"
+            )
+
+        # Получаем товар по ID
+        product = CompetitorProductCRUD.get_by_id(db, product_id)
+        if not product:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Товар конкурента не найден"
+            )
+
+        # Проверяем, что товар принадлежит кабинету пользователя
+        if product.competitor_link.cabinet_id != cabinet.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Доступ запрещен"
+            )
+
+        # Формируем ответ
+        product_data = CompetitorProductResponse.from_orm(product)
+        
+        # Формируем текст для Telegram
+        telegram_text = f"📦 **{product_data.name or 'Без названия'}**\n\n"
+        
+        price_text = f"{product_data.current_price:.0f}₽" if product_data.current_price else "Цена не указана"
+        if product_data.original_price and product_data.current_price:
+            discount = int((1 - product_data.current_price / product_data.original_price) * 100)
+            price_text += f" (было {product_data.original_price:.0f}₽, 📉 -{discount}%)"
+        telegram_text += f"💰 **Цена:** {price_text}\n"
+        
+        if product_data.rating:
+            telegram_text += f"⭐ **Рейтинг:** {product_data.rating}\n"
+        
+        if product_data.brand:
+            telegram_text += f"🏢 **Бренд:** {product_data.brand}\n"
+            
+        if product_data.category:
+            telegram_text += f"🗂️ **Категория:** {product_data.category}\n"
+            
+        telegram_text += f"\n🔗 [Ссылка на товар]({product_data.product_url})\n"
+        
+        if product_data.description:
+            telegram_text += f"\n**Описание:**\n{product_data.description[:1000]}" # Ограничиваем длину
+
+        return CompetitorProductDetailResponse(
+            status="success",
+            product=product_data,
+            telegram_text=telegram_text
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Ошибка сервера"
+        )
+
+
+@router.delete("/{competitor_id}", status_code=status.HTTP_200_OK)
+async def delete_competitor(
+    competitor_id: int,
+    telegram_id: int = Query(..., description="Telegram ID пользователя"),
+    db: Session = Depends(get_db)
+):
+    """
+    Удалить конкурента.
+    """
+    try:
+        # Проверяем доступ к конкуренту
+        bot_service = BotAPIService(db, None, None)
+        cabinet = await bot_service.get_user_cabinet(telegram_id)
+        if not cabinet:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Кабинет WB не найден"
+            )
+
+        competitor = CompetitorLinkCRUD.get_by_id(db, competitor_id)
+        if not competitor:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Конкурент не найден"
+            )
+
+        if competitor.cabinet_id != cabinet.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Доступ запрещен"
+            )
+
+        # Удаляем конкурента
+        deleted = CompetitorLinkCRUD.delete(db, competitor_id)
+        if not deleted:
+            # Этого не должно произойти, если проверки выше прошли
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Конкурент не найден для удаления"
+            )
+
+        logger.info(f"Удален конкурент {competitor_id} из кабинета {cabinet.id}")
+        
+        return {
+            "status": "success",
+            "message": f"Конкурент '{competitor.competitor_name or competitor.competitor_url}' успешно удален."
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Ошибка удаления конкурента {competitor_id}: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Ошибка сервера"

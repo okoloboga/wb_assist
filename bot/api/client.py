@@ -843,6 +843,32 @@ class BotAPIClient:
         
         return await self._make_request("GET", endpoint, params=params)
 
+    async def get_competitor_product_detail(
+        self,
+        product_id: int,
+        user_id: int
+    ) -> BotAPIResponse:
+        """Получить детальную информацию о товаре конкурента"""
+        logger.info(f"📦 Получение деталей товара {product_id} для пользователя {user_id}")
+        
+        endpoint = f"/competitors/products/{product_id}"
+        params = {"telegram_id": user_id}
+        
+        return await self._make_request("GET", endpoint, params=params)
+
+    async def delete_competitor(
+        self,
+        competitor_id: int,
+        user_id: int
+    ) -> BotAPIResponse:
+        """Удалить конкурента"""
+        logger.info(f"🗑️ Удаление конкурента {competitor_id} для пользователя {user_id}")
+        
+        endpoint = f"/competitors/{competitor_id}"
+        params = {"telegram_id": user_id}
+        
+        return await self._make_request("DELETE", endpoint, params=params)
+
 
 bot_api_client = BotAPIClient()
 

@@ -14,6 +14,7 @@ class CompetitorLinkResponse(BaseModel):
     competitor_name: Optional[str] = None
     status: str
     products_count: int
+    categories: List[str] = [] # Добавляем список категорий
     last_scraped_at: Optional[datetime] = None
     created_at: datetime
 
@@ -65,4 +66,11 @@ class AddCompetitorResponse(BaseModel):
     status: str
     message: str
     competitor_id: Optional[int] = None
+
+
+class CompetitorProductDetailResponse(BaseModel):
+    """Схема ответа для детальной информации о товаре конкурента"""
+    status: str
+    product: CompetitorProductResponse
+    telegram_text: Optional[str] = None
 
