@@ -828,11 +828,37 @@ class BotAPIService:
             next_day_after_end_utc = TimezoneUtils.to_utc(end_msk + timedelta(days=1))
             
             # Предвыборки из БД
+            # Для заказов: берем по order_date (дата создания заказа)
+            # Для отмен: дополнительно берем по updated_at (дата отмены), fallback на order_date если updated_at отсутствует
             orders_rows = self.db.query(WBOrder).filter(
                 and_(
                     WBOrder.cabinet_id == cabinet.id,
-                    WBOrder.order_date >= start_utc,
-                    WBOrder.order_date < next_day_after_end_utc
+                    or_(
+                        # Активные заказы по дате создания
+                        and_(
+                            WBOrder.order_date >= start_utc,
+                            WBOrder.order_date < next_day_after_end_utc,
+                            WBOrder.status != 'canceled'
+                        ),
+                        # Отмененные заказы по дате отмены (updated_at) или order_date если updated_at отсутствует
+                        and_(
+                            WBOrder.status == 'canceled',
+                            or_(
+                                # Приоритет: updated_at (дата отмены)
+                                and_(
+                                    WBOrder.updated_at.isnot(None),
+                                    WBOrder.updated_at >= start_utc,
+                                    WBOrder.updated_at < next_day_after_end_utc
+                                ),
+                                # Fallback: order_date если updated_at отсутствует
+                                and_(
+                                    WBOrder.updated_at.is_(None),
+                                    WBOrder.order_date >= start_utc,
+                                    WBOrder.order_date < next_day_after_end_utc
+                                )
+                            )
+                        )
+                    )
                 )
             ).all()
             sales_rows = self.db.query(WBSales).filter(
@@ -870,8 +896,22 @@ class BotAPIService:
             
             # Заполняем заказы/отмены
             for o in orders_rows:
-                day_key = TimezoneUtils.from_utc(o.order_date).date().isoformat() if o.order_date else None
-                if day_key in day_map:
+                # Для отмен используем updated_at (дата отмены), для активных заказов - order_date (дата создания)
+                if o.status == 'canceled':
+                    # Отмена: приоритетно используем дату отмены (updated_at), fallback на order_date
+                    if o.updated_at:
+                        day_key = TimezoneUtils.from_utc(o.updated_at).date().isoformat()
+                    elif o.order_date:
+                        day_key = TimezoneUtils.from_utc(o.order_date).date().isoformat()
+                    else:
+                        day_key = None
+                elif o.order_date:
+                    # Активный заказ: используем дату создания (order_date)
+                    day_key = TimezoneUtils.from_utc(o.order_date).date().isoformat()
+                else:
+                    day_key = None
+                
+                if day_key and day_key in day_map:
                     # Вычисляем сумму заказа с фолбэками
                     order_amount = (o.total_price if hasattr(o, "total_price") else None)
                     # Фолбэк на customer_price если total_price отсутствует или <=0
@@ -974,8 +1014,21 @@ class BotAPIService:
             product_stats = {}
             nm_ids = set()
             for o in orders_rows:
+                # Для отмен используем updated_at (дата отмены), для активных заказов - order_date (дата создания)
+                if o.status == 'canceled':
+                    # Отмена: приоритетно используем дату отмены (updated_at), fallback на order_date
+                    if o.updated_at:
+                        day_key = TimezoneUtils.from_utc(o.updated_at).date().isoformat()
+                    elif o.order_date:
+                        day_key = TimezoneUtils.from_utc(o.order_date).date().isoformat()
+                    else:
+                        day_key = None
+                elif o.order_date:
+                    day_key = TimezoneUtils.from_utc(o.order_date).date().isoformat()
+                else:
+                    day_key = None
+                
                 # Фильтруем только заказы из selected_keys (days_window дней)
-                day_key = TimezoneUtils.from_utc(o.order_date).date().isoformat() if o.order_date else None
                 if day_key not in selected_keys_set:
                     continue
                 nm_ids.add(o.nm_id)

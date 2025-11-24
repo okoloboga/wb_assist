@@ -51,6 +51,7 @@ celery_app = Celery(
         "app.features.stock_alerts.tasks",
         "app.features.export.tasks",
         "app.features.digest.tasks",
+        "app.features.competitors.tasks",
     ]
 )
 
@@ -86,6 +87,10 @@ celery_app.conf.update(
         # Отправка сводок в каналы
         "app.features.digest.tasks.check_digest_schedule": {"queue": "digest_queue"},
         "app.features.digest.tasks.send_digest_to_channel": {"queue": "digest_queue"},
+        
+        # Скрапинг конкурентов - отдельная очередь
+        "app.features.competitors.tasks.scrape_competitor_task": {"queue": "scraping_queue"},
+        "app.features.competitors.tasks.update_all_competitors_task": {"queue": "scraping_queue"},
     },
     
     # Настройки для периодических задач
@@ -109,6 +114,10 @@ celery_app.conf.update(
         "check-digest-schedule": {
             "task": "app.features.digest.tasks.check_digest_schedule",
             "schedule": crontab(minute='*'),  # Каждую минуту проверяем расписание
+        },
+        "update-all-competitors": {
+            "task": "app.features.competitors.tasks.update_all_competitors_task",
+            "schedule": crontab(hour=0, minute=0),  # Каждый день в полночь
         },
     },
     

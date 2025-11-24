@@ -34,6 +34,7 @@ class WBCabinet(Base):
     sales = relationship("WBSales", back_populates="cabinet")
     analytics_cache = relationship("WBAnalyticsCache", back_populates="cabinet")
     cabinet_users = relationship("CabinetUser", back_populates="cabinet")
+    competitor_links = relationship("CompetitorLink", backref="cabinet", cascade="all, delete-orphan")
 
     def __repr__(self):
         return f"<WBCabinet {self.id} - {self.name}>"
