@@ -182,8 +182,10 @@ services:
       # Analytics - период по умолчанию для daily trends
       - ANALYTICS_DAYS_WINDOW=${ANALYTICS_DAYS_WINDOW}
       # Photo Processing - API генерации изображений
+      - COMET_API_KEY=${COMET_API_KEY}
       - IMAGE_GEN_API_KEY=${IMAGE_GEN_API_KEY:-}
       - IMAGE_GEN_BASE_URL=${IMAGE_GEN_BASE_URL:-}
+      - IMAGE_GEN_MODEL=${IMAGE_GEN_MODEL}
       - IMAGE_GEN_TIMEOUT=${IMAGE_GEN_TIMEOUT:-60}
       - IMAGE_GEN_MAX_RETRIES=${IMAGE_GEN_MAX_RETRIES:-3}
       # Photo Processing - Хранение результатов

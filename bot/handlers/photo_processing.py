@@ -244,7 +244,7 @@ async def process_photo_with_api(message: Message, state: FSMContext):
     }
     
     try:
-        timeout = aiohttp.ClientTimeout(total=120)  # 2 минуты для обработки
+        timeout = aiohttp.ClientTimeout(total=300)  # 5 минут для обработки
         async with aiohttp.ClientSession(timeout=timeout) as session:
             async with session.post(endpoint, json=payload, headers=headers) as resp:
                 success = False
