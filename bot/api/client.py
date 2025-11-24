@@ -301,17 +301,19 @@ class BotAPIClient:
                     except aiohttp.ContentTypeError:
                         response_data = {"error": "Invalid response format"}
                         logger.error(f"   ❌ Ошибка парсинга JSON: Invalid response format")
+
+                    is_dict = isinstance(response_data, dict)
                     
                     result = BotAPIResponse(
                         success=resp.status < 400,
                         data=response_data,
-                        telegram_text=response_data.get("telegram_text"),
-                        error=response_data.get("error"),
+                        telegram_text=response_data.get("telegram_text") if is_dict else None,
+                        error=response_data.get("error") if is_dict else None,
                         status_code=resp.status,
                         # Единообразная структура - поля в корне ответа
-                        competitors=response_data.get("competitors"),
-                        products=response_data.get("products"),
-                        pagination=response_data.get("pagination")
+                        competitors=response_data.get("competitors") if is_dict else None,
+                        products=response_data.get("products") if is_dict else None,
+                        pagination=response_data.get("pagination") if is_dict else None
                     )
                     
                     logger.info(f"✅ Результат запроса: success={result.success}, status_code={result.status_code}")
@@ -897,6 +899,34 @@ class BotAPIClient:
         json_data = {"category_name": category_name}
         
         return await self._make_request("POST", endpoint, params=params, json_data=json_data)
+
+
+    # ===== МЕТОДЫ ДЛЯ РАБОТЫ С СЕМАНТИЧЕСКИМ ЯДРОМ =====
+
+    async def get_semantic_cores(
+        self,
+        user_id: int
+    ) -> BotAPIResponse:
+        """Получить список доступных семантических ядер"""
+        logger.info(f"📚 Получение списка семантических ядер для пользователя {user_id}")
+        
+        endpoint = "/semantic-cores/"
+        params = {"telegram_id": user_id}
+        
+        return await self._make_request("GET", endpoint, params=params)
+
+    async def get_semantic_core_detail(
+        self,
+        core_id: int,
+        user_id: int
+    ) -> BotAPIResponse:
+        """Получить детальную информацию о семантическом ядре"""
+        logger.info(f"📄 Получение деталей семантического ядра {core_id} для пользователя {user_id}")
+        
+        endpoint = f"/semantic-cores/{core_id}/"
+        params = {"telegram_id": user_id}
+        
+        return await self._make_request("GET", endpoint, params=params)
 
 
 bot_api_client = BotAPIClient()

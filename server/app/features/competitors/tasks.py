@@ -299,7 +299,7 @@ def generate_semantic_core_task(self, semantic_core_id: int) -> Dict[str, Any]:
             return {"status": "error", "message": error_msg}
 
         # Контроль токенов: обрезаем текст, если он слишком длинный
-        max_text_length = int(os.getenv("SEMANTIC_CORE_MAX_TEXT_LENGTH", "15000"))
+        max_text_length = int(os.getenv("SEMANTIC_CORE_MAX_TEXT_LENGTH"))
         if len(descriptions_text) > max_text_length:
             logger.warning(f"Текст описаний для семантического ядра ID {semantic_core_id} превышает лимит ({len(descriptions_text)} > {max_text_length}). Обрезаем.")
             descriptions_text = descriptions_text[:max_text_length]

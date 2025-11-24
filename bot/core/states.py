@@ -54,6 +54,7 @@ class CardGenerationStates(StatesGroup):
     waiting_for_characteristics = State()
     waiting_for_audience = State()
     waiting_for_selling_points = State()
+    waiting_for_semantic_core = State()
 
 
 class PhotoProcessingStates(StatesGroup):

@@ -17,7 +17,8 @@ logger = logging.getLogger(__name__)
 def generate_card(
     characteristics: Dict[str, str],
     target_audience: str,
-    selling_points: str
+    selling_points: str,
+    semantic_core_text: str = None
 ) -> Dict[str, Any]:
     """
     Генерация карточки товара через GPT.
@@ -26,6 +27,7 @@ def generate_card(
         characteristics: Характеристики товара (name, brand, category)
         target_audience: Целевая аудитория
         selling_points: Уникальные преимущества
+        semantic_core_text: Опциональный текст семантического ядра
         
     Returns:
         Dict с сгенерированной карточкой
@@ -37,7 +39,8 @@ def generate_card(
         prompt = create_card_prompt(
             characteristics=characteristics,
             target_audience=target_audience,
-            selling_points=selling_points
+            selling_points=selling_points,
+            semantic_core_text=semantic_core_text
         )
         
         # Создаем системное сообщение для GPT

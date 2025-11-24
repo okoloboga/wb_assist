@@ -20,6 +20,7 @@ from app.features.stats.routes import stats_router
 from app.features.wb_api.routes import router as wb_router
 from app.features.bot_api.routes import router as bot_router
 from app.features.bot_api.routes_sales import router as bot_sales_router
+from app.features.bot_api.routes_semantic_core import router as bot_semantic_core_router
 from app.features.notifications.api.settings import router as notification_settings_router
 from app.features.notifications.api.test import router as notification_test_router
 from app.features.wb_api.api.cabinet_validation import router as cabinet_validation_router
@@ -35,7 +36,7 @@ from app.features.notifications.models import NotificationSettings, Notification
 from app.features.stock_alerts.models import DailySalesAnalytics, StockAlertHistory
 from app.features.export.models import ExportToken, ExportLog
 from app.features.digest.models import ChannelReport, DigestHistory
-from app.features.competitors.models import CompetitorLink, CompetitorProduct
+from app.features.competitors.models import CompetitorLink, CompetitorProduct, CompetitorSemanticCore
 
 # Создаем FastAPI приложение с настройками из config
 app = FastAPI(**settings.get_app_config())
@@ -56,6 +57,7 @@ app.include_router(stats_router)
 app.include_router(wb_router)
 app.include_router(bot_router, prefix="/api/v1/bot", tags=["Bot API"])
 app.include_router(bot_sales_router, prefix="/api/v1/bot", tags=["Bot Sales"])
+app.include_router(bot_semantic_core_router, prefix="/api/v1/bot", tags=["Bot API"])
 app.include_router(notification_settings_router, prefix="/api/v1/notifications", tags=["Notification Settings"])
 app.include_router(notification_test_router, prefix="/api/v1/notifications", tags=["Notification Test"])
 app.include_router(cabinet_validation_router, prefix="/api/v1/wb/cabinets/validation", tags=["Cabinet Validation"])

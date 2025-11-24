@@ -13,8 +13,10 @@ from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters import StateFilter, CommandStart
 from aiogram.fsm.context import FSMContext
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 import aiohttp
 
+from api.client import bot_api_client
 from core.config import config
 from core.states import CardGenerationStates
 from keyboards.keyboards import ai_assistant_keyboard
@@ -43,33 +45,6 @@ def create_card_generation_keyboard() -> InlineKeyboardMarkup:
     ])
 
 
-def parse_characteristics(text: str) -> Dict[str, Optional[str]]:
-    """
-    Парсит характеристики из текста.
-    
-    Форматы:
-    - "Название: X, Бренд: Y, Категория: Z"
-    - "Название: X\nБренд: Y\nКатегория: Z"
-    - Или последовательно по одному полю
-    """
-    result = {"name": None, "brand": None, "category": None}
-    
-    # Паттерн для "Название: ..."
-    name_match = re.search(r'Название[:\s]+(.+?)(?:[,;]|Бренд|Категория|$)', text, re.IGNORECASE)
-    if name_match:
-        result["name"] = name_match.group(1).strip()
-    
-    brand_match = re.search(r'Бренд[:\s]+(.+?)(?:[,;]|Категория|$)', text, re.IGNORECASE)
-    if brand_match:
-        result["brand"] = brand_match.group(1).strip()
-    
-    category_match = re.search(r'Категория[:\s]+(.+?)', text, re.IGNORECASE)
-    if category_match:
-        result["category"] = category_match.group(1).strip()
-    
-    return result
-
-
 # ============================================================================
 # Callback start_card_generation - начать генерацию карточки
 # ============================================================================
@@ -87,7 +62,8 @@ async def callback_start_card_generation(callback: CallbackQuery, state: FSMCont
         photo_file_id=None,
         characteristics={},
         target_audience=None,
-        selling_points=None
+        selling_points=None,
+        semantic_core_text=None, # Добавляем поле для ядра
     )
     
     await state.set_state(CardGenerationStates.waiting_for_photo)
@@ -256,6 +232,7 @@ async def process_characteristics_error(message: Message, state: FSMContext):
         CardGenerationStates.waiting_for_characteristics,
         CardGenerationStates.waiting_for_audience,
         CardGenerationStates.waiting_for_selling_points,
+        CardGenerationStates.waiting_for_semantic_core,
     ),
     CommandStart()
 )
@@ -294,7 +271,8 @@ async def process_target_audience(message: Message, state: FSMContext):
         "Пример: \"Премиальное качество материалов, уникальный дизайн, долговечность, "
         "экологичность производства\"",
         user_id=telegram_id,
-        parse_mode="HTML"
+        parse_mode="HTML",
+        reply_markup=create_card_generation_keyboard()
     )
 
 
@@ -319,10 +297,9 @@ async def process_target_audience_error(message: Message, state: FSMContext):
 @router.message(StateFilter(CardGenerationStates.waiting_for_selling_points), F.text)
 @handle_telegram_errors
 async def process_selling_points(message: Message, state: FSMContext):
-    """Обработка selling points и запуск генерации."""
+    """Обработка selling points и переход к выбору семантического ядра."""
     telegram_id = message.from_user.id
     selling_points_text = message.text
-    # Команда во время шага — перезапуск
     if selling_points_text.strip().startswith('/'):
         await restart_flow_on_start(message, state)
         return
@@ -330,9 +307,10 @@ async def process_selling_points(message: Message, state: FSMContext):
     logger.info(f"⭐ Selling points received from user {telegram_id}")
     
     await state.update_data(selling_points=selling_points_text)
+    await state.set_state(CardGenerationStates.waiting_for_semantic_core)
     
-    # Запускаем генерацию карточки
-    await generate_card_with_gpt(message, state)
+    # Запрашиваем семантическое ядро
+    await request_semantic_core(message, state)
 
 
 @router.message(StateFilter(CardGenerationStates.waiting_for_selling_points))
@@ -350,6 +328,85 @@ async def process_selling_points_error(message: Message, state: FSMContext):
 
 
 # ============================================================================
+# Выбор семантического ядра
+# ============================================================================
+
+async def request_semantic_core(message: Message, state: FSMContext):
+    """Запрашивает у пользователя выбор семантического ядра."""
+    telegram_id = message.from_user.id
+    
+    await safe_send_message(
+        message,
+        "⚙️ Загружаю список доступных семантических ядер...",
+        user_id=telegram_id,
+        parse_mode="HTML"
+    )
+    
+    response = await bot_api_client.get_semantic_cores(user_id=telegram_id)
+    
+    if not response.success or not response.data:
+        logger.warning(f"No semantic cores found for user {telegram_id}. Skipping step.")
+        await safe_send_message(
+            message,
+            "⚠️ Не найдено ни одного готового семантического ядра. Пропускаю этот шаг.",
+            user_id=telegram_id,
+            parse_mode="HTML"
+        )
+        await generate_card_with_gpt(message, state)
+        return
+
+    cores = response.data
+    builder = InlineKeyboardBuilder()
+    for core in cores:
+        button_text = f"'{core['competitor_name']}' - {core['category_name']}"
+        builder.button(text=button_text, callback_data=f"select_core_{core['id']}")
+    
+    builder.button(text="➡️ Пропустить", callback_data="select_core_skip")
+    builder.adjust(1)
+
+    await safe_send_message(
+        message,
+        "💎 <b>Шаг 5:</b> Выберите семантическое ядро для обогащения описания или пропустите этот шаг.",
+        user_id=telegram_id,
+        parse_mode="HTML",
+        reply_markup=builder.as_markup()
+    )
+
+
+@router.callback_query(F.data.startswith("select_core_"))
+@handle_telegram_errors
+async def process_semantic_core_selection(callback: CallbackQuery, state: FSMContext):
+    """Обработка выбора семантического ядра."""
+    telegram_id = callback.from_user.id
+    selection = callback.data.split("_")[-1]
+
+    if selection == "skip":
+        logger.info(f"User {telegram_id} skipped semantic core selection.")
+        await state.update_data(semantic_core_text=None)
+        await callback.message.edit_text("✅ Шаг пропущен.")
+    else:
+        core_id = int(selection)
+        logger.info(f"User {telegram_id} selected semantic core {core_id}.")
+        
+        await callback.message.edit_text("⚙️ Загружаю данные ядра...")
+        
+        response = await bot_api_client.get_semantic_core_detail(core_id=core_id, user_id=telegram_id)
+        
+        if response.success and response.data:
+            core_data = response.data.get("core_data")
+            await state.update_data(semantic_core_text=core_data)
+            await callback.message.edit_text("✅ Семантическое ядро добавлено!")
+        else:
+            logger.error(f"Failed to fetch semantic core {core_id} for user {telegram_id}.")
+            await state.update_data(semantic_core_text=None)
+            await callback.message.edit_text("❌ Не удалось загрузить ядро. Шаг будет пропущен.")
+
+    # Запускаем генерацию
+    await generate_card_with_gpt(callback.message, state)
+    await callback.answer()
+
+
+# ============================================================================
 # Генерация карточки через GPT
 # ============================================================================
 
@@ -364,6 +421,7 @@ async def generate_card_with_gpt(message: Message, state: FSMContext):
     characteristics = data.get("characteristics", {})
     target_audience = data.get("target_audience")
     selling_points = data.get("selling_points")
+    semantic_core_text = data.get("semantic_core_text") # Получаем ядро
     
     # Проверка обязательных данных
     if not photo_file_id:
@@ -400,7 +458,8 @@ async def generate_card_with_gpt(message: Message, state: FSMContext):
         "photo_file_id": photo_file_id,
         "characteristics": characteristics,
         "target_audience": target_audience,
-        "selling_points": selling_points
+        "selling_points": selling_points,
+        "semantic_core_text": semantic_core_text, # Добавляем ядро в payload
     }
     headers = {
         "Content-Type": "application/json",
@@ -531,15 +590,15 @@ async def callback_cancel_card_generation(callback: CallbackQuery, state: FSMCon
     await state.clear()
     
     await callback.message.edit_text(
-        "✅ Генерация карточки отменена.\n\nВыберите действие:",
-        reply_markup=ai_assistant_keyboard()
+        "✅ Генерация карточки отменена."
     )
     
     await safe_send_message(
         callback.message,
-        "✅ <b>Процесс отменен</b>\n\nВы можете начать генерацию карточки снова в любое время.",
+        "Вы можете начать генерацию снова в любое время из меню '🤖 AI-помощник'.",
         user_id=telegram_id,
-        parse_mode="HTML"
+        parse_mode="HTML",
+        reply_markup=ai_assistant_keyboard()
     )
     
     await callback.answer()

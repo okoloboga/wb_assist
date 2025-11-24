@@ -319,6 +319,7 @@ async def photo_history(
         raise HTTPException(
             status_code=500,
             detail=f"Internal server error: {str(e)}"
+        )
     
 # ============================================================================
 # Semantic Core Endpoints
