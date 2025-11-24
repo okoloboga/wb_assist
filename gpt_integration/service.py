@@ -48,6 +48,21 @@ app.include_router(ai_chat_router, prefix="/v1/chat")
 
 
 # ============================================================================
+# Startup Event - Initialize Photo Processing Database
+# ============================================================================
+
+@app.on_event("startup")
+async def startup_event():
+    """Initialize photo processing database on startup"""
+    try:
+        from gpt_integration.photo_processing import init_db
+        init_db()
+        logger.info("✅ Photo processing database initialized")
+    except Exception as e:
+        logger.error(f"❌ Failed to initialize photo processing database: {e}")
+
+
+# ============================================================================
 # Pydantic Models
 # ============================================================================
 
@@ -79,9 +94,17 @@ class CardGenerationRequest(BaseModel):
     target_audience: str
     selling_points: str
 
+      
+class PhotoProcessingRequest(BaseModel):
+    telegram_id: int
+    photo_file_id: str
+    prompt: str
+    user_id: Optional[int] = None
 
+      
 class SemanticCoreRequest(BaseModel): # New Pydantic model
     descriptions_text: str
+
 
 
 # ============================================================================
@@ -296,8 +319,7 @@ async def photo_history(
         raise HTTPException(
             status_code=500,
             detail=f"Internal server error: {str(e)}"
-        )
-
+    
 # ============================================================================
 # Semantic Core Endpoints
 # ============================================================================
@@ -340,7 +362,6 @@ async def semantic_core_generate(
             status_code=500,
             detail=f"Internal server error: {str(e)}"
         )
-
 
 # ============================================================================
 # Main Entry Point
