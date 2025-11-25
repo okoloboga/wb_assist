@@ -494,6 +494,15 @@ def create_photo_processing_keyboard() -> InlineKeyboardMarkup:
     ])
 
 
+def create_photo_model_selection_keyboard() -> InlineKeyboardMarkup:
+    """Создать клавиатуру для выбора модели обработки фото."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Nano Banana", callback_data="select_model:gemini-2.5-flash-image")],
+        [InlineKeyboardButton(text="Nano Banana 2", callback_data="select_model:gemini-3-pro-image")],
+        [InlineKeyboardButton(text="🔙 Отмена", callback_data="cancel_photo_processing")]
+    ])
+
+
 def create_notification_keyboard(settings: Dict[str, Any]) -> InlineKeyboardMarkup:
     """Создать клавиатуру для настроек уведомлений на основе серверных флагов"""
     def flag_text(enabled: bool) -> str:

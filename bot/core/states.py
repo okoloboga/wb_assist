@@ -58,6 +58,16 @@ class CardGenerationStates(StatesGroup):
 
 
 class PhotoProcessingStates(StatesGroup):
+
+
     """Состояния для обработки фотографий"""
+
+
     waiting_for_photo = State()
+
+
     waiting_for_prompt = State()
+
+
+    waiting_for_model = State()
+

@@ -15,7 +15,7 @@ import aiohttp
 
 from core.config import config
 from core.states import PhotoProcessingStates
-from keyboards.keyboards import ai_assistant_keyboard, create_photo_processing_keyboard
+from keyboards.keyboards import ai_assistant_keyboard, create_photo_processing_keyboard, create_photo_model_selection_keyboard
 from utils.formatters import (
     safe_send_message,
     handle_telegram_errors,
@@ -45,7 +45,8 @@ async def callback_start_photo_processing(callback: CallbackQuery, state: FSMCon
     # Инициализируем данные в FSM
     await state.update_data(
         photo_file_id=None,
-        prompt=None
+        prompt=None,
+        model=None
     )
     
     await state.set_state(PhotoProcessingStates.waiting_for_photo)
@@ -152,8 +153,23 @@ async def process_prompt(message: Message, state: FSMContext):
     # Сохраняем промпт в FSM
     await state.update_data(prompt=prompt_text)
     
-    # Запускаем обработку фото
-    await process_photo_with_api(message, state)
+    # Переходим к выбору модели
+    await state.set_state(PhotoProcessingStates.waiting_for_model)
+    
+    model_selection_text = (
+        "✅ <b>Описание принято!</b>\n\n"
+        "🤖 <b>Шаг 3:</b> Выберите модель для обработки\n\n"
+        "• <b>Nano Banana:</b> дешевле и быстрее\n"
+        "• <b>Nano Banana 2:</b> дороже, медленнее, но качественнее"
+    )
+    
+    await safe_send_message(
+        message,
+        model_selection_text,
+        user_id=telegram_id,
+        parse_mode="HTML",
+        reply_markup=create_photo_model_selection_keyboard()
+    )
 
 
 @router.message(StateFilter(PhotoProcessingStates.waiting_for_prompt))
@@ -171,6 +187,42 @@ async def process_prompt_error(message: Message, state: FSMContext):
 
 
 # ============================================================================
+# Обработка выбора модели
+# ============================================================================
+
+@router.callback_query(StateFilter(PhotoProcessingStates.waiting_for_model), F.data.startswith("select_model:"))
+@handle_telegram_errors
+async def process_model_selection(callback: CallbackQuery, state: FSMContext):
+    """Обработка выбора модели."""
+    telegram_id = callback.from_user.id
+    model = callback.data.split(":")[1]
+    
+    logger.info(f"🤖 Model selected by user {telegram_id}: {model}")
+    
+    # Сохраняем модель в FSM
+    await state.update_data(model=model)
+    
+    # Запускаем обработку фото
+    # Используем callback.message, чтобы бот мог редактировать исходное сообщение
+    await process_photo_with_api(callback.message, state)
+    await callback.answer()
+
+
+@router.message(StateFilter(PhotoProcessingStates.waiting_for_model))
+@handle_telegram_errors
+async def process_model_error(message: Message, state: FSMContext):
+    """Обработка некорректного ввода (не кнопка)."""
+    telegram_id = message.from_user.id
+    
+    await safe_send_message(
+        message,
+        "⚠️ Пожалуйста, выберите модель, используя <b>кнопки</b> выше.",
+        user_id=telegram_id,
+        parse_mode="HTML"
+    )
+
+
+# ============================================================================
 # Обработка команды /start во время процесса
 # ============================================================================
 
@@ -178,6 +230,7 @@ async def process_prompt_error(message: Message, state: FSMContext):
     StateFilter(
         PhotoProcessingStates.waiting_for_photo,
         PhotoProcessingStates.waiting_for_prompt,
+        PhotoProcessingStates.waiting_for_model,
     ),
     CommandStart()
 )
@@ -202,6 +255,7 @@ async def process_photo_with_api(message: Message, state: FSMContext):
     
     photo_file_id = data.get("photo_file_id")
     prompt = data.get("prompt")
+    model = data.get("model")
     
     # Проверка обязательных данных
     if not photo_file_id:
@@ -221,14 +275,22 @@ async def process_photo_with_api(message: Message, state: FSMContext):
         )
         await state.clear()
         return
+
+    if not model:
+        await safe_send_message(
+            message,
+            "❌ Ошибка: модель не выбрана. Начните заново.",
+            user_id=telegram_id
+        )
+        await state.clear()
+        return
     
-    # Отправляем индикатор обработки
-    await safe_send_message(
-        message,
+    # Отправляем индикатор обработки, редактируя предыдущее сообщение
+    await message.edit_text(
         "⏳ <b>Обрабатываю фотографию...</b>\n\n"
         "Это может занять несколько секунд.",
-        user_id=telegram_id,
-        parse_mode="HTML"
+        parse_mode="HTML",
+        reply_markup=None  # Убираем клавиатуру
     )
     
     # Формируем запрос к GPT сервису
@@ -236,7 +298,8 @@ async def process_photo_with_api(message: Message, state: FSMContext):
     payload = {
         "telegram_id": telegram_id,
         "photo_file_id": photo_file_id,
-        "prompt": prompt
+        "prompt": prompt,
+        "model": model
     }
     headers = {
         "Content-Type": "application/json",
