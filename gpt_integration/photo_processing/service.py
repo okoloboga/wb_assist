@@ -43,8 +43,9 @@ async def _get_telegram_file_url(bot_token: str, file_id: str) -> str:
 
 async def process_photo(
     telegram_id: int,
-    photo_file_id: str,
+    photo_file_ids: list[str],
     prompt: str,
+    model: Optional[str] = None,
     user_id: Optional[int] = None,
     bot_token: Optional[str] = None
 ) -> Dict[str, Any]:
@@ -53,24 +54,18 @@ async def process_photo(
     
     Args:
         telegram_id: ID пользователя в Telegram
-        photo_file_id: Telegram file_id исходного фото
+        photo_file_ids: Список Telegram file_id исходных фото
         prompt: Текстовое описание желаемого результата
+        model: Название модели для генерации
         user_id: ID пользователя в основной БД (опционально)
         bot_token: Токен Telegram бота (для загрузки фото)
     
     Returns:
-        Dict с результатом обработки:
-        - photo_url: URL обработанного изображения
-        - processing_time: Время обработки в секундах
-        - result_id: ID сохраненной записи в БД
-    
-    Raises:
-        ValueError: При некорректных входных данных
-        Exception: При ошибках обработки
+        Dict с результатом обработки.
     """
     start_time = datetime.now()
     
-    logger.info(f"📸 Processing photo for user {telegram_id} with prompt: {prompt[:50]}...")
+    logger.info(f"📸 Processing {len(photo_file_ids)} photos for user {telegram_id} with prompt: {prompt[:50]}...")
     
     client = None
     try:
@@ -80,9 +75,11 @@ async def process_photo(
             if not bot_token:
                 raise ValueError("BOT_TOKEN not set")
         
-        # 2. Получаем URL фото из Telegram
-        logger.info(f"📥 Getting file URL from Telegram for: {photo_file_id}")
-        image_url = await _get_telegram_file_url(bot_token, photo_file_id)
+        # 2. Получаем URL-ы всех фото из Telegram
+        import asyncio
+        image_urls = await asyncio.gather(
+            *[_get_telegram_file_url(bot_token, file_id) for file_id in photo_file_ids]
+        )
         
         # 3. Создаем клиент для API генерации изображений
         api_key = os.getenv("IMAGE_GEN_API_KEY") or os.getenv("COMET_API_KEY")
@@ -90,32 +87,31 @@ async def process_photo(
             raise ValueError("IMAGE_GEN_API_KEY or COMET_API_KEY not set")
             
         base_url = os.getenv("IMAGE_GEN_BASE_URL") or "https://api.cometapi.com"
-        model = os.getenv("IMAGE_GEN_MODEL") or "gemini-2.5-flash-image"
+        # Используем модель из запроса, если она есть, иначе из .env
+        final_model = model or os.getenv("IMAGE_GEN_MODEL") or "gemini-2.5-flash-image"
         timeout_str = os.getenv("IMAGE_GEN_TIMEOUT", "120.0")
         timeout = float(timeout_str)
 
-        client = ImageGenerationClient(api_key=api_key, base_url=base_url, model=model, timeout=timeout)
+        client = ImageGenerationClient(api_key=api_key, base_url=base_url, model=final_model, timeout=timeout)
         
         # 4. Обрабатываем изображение
-        logger.info(f"🎨 Processing image with prompt: {prompt[:50]}...")
-        # `process_image` теперь возвращает data URI, а не словарь
-        photo_data_uri = await client.process_image(image_url, prompt)
+        logger.info(f"🎨 Processing images with prompt: {prompt[:50]}...")
+        photo_data_uri = await client.process_image(image_urls, prompt)
         
         # 5. Сохраняем результат в БД
-        # В данном примере мы сохраняем data URI напрямую.
-        # Если нужно загружать куда-то и получать URL, здесь будет доп. логика.
         photo_url = photo_data_uri 
         
-        # Засекаем время выполнения только для `process_image`
         processing_time = (datetime.now() - start_time).total_seconds()
 
         logger.info(f"💾 Saving result to database...")
+        # Сохраняем ID-шники фото как строку через запятую
+        original_photos_str = ",".join(photo_file_ids)
         result_id = await save_processing_result(
             telegram_id=telegram_id,
-            original_photo_file_id=photo_file_id,
+            original_photo_file_id=original_photos_str,
             prompt=prompt,
             result_photo_url=photo_url,
-            processing_service="gemini_cometapi", # Уточнили сервис
+            processing_service=final_model,
             processing_time=processing_time,
             user_id=user_id
         )

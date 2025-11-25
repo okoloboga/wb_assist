@@ -487,11 +487,15 @@ def create_cabinet_removal_keyboard() -> InlineKeyboardMarkup:
     ])
 
 
-def create_photo_processing_keyboard() -> InlineKeyboardMarkup:
-    """Создать клавиатуру для процесса обработки фото"""
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔙 Отмена", callback_data="cancel_photo_processing")]
-    ])
+def create_photo_processing_keyboard(photo_count: int = 0) -> InlineKeyboardMarkup:
+    """Создать клавиатуру для процесса обработки фото."""
+    buttons = []
+    if photo_count > 0:
+        buttons.append([InlineKeyboardButton(text="✅ Готово", callback_data="finish_photo_upload")])
+    
+    buttons.append([InlineKeyboardButton(text="🔙 Отмена", callback_data="cancel_photo_processing")])
+    
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
 def create_photo_model_selection_keyboard() -> InlineKeyboardMarkup:

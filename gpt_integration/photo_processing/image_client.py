@@ -75,50 +75,51 @@ class ImageGenerationClient:
     )
     async def process_image(
         self,
-        image_url: str,
+        image_urls: list[str],
         prompt: str,
     ) -> str:
         """
         image-to-image:
-        - скачивает картинку
+        - скачивает картинки
         - отправляет в Gemini generateContent
         - парсит camelCase & snake_case
         - возвращает data:image/png;base64,...
         """
         start = time.monotonic()
 
-        # 1. download input image
-        logger.debug("Downloading source image: %s", image_url)
-        response = await self.client.get(image_url)
-        response.raise_for_status()
-        image_bytes = response.content
+        # 1. Build the parts array
+        parts = [{"text": prompt}]
+        
+        for image_url in image_urls:
+            # download input image
+            logger.debug("Downloading source image: %s", image_url)
+            response = await self.client.get(image_url)
+            response.raise_for_status()
+            image_bytes = response.content
 
-        # determine mime type: image/png is safest fallback
-        try:
-            img = Image.open(io.BytesIO(image_bytes))
-            mime_type_in = Image.MIME.get(img.format, "image/png")
-        except Exception:
-            mime_type_in = "image/png"
+            # determine mime type: image/png is safest fallback
+            try:
+                img = Image.open(io.BytesIO(image_bytes))
+                mime_type_in = Image.MIME.get(img.format, "image/png")
+            except Exception:
+                mime_type_in = "image/png"
 
-        image_b64 = self._encode_image_to_base64(image_bytes)
+            image_b64 = self._encode_image_to_base64(image_bytes)
+            logger.debug("Input mime: %s, size: %d bytes", mime_type_in, len(image_bytes))
 
-        logger.debug("Input mime: %s, size: %d bytes", mime_type_in, len(image_bytes))
+            parts.append({
+                "inline_data": {
+                    "mime_type": mime_type_in,
+                    "data": image_b64
+                }
+            })
 
         # 2. build Gemini JSON
         body = {
             "contents": [
                 {
                     "role": "user",
-                    "parts": [
-                        {"text": prompt},
-                        {
-                            # GEMINI FORMAT — camelCase
-                            "inline_data": {
-                                "mime_type": mime_type_in,
-                                "data": image_b64
-                            }
-                        }
-                    ]
+                    "parts": parts
                 }
             ],
             "generationConfig": {
@@ -140,7 +141,7 @@ class ImageGenerationClient:
             resp.raise_for_status()
         elif resp.status_code >= 400:
             logger.error("Gemini client error %s: %s", resp.status_code, resp.text)
-            raise ImageGenerationError(f"Gemini error {resp.status_code}: {resp.text}")
+            raise Exception(f"Gemini error {resp.status_code}: {resp.text}")
 
         data = resp.json()
         logger.debug("Raw Gemini response received successfully")
@@ -149,7 +150,7 @@ class ImageGenerationClient:
         try:
             candidates = data.get("candidates") or []
             if not candidates:
-                raise ImageGenerationError("Gemini returned no candidates")
+                raise Exception("Gemini returned no candidates")
 
             candidate = candidates[0]
             content = candidate.get("content") or {}
@@ -175,13 +176,13 @@ class ImageGenerationClient:
                     break
 
             if not output_b64:
-                raise ImageGenerationError(
+                raise Exception(
                     f"No image returned by Gemini. Response: {data}"
                 )
 
         except Exception as e:
             logger.exception("Failed to parse Gemini response")
-            raise ImageGenerationError(f"Failed to parse Gemini response: {e}")
+            raise Exception(f"Failed to parse Gemini response: {e}")
 
         elapsed = time.monotonic() - start
         logger.info("Gemini execution time: %.2fs", elapsed)
