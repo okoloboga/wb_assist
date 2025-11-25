@@ -9,21 +9,43 @@
 
 import os
 import logging
+import httpx
 from typing import Optional, Dict, Any
 from datetime import datetime
 from sqlalchemy.orm import Session
 
-from .image_client import ImageGenerationClient, download_telegram_photo
+from .image_client import ImageGenerationClient
 from .database import SessionLocal
 from .models import PhotoProcessingResult
 
 logger = logging.getLogger(__name__)
 
 
+async def _get_telegram_file_url(bot_token: str, file_id: str) -> str:
+    """Get public URL for a Telegram file."""
+    async with httpx.AsyncClient() as client:
+        get_file_url = f"https://api.telegram.org/bot{bot_token}/getFile"
+        try:
+            response = await client.post(get_file_url, json={"file_id": file_id}, timeout=20.0)
+            response.raise_for_status()
+            data = response.json()
+            if not data.get("ok"):
+                raise ValueError(f"Telegram API error: {data.get('description')}")
+            file_path = data["result"]["file_path"]
+            return f"https://api.telegram.org/file/bot{bot_token}/{file_path}"
+        except httpx.HTTPStatusError as e:
+            logger.error(f"HTTP error getting file path from Telegram: {e.response.text}")
+            raise ValueError("Failed to get file path from Telegram.") from e
+        except Exception as e:
+            logger.error(f"Error getting file path from Telegram: {e}")
+            raise ValueError("Failed to get file path from Telegram.") from e
+
+
 async def process_photo(
     telegram_id: int,
-    photo_file_id: str,
+    photo_file_ids: list[str],
     prompt: str,
+    model: Optional[str] = None,
     user_id: Optional[int] = None,
     bot_token: Optional[str] = None
 ) -> Dict[str, Any]:
@@ -32,54 +54,64 @@ async def process_photo(
     
     Args:
         telegram_id: ID пользователя в Telegram
-        photo_file_id: Telegram file_id исходного фото
+        photo_file_ids: Список Telegram file_id исходных фото
         prompt: Текстовое описание желаемого результата
+        model: Название модели для генерации
         user_id: ID пользователя в основной БД (опционально)
         bot_token: Токен Telegram бота (для загрузки фото)
     
     Returns:
-        Dict с результатом обработки:
-        - photo_url: URL обработанного изображения
-        - processing_time: Время обработки в секундах
-        - result_id: ID сохраненной записи в БД
-    
-    Raises:
-        ValueError: При некорректных входных данных
-        Exception: При ошибках обработки
+        Dict с результатом обработки.
     """
     start_time = datetime.now()
     
-    logger.info(f"📸 Processing photo for user {telegram_id} with prompt: {prompt[:50]}...")
+    logger.info(f"📸 Processing {len(photo_file_ids)} photos for user {telegram_id} with prompt: {prompt[:50]}...")
     
+    client = None
     try:
-        # Получаем токен бота из переменных окружения, если не передан
+        # 1. Получаем токен бота
         if not bot_token:
             bot_token = os.getenv("BOT_TOKEN")
             if not bot_token:
                 raise ValueError("BOT_TOKEN not set")
         
-        # Загружаем фото из Telegram
-        logger.info(f"📥 Downloading photo from Telegram: {photo_file_id}")
-        image_url = await download_telegram_photo(bot_token, photo_file_id)
+        # 2. Получаем URL-ы всех фото из Telegram
+        import asyncio
+        image_urls = await asyncio.gather(
+            *[_get_telegram_file_url(bot_token, file_id) for file_id in photo_file_ids]
+        )
         
-        # Создаем клиент для API генерации изображений
-        client = ImageGenerationClient()
+        # 3. Создаем клиент для API генерации изображений
+        api_key = os.getenv("IMAGE_GEN_API_KEY") or os.getenv("COMET_API_KEY")
+        if not api_key:
+            raise ValueError("IMAGE_GEN_API_KEY or COMET_API_KEY not set")
+            
+        base_url = os.getenv("IMAGE_GEN_BASE_URL") or "https://api.cometapi.com"
+        # Используем модель из запроса, если она есть, иначе из .env
+        final_model = model or os.getenv("IMAGE_GEN_MODEL") or "gemini-2.5-flash-image"
+        timeout_str = os.getenv("IMAGE_GEN_TIMEOUT", "120.0")
+        timeout = float(timeout_str)
+
+        client = ImageGenerationClient(api_key=api_key, base_url=base_url, model=final_model, timeout=timeout)
         
-        # Обрабатываем изображение
-        logger.info(f"🎨 Processing image with prompt: {prompt[:50]}...")
-        result = await client.process_image(image_url, prompt)
+        # 4. Обрабатываем изображение
+        logger.info(f"🎨 Processing images with prompt: {prompt[:50]}...")
+        photo_data_uri = await client.process_image(image_urls, prompt)
         
-        photo_url = result["photo_url"]
-        processing_time = result["processing_time"]
+        # 5. Сохраняем результат в БД
+        photo_url = photo_data_uri 
         
-        # Сохраняем результат в БД
+        processing_time = (datetime.now() - start_time).total_seconds()
+
         logger.info(f"💾 Saving result to database...")
+        # Сохраняем ID-шники фото как строку через запятую
+        original_photos_str = ",".join(photo_file_ids)
         result_id = await save_processing_result(
             telegram_id=telegram_id,
-            original_photo_file_id=photo_file_id,
+            original_photo_file_id=original_photos_str,
             prompt=prompt,
             result_photo_url=photo_url,
-            processing_service="image_generation_api",
+            processing_service=final_model,
             processing_time=processing_time,
             user_id=user_id
         )
@@ -101,6 +133,9 @@ async def process_photo(
         total_time = (datetime.now() - start_time).total_seconds()
         logger.error(f"❌ Photo processing failed after {total_time:.2f}s: {e}")
         raise
+    finally:
+        if client:
+            await client.close()
 
 
 async def save_processing_result(

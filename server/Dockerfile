@@ -2,6 +2,16 @@ FROM python:3.12
 
 WORKDIR /app
 
+# Устанавливаем системные зависимости для Chrome и Selenium
+RUN apt-get update && apt-get install -y \
+    wget \
+    unzip \
+    xvfb \
+    chromium \
+    chromium-driver \
+    --no-install-recommends && \
+    rm -rf /var/lib/apt/lists/*
+
 # Copy requirements first for better caching
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt

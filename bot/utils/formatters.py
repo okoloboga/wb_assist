@@ -28,6 +28,8 @@ def format_error_message(error: Optional[str], status_code: int) -> str:
         return "🚫 Доступ запрещен. У вас нет прав для выполнения этой операции."
     elif status_code == 408:
         return "⏰ Превышено время ожидания. Попробуйте позже."
+    elif status_code == 409:
+        return f"⚠️ {error}" # Возвращаем сообщение от сервера напрямую
     elif status_code == 429:
         return "🚦 Слишком много запросов. Подождите немного."
     elif status_code >= 500:
@@ -137,7 +139,8 @@ async def safe_edit_message(
     text: str, 
     reply_markup=None,
     user_id: int = None,
-    parse_mode: Optional[str] = None
+    parse_mode: Optional[str] = None,
+    disable_web_page_preview: Optional[bool] = None
 ) -> bool:
     """
     Безопасно редактировать сообщение с обработкой TelegramBadRequest
@@ -158,7 +161,8 @@ async def safe_edit_message(
         await callback.message.edit_text(
             text,
             reply_markup=reply_markup,
-            parse_mode=parse_mode
+            parse_mode=parse_mode,
+            disable_web_page_preview=disable_web_page_preview
         )
         return True
         

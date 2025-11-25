@@ -21,7 +21,7 @@ def wb_menu_keyboard() -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="📈 Аналитика", callback_data="analytics")
         ],
         [
-            InlineKeyboardButton(text="💰 Цены", callback_data="prices"),
+            InlineKeyboardButton(text="⚖️ Конкуренты", callback_data="competitors"),
             InlineKeyboardButton(text="🔔 Уведомления", callback_data="notifications")
         ],
         [
@@ -85,6 +85,106 @@ def prices_keyboard() -> InlineKeyboardMarkup:
         ],
         [InlineKeyboardButton(text="🔙 Назад", callback_data="main_menu")]
     ])
+
+
+def competitors_keyboard() -> InlineKeyboardMarkup:
+    """Клавиатура для меню конкурентов"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="➕ Добавить конкурента", callback_data="add_competitor")],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="prices")]
+    ])
+
+
+def create_competitor_menu_keyboard(competitor_id: int) -> InlineKeyboardMarkup:
+    """Клавиатура для меню конкретного конкурента"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🛍️ Товары", callback_data=f"competitor_products_{competitor_id}")],
+        [InlineKeyboardButton(text="💎 Семантическое ядро", callback_data=f"competitor_semantic_core_{competitor_id}")],
+        [InlineKeyboardButton(text="🗑️ Удалить конкурента", callback_data=f"delete_competitor_{competitor_id}")],
+        [InlineKeyboardButton(text="🔙 Назад к списку", callback_data="competitors")]
+    ])
+
+
+def create_competitors_list_keyboard(
+    competitors_data: list,
+    offset: int,
+    limit: int,
+    total: int,
+    has_more: bool
+) -> InlineKeyboardMarkup:
+    """
+    Создает клавиатуру со списком конкурентов, кнопками пагинации и кнопкой добавления.
+    """
+    buttons = []
+
+    # Кнопки для каждого конкурента
+    for comp in competitors_data:
+        status_icon = {
+            "completed": "✅",
+            "scraping": "🔄",
+            "pending": "⏳",
+            "error": "❌"
+        }.get(comp.get("status", "pending"), "❓")
+        
+        competitor_name = comp.get("competitor_name") or "Без названия"
+        
+        buttons.append([InlineKeyboardButton(
+            text=f"{status_icon} {competitor_name}",
+            callback_data=f"select_competitor_{comp['id']}"
+        )])
+
+    # Кнопки пагинации
+    nav_buttons = []
+    if offset > 0:
+        nav_buttons.append(InlineKeyboardButton(
+            text="⬅️ Назад",
+            callback_data=f"competitors_page_{max(0, offset - limit)}"
+        ))
+    if has_more:
+        nav_buttons.append(InlineKeyboardButton(
+            text="Вперед ➡️",
+            callback_data=f"competitors_page_{offset + limit}"
+        ))
+    if nav_buttons:
+        buttons.append(nav_buttons)
+
+    # Кнопка "Добавить конкурента" и "Назад"
+    buttons.append([InlineKeyboardButton(text="➕ Добавить конкурента", callback_data="add_competitor")])
+    buttons.append([InlineKeyboardButton(text="🔙 Назад", callback_data="wb_menu")]) # Возврат в главное меню WB
+
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def create_semantic_core_categories_keyboard(competitor_id: int, categories: list) -> InlineKeyboardMarkup:
+    """
+    Создает клавиатуру со списком категорий для выбора семантического ядра.
+    """
+    buttons = []
+    for i, category in enumerate(categories):
+        buttons.append([InlineKeyboardButton(
+            text=category,
+            callback_data=f"select_semantic_core_category:{competitor_id}:{i}"
+        )])
+    
+    buttons.append([InlineKeyboardButton(text="🔙 Назад", callback_data=f"select_competitor_{competitor_id}")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def create_existing_semantic_core_keyboard(competitor_id: int, category_index: int) -> InlineKeyboardMarkup:
+    """
+    Создает клавиатуру для существующего семантического ядра с кнопкой перезапуска.
+    """
+    buttons = [
+        [InlineKeyboardButton(
+            text="🔄 Перезапустить анализ",
+            callback_data=f"regenerate_semantic_core:{competitor_id}:{category_index}"
+        )],
+        [InlineKeyboardButton(
+            text="🔙 Назад к категориям",
+            callback_data=f"competitor_semantic_core_{competitor_id}"
+        )]
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
 def content_keyboard() -> InlineKeyboardMarkup:
@@ -387,9 +487,22 @@ def create_cabinet_removal_keyboard() -> InlineKeyboardMarkup:
     ])
 
 
-def create_photo_processing_keyboard() -> InlineKeyboardMarkup:
-    """Создать клавиатуру для процесса обработки фото"""
+def create_photo_processing_keyboard(photo_count: int = 0) -> InlineKeyboardMarkup:
+    """Создать клавиатуру для процесса обработки фото."""
+    buttons = []
+    if photo_count > 0:
+        buttons.append([InlineKeyboardButton(text="✅ Готово", callback_data="finish_photo_upload")])
+    
+    buttons.append([InlineKeyboardButton(text="🔙 Отмена", callback_data="cancel_photo_processing")])
+    
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def create_photo_model_selection_keyboard() -> InlineKeyboardMarkup:
+    """Создать клавиатуру для выбора модели обработки фото."""
     return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Nano Banana", callback_data="select_model:gemini-2.5-flash-image")],
+        [InlineKeyboardButton(text="Nano Banana 2", callback_data="select_model:gemini-3-pro-image")],
         [InlineKeyboardButton(text="🔙 Отмена", callback_data="cancel_photo_processing")]
     ])
 

@@ -19,6 +19,10 @@ class UserCRUD:
             User.telegram_id == telegram_id
         ).first()
 
+    def get_user_by_id(self, user_id: int) -> User:
+        """Получить пользователя по id"""
+        return self.db.query(User).filter(User.id == user_id).first()
+
     def create_user(self, user_data: UserCreate) -> User:
         """Создать нового пользователя"""
         try:

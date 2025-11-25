@@ -58,6 +58,12 @@ services:
       - GOOGLE_SERVICE_ACCOUNT_FILE=${GOOGLE_SERVICE_ACCOUNT_FILE}
       - GOOGLE_TEMPLATE_SPREADSHEET_ID=${GOOGLE_TEMPLATE_SPREADSHEET_ID}
       - GOOGLE_SCOPES=${GOOGLE_SCOPES}
+      # Конкуренты - скрапинг
+      - COMPETITOR_MAX_LINKS_PER_CABINET=${COMPETITOR_MAX_LINKS_PER_CABINET}
+      - COMPETITOR_MAX_PRODUCTS_PER_LINK=${COMPETITOR_MAX_PRODUCTS_PER_LINK}
+      - COMPETITOR_UPDATE_INTERVAL_HOURS=${COMPETITOR_UPDATE_INTERVAL_HOURS}
+      - COMPETITOR_UPDATE_SPREAD_HOURS=${COMPETITOR_UPDATE_SPREAD_HOURS}
+      - COMPETITOR_UPDATE_BASE_HOUR=${COMPETITOR_UPDATE_BASE_HOUR}
       # BOT_WEBHOOK_URL удален - используется только polling
     networks:
       - app-network
@@ -66,7 +72,7 @@ services:
     build:
       context: ./server
       dockerfile: Dockerfile
-    command: celery -A app.core.celery_app worker --loglevel=info --queues=sync_queue,alerts_queue,export_queue,digest_queue
+    command: celery -A app.core.celery_app worker --loglevel=info --queues=sync_queue,alerts_queue,export_queue,digest_queue,scraping_queue
     depends_on:
       db:
         condition: service_healthy
@@ -83,6 +89,15 @@ services:
       - GOOGLE_TEMPLATE_SPREADSHEET_ID=${GOOGLE_TEMPLATE_SPREADSHEET_ID}
       - GOOGLE_SCOPES=${GOOGLE_SCOPES}
       - BOT_YOUNG_TOKEN=${BOT_YOUNG_TOKEN}
+      - GPT_INTEGRATION_URL=http://gpt:9000
+      - API_SECRET_KEY=${API_SECRET_KEY}
+      # Конкуренты - скрапинг
+      - COMPETITOR_MAX_LINKS_PER_CABINET=${COMPETITOR_MAX_LINKS_PER_CABINET}
+      - COMPETITOR_MAX_PRODUCTS_PER_LINK=${COMPETITOR_MAX_PRODUCTS_PER_LINK}
+      - COMPETITOR_UPDATE_INTERVAL_HOURS=${COMPETITOR_UPDATE_INTERVAL_HOURS}
+      - COMPETITOR_UPDATE_SPREAD_HOURS=${COMPETITOR_UPDATE_SPREAD_HOURS}
+      - COMPETITOR_UPDATE_BASE_HOUR=${COMPETITOR_UPDATE_BASE_HOUR}
+      - SEMANTIC_CORE_MAX_TEXT_LENGTH=${SEMANTIC_CORE_MAX_TEXT_LENGTH}
     networks:
       - app-network
 
@@ -103,6 +118,12 @@ services:
       - SYNC_DAYS=${SYNC_DAYS}
       - STOCK_ALERT_CHECK_TIME=${STOCK_ALERT_CHECK_TIME}
       - STOCK_ALERT_COOLDOWN_HOURS=${STOCK_ALERT_COOLDOWN_HOURS}
+      # Конкуренты - скрапинг
+      - COMPETITOR_MAX_LINKS_PER_CABINET=${COMPETITOR_MAX_LINKS_PER_CABINET:-10}
+      - COMPETITOR_MAX_PRODUCTS_PER_LINK=${COMPETITOR_MAX_PRODUCTS_PER_LINK:-30}
+      - COMPETITOR_UPDATE_INTERVAL_HOURS=${COMPETITOR_UPDATE_INTERVAL_HOURS:-24}
+      - COMPETITOR_UPDATE_SPREAD_HOURS=${COMPETITOR_UPDATE_SPREAD_HOURS:-2}
+      - COMPETITOR_UPDATE_BASE_HOUR=${COMPETITOR_UPDATE_BASE_HOUR:-0}
     volumes:
       - celery_beat_data:/app/beat_data
     networks:
@@ -161,6 +182,7 @@ services:
       # Analytics - период по умолчанию для daily trends
       - ANALYTICS_DAYS_WINDOW=${ANALYTICS_DAYS_WINDOW}
       # Photo Processing - API генерации изображений
+      - COMET_API_KEY=${COMET_API_KEY}
       - IMAGE_GEN_API_KEY=${IMAGE_GEN_API_KEY:-}
       - IMAGE_GEN_BASE_URL=${IMAGE_GEN_BASE_URL:-}
       - IMAGE_GEN_TIMEOUT=${IMAGE_GEN_TIMEOUT:-60}

@@ -29,15 +29,10 @@ async def show_my_prices(callback: CallbackQuery):
 
 @router.callback_query(F.data == "competitor_prices")
 async def show_competitor_prices(callback: CallbackQuery):
-    """Показать цены конкурентов"""
-    # TODO: Реализовать мониторинг цен конкурентов
-    await callback.message.edit_text(
-        "⚖️ ЦЕНЫ КОНКУРЕНТОВ\n\n"
-        "⚠️ Функция мониторинга цен конкурентов будет доступна в следующей версии.\n\n"
-        "Сейчас доступен просмотр заказов, остатков и отзывов.",
-        reply_markup=prices_keyboard()
-    )
-    await callback.answer()
+    """Показать меню конкурентов"""
+    # Импортируем handler конкурентов для перенаправления
+    from handlers.competitors import show_competitors_menu
+    await show_competitors_menu(callback)
 
 
 @router.callback_query(F.data == "price_history")

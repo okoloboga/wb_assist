@@ -671,3 +671,24 @@ class CabinetConnectResponse(BaseModel):
     permissions: Optional[List[str]] = None
     validation: Optional[Dict[str, Any]] = None
     telegram_text: Optional[str] = None
+
+
+# ===== СХЕМЫ ДЛЯ СЕМАНТИЧЕСКОГО ЯДРА =====
+
+class SemanticCoreOut(BaseModel):
+    """Схема для списка семантических ядер"""
+    id: int
+    competitor_name: str
+    category_name: str
+
+    class Config:
+        from_attributes = True
+
+
+class SemanticCoreDetailOut(BaseModel):
+    """Схема для детальной информации о семантическом ядре"""
+    id: int
+    core_data: str
+
+    class Config:
+        from_attributes = True

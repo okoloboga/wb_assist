@@ -8,7 +8,8 @@ from typing import Dict
 def create_card_prompt(
     characteristics: Dict[str, str],
     target_audience: str,
-    selling_points: str
+    selling_points: str,
+    semantic_core_text: str = None
 ) -> str:
     """
     Создает промпт для GPT на основе данных о товаре.
@@ -17,10 +18,22 @@ def create_card_prompt(
         characteristics: Характеристики товара (name, brand, category)
         target_audience: Описание целевой аудитории
         selling_points: Уникальные преимущества товара
+        semantic_core_text: Опциональный текст семантического ядра
         
     Returns:
         str: Готовый промпт для GPT
     """
+    
+    semantic_core_section = ""
+    if semantic_core_text:
+        semantic_core_section = f"""
+СЕМАНТИЧЕСКОЕ ЯДРО:
+Проанализируй предоставленное семантическое ядро, которое было собрано у конкурентов. Используй эти ключевые слова, фразы, преимущества и сценарии использования, чтобы сделать генерируемый текст максимально полным и продающим.
+---
+{semantic_core_text}
+---
+"""
+
     prompt = f"""Создай привлекательную карточку товара для Wildberries на основе следующих данных:
 
 ХАРАКТЕРИСТИКИ ТОВАРА:
@@ -33,7 +46,7 @@ def create_card_prompt(
 
 УНИКАЛЬНЫЕ ПРЕИМУЩЕСТВА:
 {selling_points}
-
+{semantic_core_section}
 Создай карточку товара, которая включает:
 
 1. ЗАГОЛОВОК ТОВАРА
