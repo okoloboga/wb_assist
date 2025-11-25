@@ -5,6 +5,22 @@
 **Базовый URL для всех запросов:** `http://<SERVER_HOST>/api/v1/bot`  
 **Аутентификация:** Все запросы должны содержать заголовок `X-API-SECRET-KEY` с валидным ключом.
 
+**Версия API:** 1.0  
+**Последнее обновление:** 25 ноября 2025
+
+---
+
+## Список эндпоинтов
+
+1. [Остатки по складам](#1-остатки-по-складам) - `/stocks/all`
+2. [Аналитика продаж](#2-данные-для-графика-аналитики) - `/analytics/sales`
+3. [Сводная статистика](#3-сводная-статистика) - `/analytics/summary`
+4. [Список складов](#4-список-складов) - `/warehouses`
+5. [Список размеров](#5-список-размеров) - `/sizes`
+6. [Последние заказы](#6-последние-заказы) - `/orders/recent`
+7. [Детали заказа](#7-детали-заказа) - `/orders/{id}`
+8. [Отзывы](#8-отзывы) - `/reviews/summary`
+
 ---
 
 ## 1. Остатки по складам
@@ -13,10 +29,14 @@
 
 - **Эндпоинт:** `/stocks/all`
 - **Метод:** `GET`
+- **Кэширование:** 5 минут
 - **Параметры:**
   - `telegram_id` (query, required): ID пользователя в Telegram.
-  - `limit` (query, optional): Количество записей на страницу (по умолчанию 15).
+  - `limit` (query, optional): Количество записей на страницу (по умолчанию 15, макс 100).
   - `offset` (query, optional): Смещение для пагинации.
+  - `warehouse` (query, optional): Фильтр по складу (можно несколько через запятую).
+  - `size` (query, optional): Фильтр по размеру (можно несколько через запятую).
+  - `search` (query, optional): Поиск по названию товара или артикулу.
 
 ### Пример запроса
 
@@ -91,9 +111,10 @@ curl -X GET 'http://127.0.0.1:8000/api/v1/bot/stocks/all?telegram_id=123456789&l
 
 - **Эндпоинт:** `/analytics/sales`
 - **Метод:** `GET`
+- **Кэширование:** 15 минут
 - **Параметры:**
   - `telegram_id` (query, required): ID пользователя в Telegram.
-  - `period` (query, optional): Период для анализа. Например: `1d`, `7d`, `30d` (по умолчанию `7d`).
+  - `period` (query, optional): Период для анализа: `7d`, `30d`, `60d`, `90d`, `180d` (по умолчанию `30d`).
 
 ### Пример запроса
 
@@ -181,3 +202,327 @@ curl -X GET 'http://127.0.0.1:8000/api/v1/bot/analytics/sales?telegram_id=123456
     "status_code": 200
 }
 ```
+
+---
+
+#
+# 3. Сводная статистика
+
+Получение агрегированных метрик для карточек дашборда (заказы, выкупы, отмены, возвраты).
+
+- **Эндпоинт:** `/analytics/summary`
+- **Метод:** `GET`
+- **Кэширование:** 15 минут
+- **Параметры:**
+  - `telegram_id` (query, required): ID пользователя в Telegram.
+  - `period` (query, optional): Период анализа: `7d`, `30d`, `60d`, `90d`, `180d` (по умолчанию `30d`).
+
+### Пример запроса
+
+```bash
+curl -X GET 'http://127.0.0.1:8000/api/v1/bot/analytics/summary?telegram_id=123456789&period=30d' \
+-H 'X-API-SECRET-KEY: your_secret_key'
+```
+
+### Пример ответа
+
+```json
+{
+  "success": true,
+  "summary": {
+    "orders": 2404,
+    "purchases": 2034,
+    "cancellations": 249,
+    "returns": 121
+  },
+  "period": {
+    "start": "2025-10-26",
+    "end": "2025-11-25",
+    "days": 30
+  }
+}
+```
+
+---
+
+## 4. Список складов
+
+Получение списка всех доступных складов с количеством товаров на каждом.
+
+- **Эндпоинт:** `/warehouses`
+- **Метод:** `GET`
+- **Кэширование:** 1 час
+- **Параметры:**
+  - `telegram_id` (query, required): ID пользователя в Telegram.
+
+### Пример запроса
+
+```bash
+curl -X GET 'http://127.0.0.1:8000/api/v1/bot/warehouses?telegram_id=123456789' \
+-H 'X-API-SECRET-KEY: your_secret_key'
+```
+
+### Пример ответа
+
+```json
+{
+  "success": true,
+  "warehouses": [
+    {
+      "name": "Коледино",
+      "product_count": 150
+    },
+    {
+      "name": "Казань",
+      "product_count": 80
+    },
+    {
+      "name": "Подольск",
+      "product_count": 45
+    }
+  ]
+}
+```
+
+---
+
+## 5. Список размеров
+
+Получение списка всех доступных размеров с логической сортировкой.
+
+- **Эндпоинт:** `/sizes`
+- **Метод:** `GET`
+- **Кэширование:** 1 час
+- **Параметры:**
+  - `telegram_id` (query, required): ID пользователя в Telegram.
+
+### Пример запроса
+
+```bash
+curl -X GET 'http://127.0.0.1:8000/api/v1/bot/sizes?telegram_id=123456789' \
+-H 'X-API-SECRET-KEY: your_secret_key'
+```
+
+### Пример ответа
+
+```json
+{
+  "success": true,
+  "sizes": [
+    "XS",
+    "S",
+    "M",
+    "L",
+    "XL",
+    "XXL",
+    "38",
+    "40",
+    "42",
+    "44",
+    "46",
+    "ONE SIZE"
+  ]
+}
+```
+
+---
+
+## 6. Последние заказы
+
+Получение списка последних заказов с фильтрацией и пагинацией.
+
+- **Эндпоинт:** `/orders/recent`
+- **Метод:** `GET`
+- **Параметры:**
+  - `telegram_id` (query, required): ID пользователя в Telegram.
+  - `limit` (query, optional): Количество заказов (по умолчанию 10, макс 100).
+  - `offset` (query, optional): Смещение для пагинации.
+  - `status` (query, optional): Фильтр по статусу: `active` или `canceled`.
+
+### Пример запроса
+
+```bash
+curl -X GET 'http://127.0.0.1:8000/api/v1/bot/orders/recent?telegram_id=123456789&limit=10&status=active' \
+-H 'X-API-SECRET-KEY: your_secret_key'
+```
+
+---
+
+## 7. Детали заказа
+
+Получение детальной информации о конкретном заказе.
+
+- **Эндпоинт:** `/orders/{order_id}`
+- **Метод:** `GET`
+- **Параметры:**
+  - `order_id` (path, required): ID заказа.
+  - `telegram_id` (query, required): ID пользователя в Telegram.
+
+### Пример запроса
+
+```bash
+curl -X GET 'http://127.0.0.1:8000/api/v1/bot/orders/12345?telegram_id=123456789' \
+-H 'X-API-SECRET-KEY: your_secret_key'
+```
+
+---
+
+## 8. Отзывы
+
+Получение списка отзывов с фильтрацией по рейтингу.
+
+- **Эндпоинт:** `/reviews/summary`
+- **Метод:** `GET`
+- **Параметры:**
+  - `telegram_id` (query, required): ID пользователя в Telegram.
+  - `limit` (query, optional): Количество отзывов (по умолчанию 10, макс 100).
+  - `offset` (query, optional): Смещение для пагинации.
+  - `rating_threshold` (query, optional): Фильтр по рейтингу (≤N звезд, 1-5).
+
+### Пример запроса
+
+```bash
+curl -X GET 'http://127.0.0.1:8000/api/v1/bot/reviews/summary?telegram_id=123456789&rating_threshold=3' \
+-H 'X-API-SECRET-KEY: your_secret_key'
+```
+
+---
+
+## Коды ошибок
+
+| Код | Описание |
+|-----|----------|
+| 200 | Успешный запрос |
+| 400 | Неверные параметры запроса |
+| 403 | Отсутствует или неверный API ключ |
+| 404 | Ресурс не найден (кабинет, заказ и т.д.) |
+| 422 | Ошибка валидации параметров |
+| 500 | Внутренняя ошибка сервера |
+
+---
+
+## Заголовки ответа
+
+Все эндпоинты возвращают следующие заголовки:
+
+- `Cache-Control` - информация о кэшировании
+- `X-Cache-TTL` - время жизни кэша в секундах
+- `Content-Type: application/json`
+
+---
+
+## Примеры использования
+
+### JavaScript (Fetch API)
+
+```javascript
+const API_BASE_URL = 'http://localhost:8000/api/v1/bot';
+const API_KEY = 'your-secret-key';
+
+// Получение складов
+async function getWarehouses(telegramId) {
+  const response = await fetch(
+    `${API_BASE_URL}/warehouses?telegram_id=${telegramId}`,
+    {
+      headers: {
+        'X-API-SECRET-KEY': API_KEY
+      }
+    }
+  );
+  return response.json();
+}
+
+// Получение остатков с фильтрацией
+async function getStocks(telegramId, filters = {}) {
+  const params = new URLSearchParams({
+    telegram_id: telegramId,
+    ...filters
+  });
+  
+  const response = await fetch(
+    `${API_BASE_URL}/stocks/all?${params}`,
+    {
+      headers: {
+        'X-API-SECRET-KEY': API_KEY
+      }
+    }
+  );
+  return response.json();
+}
+
+// Использование
+const warehouses = await getWarehouses(123456789);
+const stocks = await getStocks(123456789, {
+  warehouse: 'Коледино',
+  size: 'M',
+  limit: 20
+});
+```
+
+### Python (requests)
+
+```python
+import requests
+
+API_BASE_URL = 'http://localhost:8000/api/v1/bot'
+API_KEY = 'your-secret-key'
+
+headers = {'X-API-SECRET-KEY': API_KEY}
+
+# Получение сводной статистики
+response = requests.get(
+    f'{API_BASE_URL}/analytics/summary',
+    params={'telegram_id': 123456789, 'period': '30d'},
+    headers=headers
+)
+data = response.json()
+print(data['summary'])
+
+# Получение остатков с поиском
+response = requests.get(
+    f'{API_BASE_URL}/stocks/all',
+    params={
+        'telegram_id': 123456789,
+        'search': 'футболка',
+        'limit': 50
+    },
+    headers=headers
+)
+stocks = response.json()
+```
+
+---
+
+## Дополнительная документация
+
+- **Полная API документация:** `docs/api/ANALYTICS_DASHBOARD_API.md`
+- **Конфигурация окружения:** `docs/deployment/DASHBOARD_ENV_CONFIG.md`
+- **Руководство по тестированию:** `docs/testing/DASHBOARD_TESTING_GUIDE.md`
+- **Рекомендации по индексам БД:** `docs/database/INDEXES_RECOMMENDATIONS.md`
+
+---
+
+## Changelog
+
+### 2025-11-25 - Version 1.0
+
+**Добавлено:**
+- Эндпоинт `/analytics/summary` - сводная статистика
+- Эндпоинт `/warehouses` - список складов
+- Эндпоинт `/sizes` - список размеров
+- Фильтрация по складам и размерам в `/stocks/all`
+- Поиск по названию и артикулу в `/stocks/all`
+- Поддержка периодов 60d, 90d, 180d в `/analytics/sales`
+- Кэширование для всех эндпоинтов
+- Валидация всех параметров
+
+**Изменено:**
+- Период по умолчанию в `/analytics/sales` изменен с `7d` на `30d`
+- Улучшена структура ответов
+- Добавлены заголовки кэширования
+
+---
+
+## Поддержка
+
+Для вопросов и проблем обращайтесь к документации или создавайте issue в репозитории проекта.

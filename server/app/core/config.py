@@ -27,11 +27,15 @@ class Settings:
         os.getenv("CORS_ALLOW_CREDENTIALS", "True").lower() == "true"
     )
     CORS_ALLOW_METHODS: List[str] = os.getenv(
-        "CORS_ALLOW_METHODS", "*"
+        "CORS_ALLOW_METHODS", "GET,POST,PUT,DELETE,OPTIONS"
     ).split(",")
     CORS_ALLOW_HEADERS: List[str] = os.getenv(
-        "CORS_ALLOW_HEADERS", "*"
+        "CORS_ALLOW_HEADERS", "Content-Type,Authorization,X-API-SECRET-KEY,X-Requested-With"
     ).split(",")
+    CORS_EXPOSE_HEADERS: List[str] = os.getenv(
+        "CORS_EXPOSE_HEADERS", "Cache-Control,X-Cache-TTL,X-RateLimit-Limit,X-RateLimit-Remaining"
+    ).split(",")
+    CORS_MAX_AGE: int = int(os.getenv("CORS_MAX_AGE", "600"))  # 10 минут
 
     # === НАСТРОЙКИ БЕЗОПАСНОСТИ ===
     TRUSTED_HOSTS: List[str] = os.getenv("TRUSTED_HOSTS", "*").split(",")
@@ -64,13 +68,15 @@ class Settings:
 
     def get_cors_config(self) -> dict:
         """
-        Получить конфигурацию CORS
+        Получить конфигурацию CORS для дашборда
         """
         return {
             "allow_origins": self.CORS_ORIGINS,
             "allow_credentials": self.CORS_ALLOW_CREDENTIALS,
             "allow_methods": self.CORS_ALLOW_METHODS,
             "allow_headers": self.CORS_ALLOW_HEADERS,
+            "expose_headers": self.CORS_EXPOSE_HEADERS,
+            "max_age": self.CORS_MAX_AGE,
         }
 
     def get_trusted_hosts_config(self) -> dict:

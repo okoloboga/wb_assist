@@ -3,16 +3,14 @@
  */
 
 // Генерация данных для разных периодов
-const generateMockData = (months: number) => {
+const generateMockData = (days: number) => {
   const data = []
-  const daysPerMonth = 30
-  const totalDays = months * daysPerMonth
-  const pointsCount = Math.min(totalDays, months * 4) // 4 точки на месяц максимум
+  const pointsCount = Math.min(days, Math.ceil(days / 7)) // Примерно 1 точка на неделю
 
   for (let i = 0; i < pointsCount; i++) {
-    const dayOffset = Math.floor((totalDays / pointsCount) * i)
+    const dayOffset = Math.floor((days / pointsCount) * i)
     const date = new Date()
-    date.setDate(date.getDate() - (totalDays - dayOffset))
+    date.setDate(date.getDate() - (days - dayOffset))
 
     const baseOrders = 300 + Math.random() * 200
     const purchaseRate = 0.8 + Math.random() * 0.1
@@ -32,14 +30,14 @@ const generateMockData = (months: number) => {
 }
 
 export const mockChartDataByPeriod = {
-  '1month': generateMockData(1),
-  '2months': generateMockData(2),
-  '3months': generateMockData(3),
-  '6months': generateMockData(6),
+  '30days': generateMockData(30),
+  '60days': generateMockData(60),
+  '90days': generateMockData(90),
+  '180days': generateMockData(180),
 }
 
 // Для обратной совместимости
-export const mockChartData = mockChartDataByPeriod['1month']
+export const mockChartData = mockChartDataByPeriod['30days']
 
 export const mockWarehouseData = [
   {

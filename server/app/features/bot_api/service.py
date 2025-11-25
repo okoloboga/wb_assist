@@ -769,7 +769,7 @@ class BotAPIService:
             }
 
     async def get_analytics_sales(self, user: Dict[str, Any], period: str = "7d") -> Dict[str, Any]:
-        """Получение аналитики продаж"""
+        """Получение аналитики продаж с кэшированием"""
         try:
             cabinet = await self.get_user_cabinet(user["telegram_id"])
             if not cabinet:
@@ -778,8 +778,25 @@ class BotAPIService:
                     "error": "Кабинет WB не найден"
                 }
             
-            # Получаем данные из БД
-            analytics_data = await self._fetch_analytics_from_db(cabinet, period)
+            # Проверяем кэш
+            cache_key = f"wb:analytics:sales:cabinet:{cabinet.id}:period:{period}"
+            cached_data = await self.cache_manager.get_cached_data(cache_key, "analytics")
+            
+            if cached_data:
+                logger.info(f"Analytics cache HIT for cabinet {cabinet.id}, period {period}")
+                analytics_data = cached_data
+            else:
+                logger.info(f"Analytics cache MISS for cabinet {cabinet.id}, period {period}")
+                # Получаем данные из БД
+                analytics_data = await self._fetch_analytics_from_db(cabinet, period)
+                
+                # Сохраняем в кэш на 15 минут
+                await self.cache_manager.set_cached_data(
+                    cache_key, 
+                    analytics_data, 
+                    "analytics",
+                    ttl=900  # 15 минут
+                )
             
             # Форматируем Telegram сообщение
             telegram_text = self.formatter.format_analytics(analytics_data)
@@ -1194,7 +1211,7 @@ class BotAPIService:
             logger.error(f"Ошибка генерации графика: {e}")
             return ""
     async def start_sync(self, user: Dict[str, Any]) -> Dict[str, Any]:
-        """Запуск синхронизации данных"""
+        """Запуск синхронизации данных с инвалидацией кэша"""
         try:
             logger.info(f"start_sync called with user: {user}")
             cabinet = await self.get_user_cabinet(user["telegram_id"])
@@ -1205,12 +1222,20 @@ class BotAPIService:
                     "error": "Кабинет WB не найден"
                 }
             
+            # Инвалидируем кэш перед синхронизацией
+            await self.cache_manager.invalidate_cache(cabinet_id=cabinet.id)
+            logger.info(f"Cache invalidated for cabinet {cabinet.id}")
+            
             # Запускаем синхронизацию
             logger.info(f"Calling sync_all_data for cabinet {cabinet.id}")
             result = await self.sync_service.sync_all_data(cabinet)
             logger.info(f"sync_all_data result: {result}")
             
             if result["status"] == "success":
+                # Инвалидируем кэш после синхронизации
+                await self.cache_manager.invalidate_cache(cabinet_id=cabinet.id)
+                logger.info(f"Cache invalidated after sync for cabinet {cabinet.id}")
+                
                 return {
                     "success": True,
                     "data": result,
@@ -1242,6 +1267,276 @@ class BotAPIService:
             
         except Exception as e:
             logger.error(f"Ошибка получения статуса синхронизации: {e}")
+            return {
+                "success": False,
+                "error": str(e)
+            }
+
+    async def get_warehouses_list(self, user: Dict[str, Any]) -> Dict[str, Any]:
+        """Получение списка всех доступных складов с кэшированием"""
+        try:
+            telegram_id = user.telegram_id if hasattr(user, 'telegram_id') else user["telegram_id"]
+            cabinet = await self.get_user_cabinet(telegram_id)
+            
+            if not cabinet:
+                return {
+                    "success": False,
+                    "error": "Кабинет WB не найден"
+                }
+            
+            # Проверяем кэш
+            cache_key = f"wb:warehouses:list:cabinet:{cabinet.id}"
+            cached_data = await self.cache_manager.get_cached_data(cache_key, "warehouses")
+            
+            if cached_data:
+                logger.info(f"Warehouses cache HIT for cabinet {cabinet.id}")
+                return {
+                    "success": True,
+                    "warehouses": cached_data
+                }
+            
+            logger.info(f"Warehouses cache MISS for cabinet {cabinet.id}")
+            
+            # Получаем уникальные склады с количеством товаров
+            warehouses_query = self.db.query(
+                WBStock.warehouse_name,
+                func.count(func.distinct(WBStock.nm_id)).label('product_count')
+            ).filter(
+                and_(
+                    WBStock.cabinet_id == cabinet.id,
+                    WBStock.quantity > 0,
+                    WBStock.warehouse_name.isnot(None)
+                )
+            ).group_by(WBStock.warehouse_name).all()
+            
+            warehouses = [
+                {
+                    "name": row.warehouse_name,
+                    "product_count": row.product_count
+                }
+                for row in warehouses_query
+            ]
+            
+            # Сортируем по количеству товаров (убывание)
+            warehouses.sort(key=lambda x: x["product_count"], reverse=True)
+            
+            # Сохраняем в кэш на 1 час
+            await self.cache_manager.set_cached_data(
+                cache_key,
+                warehouses,
+                "warehouses",
+                ttl=3600
+            )
+            
+            return {
+                "success": True,
+                "warehouses": warehouses
+            }
+            
+        except Exception as e:
+            logger.error(f"Ошибка получения списка складов: {e}")
+            return {
+                "success": False,
+                "error": str(e)
+            }
+
+    async def get_sizes_list(self, user: Dict[str, Any]) -> Dict[str, Any]:
+        """Получение списка всех доступных размеров с кэшированием"""
+        try:
+            telegram_id = user.telegram_id if hasattr(user, 'telegram_id') else user["telegram_id"]
+            cabinet = await self.get_user_cabinet(telegram_id)
+            
+            if not cabinet:
+                return {
+                    "success": False,
+                    "error": "Кабинет WB не найден"
+                }
+            
+            # Проверяем кэш
+            cache_key = f"wb:sizes:list:cabinet:{cabinet.id}"
+            cached_data = await self.cache_manager.get_cached_data(cache_key, "warehouses")
+            
+            if cached_data:
+                logger.info(f"Sizes cache HIT for cabinet {cabinet.id}")
+                return {
+                    "success": True,
+                    "sizes": cached_data
+                }
+            
+            logger.info(f"Sizes cache MISS for cabinet {cabinet.id}")
+            
+            # Получаем уникальные размеры
+            sizes_query = self.db.query(
+                func.distinct(WBStock.size)
+            ).filter(
+                and_(
+                    WBStock.cabinet_id == cabinet.id,
+                    WBStock.quantity > 0,
+                    WBStock.size.isnot(None)
+                )
+            ).all()
+            
+            sizes = [row[0] for row in sizes_query if row[0]]
+            
+            # Логическая сортировка размеров
+            sizes_sorted = self._sort_sizes_logically(sizes)
+            
+            # Сохраняем в кэш на 1 час
+            await self.cache_manager.set_cached_data(
+                cache_key,
+                sizes_sorted,
+                "warehouses",
+                ttl=3600
+            )
+            
+            return {
+                "success": True,
+                "sizes": sizes_sorted
+            }
+            
+        except Exception as e:
+            logger.error(f"Ошибка получения списка размеров: {e}")
+            return {
+                "success": False,
+                "error": str(e)
+            }
+
+    def _sort_sizes_logically(self, sizes: List[str]) -> List[str]:
+        """Логическая сортировка размеров (XS, S, M, L, XL, XXL, числа)"""
+        # Определяем порядок стандартных размеров
+        size_order = {
+            'XXS': 1, 'XS': 2, 'S': 3, 'M': 4, 'L': 5, 'XL': 6, 'XXL': 7, 'XXXL': 8,
+            'ONE SIZE': 100
+        }
+        
+        def size_key(size: str):
+            size_upper = size.upper().strip()
+            
+            # Если размер в словаре, используем его порядок
+            if size_upper in size_order:
+                return (0, size_order[size_upper], size)
+            
+            # Если размер - число, сортируем численно
+            try:
+                return (1, int(size), size)
+            except ValueError:
+                pass
+            
+            # Если размер содержит число (например, "42-44"), извлекаем первое число
+            import re
+            numbers = re.findall(r'\d+', size)
+            if numbers:
+                return (1, int(numbers[0]), size)
+            
+            # Остальные размеры сортируем алфавитно
+            return (2, 0, size)
+        
+        return sorted(sizes, key=size_key)
+
+    async def get_analytics_summary(self, user: Dict[str, Any], period: str = "30d") -> Dict[str, Any]:
+        """Получение сводной статистики для карточек дашборда с кэшированием"""
+        try:
+            telegram_id = user.telegram_id if hasattr(user, 'telegram_id') else user["telegram_id"]
+            cabinet = await self.get_user_cabinet(telegram_id)
+            
+            if not cabinet:
+                return {
+                    "success": False,
+                    "error": "Кабинет WB не найден"
+                }
+            
+            # Проверяем кэш
+            cache_key = f"wb:analytics:summary:cabinet:{cabinet.id}:period:{period}"
+            cached_data = await self.cache_manager.get_cached_data(cache_key, "analytics")
+            
+            if cached_data:
+                logger.info(f"Analytics summary cache HIT for cabinet {cabinet.id}, period {period}")
+                return {
+                    "success": True,
+                    "summary": cached_data["summary"],
+                    "period": cached_data["period"]
+                }
+            
+            logger.info(f"Analytics summary cache MISS for cabinet {cabinet.id}, period {period}")
+            
+            # Парсим период
+            period_days = 30
+            if period.endswith('d'):
+                try:
+                    period_days = int(period[:-1])
+                    if period_days not in [7, 30, 60, 90, 180]:
+                        period_days = 30
+                except ValueError:
+                    period_days = 30
+            
+            # Вычисляем диапазон дат
+            now_msk = TimezoneUtils.now_msk()
+            period_start_msk = now_msk - timedelta(days=period_days)
+            period_start = TimezoneUtils.to_utc(period_start_msk)
+            now_utc = TimezoneUtils.to_utc(now_msk)
+            
+            # Получаем заказы за период
+            orders = self.db.query(WBOrder).filter(
+                and_(
+                    WBOrder.cabinet_id == cabinet.id,
+                    WBOrder.order_date >= period_start,
+                    WBOrder.order_date < now_utc
+                )
+            ).all()
+            
+            # Получаем продажи за период
+            from ..wb_api.models_sales import WBSales
+            sales = self.db.query(WBSales).filter(
+                and_(
+                    WBSales.cabinet_id == cabinet.id,
+                    WBSales.sale_date >= period_start,
+                    WBSales.sale_date < now_utc,
+                    or_(WBSales.is_cancel == False, WBSales.is_cancel.is_(None))
+                )
+            ).all()
+            
+            # Подсчитываем метрики
+            total_orders = len(orders)
+            active_orders = len([o for o in orders if o.status != 'canceled'])
+            canceled_orders = len([o for o in orders if o.status == 'canceled'])
+            
+            buyouts = len([s for s in sales if s.type == 'buyout'])
+            returns = len([s for s in sales if s.type == 'return'])
+            
+            summary = {
+                "orders": total_orders,
+                "purchases": buyouts,
+                "cancellations": canceled_orders,
+                "returns": returns
+            }
+            
+            period_info = {
+                "start": period_start_msk.date().isoformat(),
+                "end": now_msk.date().isoformat(),
+                "days": period_days
+            }
+            
+            result_data = {
+                "summary": summary,
+                "period": period_info
+            }
+            
+            # Сохраняем в кэш на 15 минут
+            await self.cache_manager.set_cached_data(
+                cache_key,
+                result_data,
+                "analytics",
+                ttl=900
+            )
+            
+            return {
+                "success": True,
+                "summary": summary,
+                "period": period_info
+            }
+            
+        except Exception as e:
+            logger.error(f"Ошибка получения сводной статистики: {e}")
             return {
                 "success": False,
                 "error": str(e)
@@ -1969,28 +2264,44 @@ class BotAPIService:
             yesterday_start_msk = TimezoneUtils.get_yesterday_start_msk()
             week_start_msk = TimezoneUtils.get_week_start_msk()
             month_start_msk = TimezoneUtils.get_month_start_msk()
-            quarter_start_msk = now_msk - timedelta(days=90)
+            
+            # Парсим период (поддержка: 7d, 30d, 60d, 90d, 180d)
+            period_days = 7  # По умолчанию
+            if period.endswith('d'):
+                try:
+                    period_days = int(period[:-1])
+                    # Валидация периода
+                    if period_days not in [7, 30, 60, 90, 180]:
+                        logger.warning(f"Неподдерживаемый период {period}, используем 30d")
+                        period_days = 30
+                except ValueError:
+                    logger.warning(f"Некорректный формат периода {period}, используем 7d")
+                    period_days = 7
+            
+            # Вычисляем начало периода
+            period_start_msk = now_msk - timedelta(days=period_days)
             
             # Конвертируем в UTC для фильтров БД
             today_start = TimezoneUtils.to_utc(today_start_msk)
             yesterday_start = TimezoneUtils.to_utc(yesterday_start_msk)
             week_start = TimezoneUtils.to_utc(week_start_msk)
             month_start = TimezoneUtils.to_utc(month_start_msk)
-            quarter_start = TimezoneUtils.to_utc(quarter_start_msk)
+            period_start = TimezoneUtils.to_utc(period_start_msk)
             
             # Продажи по периодам
             sales_periods = {
                 "today": self._get_orders_period(cabinet.id, today_start, TimezoneUtils.to_utc(now_msk)),
                 "yesterday": self._get_orders_period(cabinet.id, yesterday_start, today_start),
                 "7_days": self._get_orders_period(cabinet.id, week_start, TimezoneUtils.to_utc(now_msk)),
-                "30_days": self._get_orders_period(cabinet.id, month_start, TimezoneUtils.to_utc(now_msk))
+                "30_days": self._get_orders_period(cabinet.id, month_start, TimezoneUtils.to_utc(now_msk)),
+                "selected_period": self._get_orders_period(cabinet.id, period_start, TimezoneUtils.to_utc(now_msk))
             }
             
             # Динамика
             dynamics = self._calculate_dynamics(sales_periods)
             
-            # Топ товары
-            top_products = self._get_top_products(cabinet.id, week_start, TimezoneUtils.to_utc(now_msk))
+            # Топ товары за выбранный период
+            top_products = self._get_top_products(cabinet.id, period_start, TimezoneUtils.to_utc(now_msk))
             
             # Сводка остатков
             stocks_summary = self._get_stocks_summary(cabinet.id)
@@ -1999,6 +2310,12 @@ class BotAPIService:
             recommendations = self._generate_recommendations(sales_periods, stocks_summary)
             
             return {
+                "period": period,
+                "period_days": period_days,
+                "date_range": {
+                    "start": period_start_msk.date().isoformat(),
+                    "end": now_msk.date().isoformat()
+                },
                 "sales_periods": sales_periods,
                 "dynamics": dynamics,
                 "top_products": top_products,
@@ -2191,8 +2508,25 @@ class BotAPIService:
         
         return recommendations
 
-    async def get_all_stocks_report(self, user, limit: int = 15, offset: int = 0) -> Dict[str, Any]:
-        """Получение отчета по всем остаткам с группировкой по товарам, складам и размерам"""
+    async def get_all_stocks_report(
+        self, 
+        user, 
+        limit: int = 15, 
+        offset: int = 0,
+        warehouse: Optional[str] = None,
+        size: Optional[str] = None,
+        search: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Получение отчета по всем остаткам с группировкой по товарам, складам и размерам (с кэшированием)
+        
+        Args:
+            user: Пользователь
+            limit: Количество товаров на странице
+            offset: Смещение для пагинации
+            warehouse: Фильтр по складу (можно несколько через запятую)
+            size: Фильтр по размеру (можно несколько через запятую)
+            search: Поиск по названию товара или артикулу
+        """
         try:
             # Получаем telegram_id из объекта user
             telegram_id = user.telegram_id if hasattr(user, 'telegram_id') else user["telegram_id"]
@@ -2204,6 +2538,41 @@ class BotAPIService:
                     "error": "Кабинет WB не найден"
                 }
             
+            # Формируем ключ кэша с учетом всех параметров
+            cache_key_parts = [
+                f"wb:stocks:all:cabinet:{cabinet.id}",
+                f"limit:{limit}",
+                f"offset:{offset}"
+            ]
+            if warehouse:
+                cache_key_parts.append(f"warehouse:{warehouse}")
+            if size:
+                cache_key_parts.append(f"size:{size}")
+            if search:
+                cache_key_parts.append(f"search:{search}")
+            
+            cache_key = ":".join(cache_key_parts)
+            
+            # Проверяем кэш
+            cached_data = await self.cache_manager.get_cached_data(cache_key, "stocks")
+            
+            if cached_data:
+                logger.info(f"Stocks cache HIT for cabinet {cabinet.id}")
+                return {
+                    "success": True,
+                    "data": cached_data,
+                    "telegram_text": self.formatter.format_all_stocks_report(cached_data),
+                    "orders": [],
+                    "pagination": cached_data["pagination"],
+                    "statistics": {},
+                    "stocks": cached_data,
+                    "reviews": {},
+                    "analytics": {},
+                    "order": None
+                }
+            
+            logger.info(f"Stocks cache MISS for cabinet {cabinet.id}")
+            
             # Получаем все остатки с информацией о товарах
             stocks_query = self.db.query(WBStock, WBProduct).outerjoin(
                 WBProduct,
@@ -2214,12 +2583,36 @@ class BotAPIService:
             ).filter(
                 WBStock.cabinet_id == cabinet.id,
                 WBStock.quantity > 0  # Только товары с остатками > 0
-            ).all()
+            )
+            
+            # Применяем фильтр по складу
+            if warehouse:
+                warehouses = [w.strip() for w in warehouse.split(',')]
+                stocks_query = stocks_query.filter(WBStock.warehouse_name.in_(warehouses))
+            
+            # Применяем фильтр по размеру
+            if size:
+                sizes = [s.strip() for s in size.split(',')]
+                stocks_query = stocks_query.filter(WBStock.size.in_(sizes))
+            
+            # Применяем поиск по названию или артикулу
+            if search:
+                search_pattern = f"%{search}%"
+                stocks_query = stocks_query.filter(
+                    or_(
+                        WBProduct.name.ilike(search_pattern),
+                        WBProduct.vendor_code.ilike(search_pattern),
+                        WBStock.name.ilike(search_pattern),
+                        WBStock.article.ilike(search_pattern)
+                    )
+                )
+            
+            stocks_query_results = stocks_query.all()
             
             # Группируем данные по nm_id → warehouse_name → size
             products_dict = {}
             
-            for stock, product in stocks_query:
+            for stock, product in stocks_query_results:
                 nm_id = stock.nm_id
                 warehouse_name = stock.warehouse_name or "Неизвестный склад"
                 size = stock.size or "ONE SIZE"
@@ -2278,6 +2671,14 @@ class BotAPIService:
             paginated_products = products_list[offset:offset + limit]
             has_more = offset + limit < total_products
             
+            # Получаем список доступных складов и размеров для фильтров
+            all_warehouses = set()
+            all_sizes = set()
+            for product in products_list:
+                for warehouse_name, warehouse_data in product["warehouses"].items():
+                    all_warehouses.add(warehouse_name)
+                    all_sizes.update(warehouse_data["sizes"].keys())
+            
             stocks_data = {
                 "products": paginated_products,
                 "pagination": {
@@ -2285,8 +2686,25 @@ class BotAPIService:
                     "offset": offset,
                     "total": total_products,
                     "has_more": has_more
+                },
+                "filters": {
+                    "warehouse": warehouse,
+                    "size": size,
+                    "search": search
+                },
+                "available_filters": {
+                    "warehouses": sorted(list(all_warehouses)),
+                    "sizes": sorted(list(all_sizes))
                 }
             }
+            
+            # Сохраняем в кэш на 5 минут
+            await self.cache_manager.set_cached_data(
+                cache_key,
+                stocks_data,
+                "stocks",
+                ttl=300  # 5 минут
+            )
             
             # Форматируем Telegram сообщение
             telegram_text = self.formatter.format_all_stocks_report(stocks_data)

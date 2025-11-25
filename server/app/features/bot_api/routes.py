@@ -4,7 +4,7 @@ Bot API routes для интеграции с Telegram ботом
 
 import logging
 from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status, Response
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -189,12 +189,16 @@ async def get_dynamic_critical_stocks(
 
 @router.get("/stocks/all", response_model=AllStocksReportAPIResponse)
 async def get_all_stocks_report(
+    response: Response,
     telegram_id: int = Query(..., description="Telegram ID пользователя"),
     limit: int = Query(15, ge=1, le=100, description="Количество товаров на странице"),
     offset: int = Query(0, ge=0, description="Смещение для пагинации"),
+    warehouse: Optional[str] = Query(None, description="Фильтр по складу (можно несколько через запятую)"),
+    size: Optional[str] = Query(None, description="Фильтр по размеру (можно несколько через запятую)"),
+    search: Optional[str] = Query(None, description="Поиск по названию товара или артикулу"),
     bot_service: BotAPIService = Depends(get_bot_service)
 ):
-    """Получение отчета по всем остаткам с группировкой по товарам, складам и размерам"""
+    """Получение отчета по всем остаткам с фильтрацией и поиском (кэшируется на 5 минут)"""
     try:
         cabinet = await bot_service.get_user_cabinet(telegram_id)
         if not cabinet:
@@ -205,10 +209,21 @@ async def get_all_stocks_report(
         if not user:
             raise HTTPException(status_code=500, detail="Ошибка создания пользователя")
         
-        result = await bot_service.get_all_stocks_report(user, limit=limit, offset=offset)
+        result = await bot_service.get_all_stocks_report(
+            user, 
+            limit=limit, 
+            offset=offset,
+            warehouse=warehouse,
+            size=size,
+            search=search
+        )
         
         if not result["success"]:
             raise HTTPException(status_code=500, detail=result["error"])
+        
+        # Добавляем заголовки кэширования
+        response.headers["Cache-Control"] = "public, max-age=300"  # 5 минут
+        response.headers["X-Cache-TTL"] = "300"
         
         return AllStocksReportAPIResponse(
             status="success",
@@ -262,11 +277,12 @@ async def get_reviews_summary(
 
 @router.get("/analytics/sales", response_model=AnalyticsSalesAPIResponse)
 async def get_analytics_sales(
+    response: Response,
     telegram_id: int = Query(..., description="Telegram ID пользователя"),
-    period: str = Query("7d", description="Период анализа (7d, 30d, 90d)"),
+    period: str = Query("30d", description="Период анализа (7d, 30d, 60d, 90d, 180d)"),
     bot_service: BotAPIService = Depends(get_bot_service)
 ):
-    """Получение статистики продаж и аналитики"""
+    """Получение статистики продаж и аналитики за выбранный период (кэшируется на 15 минут)"""
     try:
         cabinet = await bot_service.get_user_cabinet(telegram_id)
         if not cabinet:
@@ -281,6 +297,10 @@ async def get_analytics_sales(
         
         if not result["success"]:
             raise HTTPException(status_code=500, detail=result["error"])
+        
+        # Добавляем заголовки кэширования
+        response.headers["Cache-Control"] = "public, max-age=900"  # 15 минут
+        response.headers["X-Cache-TTL"] = "900"
         
         return AnalyticsSalesAPIResponse(
             status="success",
@@ -692,3 +712,106 @@ async def semantic_core_ready_webhook(
     except Exception as e:
         logger.error(f"Ошибка обработки webhook semantic-core-ready: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal server error")
+
+
+# ===== ДОПОЛНИТЕЛЬНЫЕ ЭНДПОИНТЫ ДЛЯ ДАШБОРДА =====
+
+@router.get("/warehouses")
+async def get_warehouses_list(
+    response: Response,
+    telegram_id: int = Query(..., description="Telegram ID пользователя"),
+    bot_service: BotAPIService = Depends(get_bot_service)
+):
+    """Получение списка всех доступных складов (кэшируется на 1 час)"""
+    try:
+        user = await bot_service.get_user_by_telegram_id(telegram_id)
+        if not user:
+            raise HTTPException(status_code=500, detail="Ошибка создания пользователя")
+        
+        result = await bot_service.get_warehouses_list(user)
+        
+        if not result["success"]:
+            raise HTTPException(status_code=500, detail=result["error"])
+        
+        # Добавляем заголовки кэширования
+        response.headers["Cache-Control"] = "public, max-age=3600"  # 1 час
+        response.headers["X-Cache-TTL"] = "3600"
+        
+        return {
+            "success": True,
+            "warehouses": result["warehouses"]
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Ошибка получения списка складов для telegram_id {telegram_id}: {e}")
+        raise HTTPException(status_code=500, detail="Ошибка сервера")
+
+
+@router.get("/sizes")
+async def get_sizes_list(
+    response: Response,
+    telegram_id: int = Query(..., description="Telegram ID пользователя"),
+    bot_service: BotAPIService = Depends(get_bot_service)
+):
+    """Получение списка всех доступных размеров (кэшируется на 1 час)"""
+    try:
+        user = await bot_service.get_user_by_telegram_id(telegram_id)
+        if not user:
+            raise HTTPException(status_code=500, detail="Ошибка создания пользователя")
+        
+        result = await bot_service.get_sizes_list(user)
+        
+        if not result["success"]:
+            raise HTTPException(status_code=500, detail=result["error"])
+        
+        # Добавляем заголовки кэширования
+        response.headers["Cache-Control"] = "public, max-age=3600"  # 1 час
+        response.headers["X-Cache-TTL"] = "3600"
+        
+        return {
+            "success": True,
+            "sizes": result["sizes"]
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Ошибка получения списка размеров для telegram_id {telegram_id}: {e}")
+        raise HTTPException(status_code=500, detail="Ошибка сервера")
+
+
+@router.get("/analytics/summary")
+async def get_analytics_summary(
+    response: Response,
+    telegram_id: int = Query(..., description="Telegram ID пользователя"),
+    period: str = Query("30d", description="Период анализа (7d, 30d, 60d, 90d, 180d)"),
+    bot_service: BotAPIService = Depends(get_bot_service)
+):
+    """Получение сводной статистики для карточек дашборда (кэшируется на 15 минут)"""
+    try:
+        user = await bot_service.get_user_by_telegram_id(telegram_id)
+        if not user:
+            raise HTTPException(status_code=500, detail="Ошибка создания пользователя")
+        
+        result = await bot_service.get_analytics_summary(user, period)
+        
+        if not result["success"]:
+            raise HTTPException(status_code=500, detail=result["error"])
+        
+        # Добавляем заголовки кэширования
+        response.headers["Cache-Control"] = "public, max-age=900"  # 15 минут
+        response.headers["X-Cache-TTL"] = "900"
+        
+        return {
+            "success": True,
+            "summary": result["summary"],
+            "period": result["period"]
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Ошибка получения сводной статистики для telegram_id {telegram_id}: {e}")
+        raise HTTPException(status_code=500, detail="Ошибка сервера")

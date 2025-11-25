@@ -1,69 +1,58 @@
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import { ShoppingCart, CheckCircle, XCircle, RotateCcw } from 'lucide-react'
 import { Header } from './components/layout/Header'
 import { Container } from './components/layout/Container'
 import { TimePeriodSelector } from './components/common/TimePeriodSelector'
-import { DateRangePicker } from './components/common/DateRangePicker'
 import { MetricCard } from './components/charts/MetricCard'
 import { MetricsCharts } from './components/charts/MetricsCharts'
 import { WarehouseTable } from './components/warehouse/WarehouseTable'
-import { mockChartDataByPeriod, mockWarehouseData, mockMetrics } from './utils/mockData'
+import { useAnalyticsSummary, useAnalyticsSales, useStocks } from './api/hooks'
 
-type TimePeriod = '1month' | '2months' | '3months' | '6months' | 'custom'
+type TimePeriod = '30days' | '60days' | '90days' | '180days'
 
 function App() {
-  const [period, setPeriod] = useState<TimePeriod>('1month')
-  const [showDatePicker, setShowDatePicker] = useState(false)
-  const [customDateRange, setCustomDateRange] = useState<{
-    start: Date
-    end: Date
-  } | null>(null)
+  const [period, setPeriod] = useState<TimePeriod>('30days')
 
-  const handleCustomRangeSelect = (startDate: Date, endDate: Date) => {
-    setCustomDateRange({ start: startDate, end: endDate })
-    setPeriod('custom')
+  // Преобразуем период в формат API
+  const periodMap: Record<TimePeriod, string> = {
+    '30days': '30d',
+    '60days': '60d',
+    '90days': '90d',
+    '180days': '180d',
   }
+  const apiPeriod = periodMap[period]
 
-  const getCustomLabel = () => {
-    if (customDateRange) {
-      const start = customDateRange.start.toLocaleDateString('ru-RU', {
-        day: '2-digit',
-        month: '2-digit',
-      })
-      const end = customDateRange.end.toLocaleDateString('ru-RU', {
-        day: '2-digit',
-        month: '2-digit',
-      })
-      return `${start} - ${end}`
-    }
-    return undefined
-  }
+  // Получаем данные из API
+  const { data: summaryData, isLoading: summaryLoading } = useAnalyticsSummary(apiPeriod)
+  const { data: salesData, isLoading: salesLoading } = useAnalyticsSales(apiPeriod)
+  const { data: stocksData, isLoading: stocksLoading } = useStocks({ limit: 100 })
 
-  const chartData =
-    period === 'custom' && customDateRange
-      ? mockChartDataByPeriod['1month'] // В реальном приложении здесь будут данные за выбранный период
-      : mockChartDataByPeriod[period as keyof typeof mockChartDataByPeriod] ||
-        mockChartDataByPeriod['1month']
+  // Преобразуем данные складов в формат компонента
+  const warehouseData = useMemo(() => {
+    if (!stocksData?.stocks) return []
+    return stocksData.stocks.map((stock: any) => ({
+      id: `${stock.nm_id}-${stock.warehouse_name}-${stock.size}`,
+      nomenclature: stock.name || `Товар ${stock.nm_id}`,
+      size: stock.size || 'Без размера',
+      warehouse: stock.warehouse_name || 'Неизвестно',
+      quantity: stock.quantity || 0,
+    }))
+  }, [stocksData])
+
+  // Преобразуем данные графика
+  const chartData = useMemo(() => {
+    if (!salesData?.daily_trends) return []
+    return salesData.daily_trends
+  }, [salesData])
+
+  const isLoading = summaryLoading || salesLoading || stocksLoading
 
   return (
     <div className="min-h-screen bg-gray-50">
       <Header />
       <Container>
         {/* Time Period Selector */}
-        <TimePeriodSelector
-          value={period}
-          onChange={setPeriod}
-          onCustomClick={() => setShowDatePicker(true)}
-          customLabel={getCustomLabel()}
-        />
-
-        {/* Date Range Picker Modal */}
-        {showDatePicker && (
-          <DateRangePicker
-            onRangeSelect={handleCustomRangeSelect}
-            onClose={() => setShowDatePicker(false)}
-          />
-        )}
+        <TimePeriodSelector value={period} onChange={setPeriod} />
 
         {/* Orders Section */}
         <section className="mb-6 sm:mb-8">
@@ -72,32 +61,43 @@ function App() {
           </h2>
 
           {/* Metric Cards */}
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-6">
-            <MetricCard
-              title="Заказы"
-              value={mockMetrics.orders}
-              icon={ShoppingCart}
-              color="bg-blue-500"
-            />
-            <MetricCard
-              title="Выкупы"
-              value={mockMetrics.purchases}
-              icon={CheckCircle}
-              color="bg-green-500"
-            />
-            <MetricCard
-              title="Отмены"
-              value={mockMetrics.cancellations}
-              icon={XCircle}
-              color="bg-amber-500"
-            />
-            <MetricCard
-              title="Возвраты"
-              value={mockMetrics.returns}
-              icon={RotateCcw}
-              color="bg-red-500"
-            />
-          </div>
+          {isLoading ? (
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-6">
+              {Array.from({ length: 4 }).map((_, i) => (
+                <div key={i} className="bg-white p-4 sm:p-6 rounded-lg shadow-sm border animate-pulse">
+                  <div className="h-4 bg-gray-200 rounded mb-2"></div>
+                  <div className="h-8 bg-gray-200 rounded"></div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-6">
+              <MetricCard
+                title="Заказы"
+                value={summaryData?.summary.orders || 0}
+                icon={ShoppingCart}
+                color="bg-blue-500"
+              />
+              <MetricCard
+                title="Выкупы"
+                value={summaryData?.summary.purchases || 0}
+                icon={CheckCircle}
+                color="bg-green-500"
+              />
+              <MetricCard
+                title="Отмены"
+                value={summaryData?.summary.cancellations || 0}
+                icon={XCircle}
+                color="bg-amber-500"
+              />
+              <MetricCard
+                title="Возвраты"
+                value={summaryData?.summary.returns || 0}
+                icon={RotateCcw}
+                color="bg-red-500"
+              />
+            </div>
+          )}
 
           {/* Charts */}
           <MetricsCharts data={chartData} />
@@ -105,7 +105,7 @@ function App() {
 
         {/* Warehouse Section */}
         <section>
-          <WarehouseTable data={mockWarehouseData} />
+          <WarehouseTable data={warehouseData} />
         </section>
       </Container>
     </div>

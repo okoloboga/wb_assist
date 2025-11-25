@@ -1,95 +1,79 @@
-# Аналитический дашборд
+# WB Assistant Analytics Dashboard
 
-Веб-дашборд для визуализации аналитики продаж и состояния складов Wildberries.
+Аналитический дашборд для мониторинга продаж и остатков на Wildberries.
 
-## Технологии
+## Деплой на Vercel
 
-- **React 18** - UI библиотека
-- **TypeScript** - Type safety
-- **Vite** - Build tool
-- **Tailwind CSS** - Стилизация
-- **React Query** - Управление серверным состоянием
-- **Recharts** - Визуализация данных
-- **Axios** - HTTP клиент
+### Быстрый деплой
 
-## Установка
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/your-repo/wb_assist&project-name=wb-analytics-dashboard&root-directory=dashboard)
 
+### Ручной деплой
+
+1. Установите Vercel CLI:
 ```bash
-# Установить зависимости
-npm install
+npm install -g vercel
 ```
 
-## Разработка
+2. Войдите в аккаунт:
+```bash
+vercel login
+```
+
+3. Деплой из папки dashboard:
+```bash
+cd dashboard
+vercel
+```
+
+4. Настройте environment variables в Vercel Dashboard:
+   - `VITE_API_BASE_URL` - URL вашего backend API
+   - `VITE_API_SECRET_KEY` - секретный ключ API
+   - `VITE_TELEGRAM_ID` - ваш Telegram ID
+
+### Environment Variables
+
+Создайте в Vercel Dashboard следующие переменные:
+
+```
+VITE_API_BASE_URL=https://your-backend-url.com/api/v1/bot
+VITE_API_SECRET_KEY=your_secret_key
+VITE_TELEGRAM_ID=your_telegram_id
+```
+
+**Важно**: Backend должен быть доступен публично и иметь настроенный CORS для домена Vercel.
+
+## Локальная разработка
 
 ```bash
-# Запустить dev сервер
+# Установка зависимостей
+npm install
+
+# Запуск dev сервера
 npm run dev
 
-# Сервер будет доступен на http://localhost:3000
-```
-
-## Сборка
-
-```bash
 # Production build
 npm run build
 
-# Preview production build
+# Предпросмотр production build
 npm run preview
 ```
 
-## Структура проекта
+## Технологии
 
-```
-dashboard/
-├── src/
-│   ├── api/              # API клиенты
-│   ├── components/       # React компоненты
-│   │   ├── charts/       # Компоненты графиков
-│   │   ├── warehouse/    # Компоненты складов
-│   │   ├── common/       # Общие компоненты
-│   │   └── layout/       # Layout компоненты
-│   ├── hooks/            # Custom hooks
-│   ├── types/            # TypeScript типы
-│   ├── utils/            # Utility функции
-│   ├── App.tsx           # Главный компонент
-│   ├── main.tsx          # Entry point
-│   └── index.css         # Глобальные стили
-├── public/               # Статические файлы
-└── index.html            # HTML template
-```
+- React 18 + TypeScript
+- Vite
+- React Query
+- Tailwind CSS
+- Recharts
+- Lucide React
 
-## Конфигурация
+## Документация
 
-Скопируйте `.env.example` в `.env.development` и настройте переменные:
+- [Quick Start](./QUICK_START.md)
+- [Integration Guide](./INTEGRATION_COMPLETE.md)
+- [API Documentation](../docs/api/ANALYTICS_DASHBOARD_API.md)
 
-```bash
-VITE_API_BASE_URL=http://localhost:8000
-VITE_APP_TITLE=Аналитический дашборд
-```
+## Поддержка
 
-## Deployment
-
-### Nginx
-
-1. Соберите проект:
-```bash
-npm run build
-```
-
-2. Скопируйте содержимое `dist/` на сервер
-
-3. Используйте конфигурацию nginx (см. `nginx.conf`)
-
-## Статус разработки
-
-✅ Этап 1: Инициализация проекта (завершён)
-- Структура проекта создана
-- Конфигурация окружения настроена
-- Базовые типы данных определены
-
-⏳ Следующие этапы:
-- Этап 2: API клиент и хуки
-- Этап 3: Layout и общие компоненты
-- Этап 4: Графики и метрики
-- И далее...
+При возникновении проблем создайте issue в репозитории.
