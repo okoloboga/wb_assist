@@ -46,7 +46,7 @@ def create_competitor_products_keyboard(
         name = product.get('name') or 'Без названия'
         price = product.get('current_price')
         if price:
-            text = f"{name[:40]} - {price:.0f}₽"
+            text = f"{name[:40]}"
         else:
             text = name[:50]
         # Включаем ID конкурента в callback для возврата
