@@ -90,6 +90,7 @@ export const MetricsCharts = ({ data }: MetricsChartsProps) => {
           <h3 className="text-base sm:text-lg font-semibold text-gray-900 mb-4">
             Динамика метрик
           </h3>
+          {data && data.length > 0 ? (
           <ResponsiveContainer width="100%" height={400}>
             <LineChart data={data}>
               <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
@@ -132,6 +133,11 @@ export const MetricsCharts = ({ data }: MetricsChartsProps) => {
               })}
             </LineChart>
           </ResponsiveContainer>
+          ) : (
+            <div className="flex items-center justify-center h-[400px] text-gray-400">
+              <p>Нет данных для отображения</p>
+            </div>
+          )}
         </div>
       ) : (
         /* Empty State */

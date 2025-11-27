@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Calendar, X } from 'lucide-react'
+import { X } from 'lucide-react'
 
 interface DateRangePickerProps {
   onRangeSelect: (startDate: Date, endDate: Date) => void
@@ -79,8 +79,8 @@ export const DateRangePicker = ({ onRangeSelect, onClose }: DateRangePickerProps
                   const end = new Date()
                   const start = new Date()
                   start.setDate(start.getDate() - 7)
-                  setStartDate(start.toISOString().split('T')[0])
-                  setEndDate(end.toISOString().split('T')[0])
+                  setStartDate(start.toISOString().split('T')[0] || '')
+                  setEndDate(end.toISOString().split('T')[0] || '')
                 }}
                 className="px-3 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
               >
@@ -91,8 +91,8 @@ export const DateRangePicker = ({ onRangeSelect, onClose }: DateRangePickerProps
                   const end = new Date()
                   const start = new Date()
                   start.setDate(start.getDate() - 30)
-                  setStartDate(start.toISOString().split('T')[0])
-                  setEndDate(end.toISOString().split('T')[0])
+                  setStartDate(start.toISOString().split('T')[0] || '')
+                  setEndDate(end.toISOString().split('T')[0] || '')
                 }}
                 className="px-3 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
               >
@@ -103,8 +103,8 @@ export const DateRangePicker = ({ onRangeSelect, onClose }: DateRangePickerProps
                   const end = new Date()
                   const start = new Date()
                   start.setDate(start.getDate() - 90)
-                  setStartDate(start.toISOString().split('T')[0])
-                  setEndDate(end.toISOString().split('T')[0])
+                  setStartDate(start.toISOString().split('T')[0] || '')
+                  setEndDate(end.toISOString().split('T')[0] || '')
                 }}
                 className="px-3 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
               >
@@ -115,8 +115,8 @@ export const DateRangePicker = ({ onRangeSelect, onClose }: DateRangePickerProps
                   const end = new Date()
                   const start = new Date()
                   start.setMonth(start.getMonth() - 6)
-                  setStartDate(start.toISOString().split('T')[0])
-                  setEndDate(end.toISOString().split('T')[0])
+                  setStartDate(start.toISOString().split('T')[0] || '')
+                  setEndDate(end.toISOString().split('T')[0] || '')
                 }}
                 className="px-3 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
               >

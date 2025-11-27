@@ -189,16 +189,37 @@ class DashboardAPIClient {
   }
 
   /**
-   * Получение аналитики продаж
+   * Получение ежедневной динамики
    */
-  async getAnalyticsSales(
+  async getAnalyticsDailyTrends(
     telegramId: number,
-    period: string = '30d'
+    days: number = 30
   ): Promise<any> {
     const response = await this.request<{
-      success: boolean;
-      analytics: any;
-    }>(`/analytics/sales?telegram_id=${telegramId}&period=${period}`);
+      status: string;
+      analytics: {
+        meta: {
+          days_window: number;
+          date_range: { start: string; end: string };
+          generated_at: string;
+        };
+        time_series: Array<{
+          date: string;
+          orders: number;
+          cancellations: number;
+          buyouts: number;
+          returns: number;
+          orders_amount: number;
+          cancellations_amount: number;
+          buyouts_amount: number;
+          returns_amount: number;
+          avg_rating: number;
+        }>;
+        aggregates: any;
+        top_products: any[];
+        chart: any;
+      };
+    }>(`/analytics/daily-trends?telegram_id=${telegramId}&days=${days}`);
     
     return response.analytics;
   }

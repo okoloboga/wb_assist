@@ -17,6 +17,8 @@ export const WarehouseTable = ({ data }: WarehouseTableProps) => {
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedWarehouse, setSelectedWarehouse] = useState<string>('all')
   const [selectedSize, setSelectedSize] = useState<string>('all')
+  const [minQuantity, setMinQuantity] = useState<string>('')
+  const [maxQuantity, setMaxQuantity] = useState<string>('')
 
   // Получаем уникальные значения для фильтров
   const warehouses = useMemo(() => {
@@ -38,17 +40,23 @@ export const WarehouseTable = ({ data }: WarehouseTableProps) => {
       const matchesWarehouse =
         selectedWarehouse === 'all' || item.warehouse === selectedWarehouse
       const matchesSize = selectedSize === 'all' || item.size === selectedSize
+      
+      const min = minQuantity === '' ? 0 : parseInt(minQuantity)
+      const max = maxQuantity === '' ? Infinity : parseInt(maxQuantity)
+      const matchesQuantity = item.quantity >= min && item.quantity <= max
 
-      return matchesSearch && matchesWarehouse && matchesSize
+      return matchesSearch && matchesWarehouse && matchesSize && matchesQuantity
     })
-  }, [data, searchQuery, selectedWarehouse, selectedSize])
+  }, [data, searchQuery, selectedWarehouse, selectedSize, minQuantity, maxQuantity])
 
-  const hasActiveFilters = searchQuery !== '' || selectedWarehouse !== 'all' || selectedSize !== 'all'
+  const hasActiveFilters = searchQuery !== '' || selectedWarehouse !== 'all' || selectedSize !== 'all' || minQuantity !== '' || maxQuantity !== ''
 
   const clearFilters = () => {
     setSearchQuery('')
     setSelectedWarehouse('all')
     setSelectedSize('all')
+    setMinQuantity('')
+    setMaxQuantity('')
   }
 
   return (
@@ -73,9 +81,9 @@ export const WarehouseTable = ({ data }: WarehouseTableProps) => {
         </div>
 
         {/* Filters */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
           {/* Search */}
-          <div className="relative">
+          <div className="relative md:col-span-2">
             <Search
               size={18}
               className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400"
@@ -116,6 +124,27 @@ export const WarehouseTable = ({ data }: WarehouseTableProps) => {
               </option>
             ))}
           </select>
+
+          {/* Quantity Range Filter */}
+          <div className="flex items-center gap-2">
+            <input
+              type="number"
+              placeholder="От"
+              value={minQuantity}
+              onChange={(e) => setMinQuantity(e.target.value)}
+              min="0"
+              className="w-full px-3 py-2 bg-white border border-gray-300 rounded-lg text-gray-900 placeholder-gray-400 focus:ring-2 focus:ring-primary-500 focus:border-transparent outline-none transition-all text-sm"
+            />
+            <span className="text-gray-400">-</span>
+            <input
+              type="number"
+              placeholder="До"
+              value={maxQuantity}
+              onChange={(e) => setMaxQuantity(e.target.value)}
+              min="0"
+              className="w-full px-3 py-2 bg-white border border-gray-300 rounded-lg text-gray-900 placeholder-gray-400 focus:ring-2 focus:ring-primary-500 focus:border-transparent outline-none transition-all text-sm"
+            />
+          </div>
         </div>
       </div>
 

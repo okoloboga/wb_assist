@@ -6,7 +6,7 @@ import { TimePeriodSelector } from './components/common/TimePeriodSelector'
 import { MetricCard } from './components/charts/MetricCard'
 import { MetricsCharts } from './components/charts/MetricsCharts'
 import { WarehouseTable } from './components/warehouse/WarehouseTable'
-import { useAnalyticsSummary, useAnalyticsSales, useStocks } from './api/hooks'
+import { useAnalyticsSummary, useStocks, useAnalyticsDailyTrends } from './api/hooks'
 
 type TimePeriod = '30days' | '60days' | '90days' | '180days'
 
@@ -24,28 +24,49 @@ function App() {
 
   // Получаем данные из API
   const { data: summaryData, isLoading: summaryLoading } = useAnalyticsSummary(apiPeriod)
-  const { data: salesData, isLoading: salesLoading } = useAnalyticsSales(apiPeriod)
+  const { data: dailyTrendsData, isLoading: trendsLoading } = useAnalyticsDailyTrends(apiPeriod)
   const { data: stocksData, isLoading: stocksLoading } = useStocks({ limit: 100 })
 
   // Преобразуем данные складов в формат компонента
   const warehouseData = useMemo(() => {
-    if (!stocksData?.stocks) return []
-    return stocksData.stocks.map((stock: any) => ({
-      id: `${stock.nm_id}-${stock.warehouse_name}-${stock.size}`,
-      nomenclature: stock.name || `Товар ${stock.nm_id}`,
-      size: stock.size || 'Без размера',
-      warehouse: stock.warehouse_name || 'Неизвестно',
-      quantity: stock.quantity || 0,
-    }))
+    if (!stocksData?.stocks?.products) return []
+    
+    const result: any[] = []
+    
+    // Разворачиваем вложенную структуру products -> warehouses -> sizes
+    stocksData.stocks.products.forEach((product: any) => {
+      Object.entries(product.warehouses || {}).forEach(([warehouseName, warehouseData]: [string, any]) => {
+        Object.entries(warehouseData.sizes || {}).forEach(([size, quantity]: [string, any]) => {
+          result.push({
+            id: `${product.nm_id}-${warehouseName}-${size}`,
+            nomenclature: product.name || `Товар ${product.nm_id}`,
+            size: size,
+            warehouse: warehouseName,
+            quantity: quantity,
+          })
+        })
+      })
+    })
+    
+    return result
   }, [stocksData])
 
-  // Преобразуем данные графика
+  // Преобразуем данные графика из реального API
   const chartData = useMemo(() => {
-    if (!salesData?.daily_trends) return []
-    return salesData.daily_trends
-  }, [salesData])
+    if (!dailyTrendsData?.time_series) {
+      return []
+    }
+    
+    return dailyTrendsData.time_series.map((day: any) => ({
+      date: new Date(day.date).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' }),
+      orders: day.orders || 0,
+      purchases: day.buyouts || 0,  // В API это называется buyouts (выкупы)
+      cancellations: day.cancellations || 0,
+      returns: day.returns || 0,
+    }))
+  }, [dailyTrendsData])
 
-  const isLoading = summaryLoading || salesLoading || stocksLoading
+  const isLoading = summaryLoading || trendsLoading || stocksLoading
 
   return (
     <div className="min-h-screen bg-gray-50">

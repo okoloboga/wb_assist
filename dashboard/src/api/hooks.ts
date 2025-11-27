@@ -69,15 +69,25 @@ export function useStocks(
 }
 
 /**
- * Hook для получения аналитики продаж
+ * Hook для получения ежедневной динамики
  */
-export function useAnalyticsSales(
+export function useAnalyticsDailyTrends(
   period: string = '30d',
   options?: UseQueryOptions<any>
 ) {
+  // Преобразуем период в количество дней
+  const daysMap: Record<string, number> = {
+    '7d': 7,
+    '30d': 30,
+    '60d': 60,
+    '90d': 90,
+    '180d': 180,
+  }
+  const days = daysMap[period] || 30
+  
   return useQuery({
-    queryKey: ['analytics-sales', TELEGRAM_ID, period],
-    queryFn: () => apiClient.getAnalyticsSales(TELEGRAM_ID, period),
+    queryKey: ['analytics-daily-trends', TELEGRAM_ID, days],
+    queryFn: () => apiClient.getAnalyticsDailyTrends(TELEGRAM_ID, days),
     staleTime: 1000 * 60 * 15, // 15 минут
     ...options,
   });
