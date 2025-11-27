@@ -318,7 +318,7 @@ async def get_analytics_sales(
 @router.get("/analytics/daily-trends", response_model=DailyTrendsAPIResponse)
 async def get_analytics_daily_trends(
     telegram_id: int = Query(..., description="Telegram ID пользователя"),
-    days: Optional[int] = Query(None, ge=3, le=60, description="Окно дней для динамики (по умолчанию из .env)"),
+    days: Optional[int] = Query(None, ge=3, le=180, description="Окно дней для динамики (по умолчанию из .env)"),
     bot_service: BotAPIService = Depends(get_bot_service)
 ):
     """Получение ежедневной динамики событий (заказы, отмены, выкупы, возвраты)"""

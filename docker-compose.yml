@@ -215,6 +215,22 @@ services:
       - app-network
     restart: unless-stopped
 
+  dashboard:
+    build:
+      context: ./dashboard
+      dockerfile: Dockerfile
+      args:
+        - VITE_API_BASE_URL=http://localhost:8002/api/v1/bot
+        - VITE_API_SECRET_KEY=${API_SECRET_KEY}
+        - VITE_TELEGRAM_ID=${DASHBOARD_TELEGRAM_ID:-123456789}
+    ports:
+      - "3000:80"
+    depends_on:
+      - server
+    networks:
+      - app-network
+    restart: unless-stopped
+
 
 volumes:
   pgdata:
