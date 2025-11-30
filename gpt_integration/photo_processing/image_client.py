@@ -189,3 +189,5 @@ class ImageGenerationClient:
 
         # 4. prepare final Telegram-ready data:image/...;base64,...
         return self._to_telegram_data_uri(output_mime, output_b64)
+
+
