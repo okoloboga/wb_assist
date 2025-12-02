@@ -27,4 +27,22 @@ async def close_pool() -> None:
         POOL = None
 
 
+async def get_asyncpg_pool():
+    """
+    Получить пул подключений asyncpg.
+    
+    Инициализирует пул, если он еще не создан.
+    
+    Returns:
+        asyncpg.Pool: Пул подключений к PostgreSQL
+    """
+    if POOL is None:
+        await init_pool()
+    
+    if POOL is None:
+        raise RuntimeError("Не удалось инициализировать пул подключений к БД")
+    
+    return POOL
+
+
 
