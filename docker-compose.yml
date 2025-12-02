@@ -190,6 +190,15 @@ services:
       # Photo Processing - Хранение результатов
       - PHOTO_STORAGE_TYPE=${PHOTO_STORAGE_TYPE:-url}
       - PHOTO_PROCESSING_DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      # RAG Configuration
+      - RAG_ENABLED=${RAG_ENABLED:-true}
+      - RAG_VECTOR_DB_URL=${RAG_VECTOR_DB_URL:-postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}}
+      - OPENAI_EMBEDDINGS_MODEL=${OPENAI_EMBEDDINGS_MODEL:-text-embedding-3-small}
+      - RAG_MAX_CHUNKS=${RAG_MAX_CHUNKS:-5}
+      - RAG_SIMILARITY_THRESHOLD=${RAG_SIMILARITY_THRESHOLD:-0.7}
+      - RAG_CONTEXT_MAX_LENGTH=${RAG_CONTEXT_MAX_LENGTH:-3000}
+      - RAG_INDEXING_INTERVAL_HOURS=${RAG_INDEXING_INTERVAL_HOURS:-6}
+      - RAG_EMBEDDING_BATCH_SIZE=${RAG_EMBEDDING_BATCH_SIZE:-100}
     volumes:
       - ./gpt_integration:/app/gpt_integration
       - ./bot/utils:/app/utils
