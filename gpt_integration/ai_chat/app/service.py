@@ -39,6 +39,10 @@ from .prompts import SYSTEM_PROMPT
 from ..agent import run_agent
 from ..tools.db_pool import init_pool as init_asyncpg_pool, close_pool as close_asyncpg_pool
 
+# RAG integration
+from ..rag.prompt_enricher import enrich_prompt_with_rag, RAG_ENABLED
+from ..rag.utils import get_cabinet_id_for_user
+
 
 # ============================================================================
 # Configuration
@@ -213,9 +217,40 @@ async def send_message(
     # Get recent context for AI
     context_messages = crud.get_recent_context(telegram_id, limit=5)
     
+    # RAG: Получить cabinet_id и обогатить промпт
+    system_prompt = SYSTEM_PROMPT
+    cabinet_id = None
+    
+    if RAG_ENABLED:
+        try:
+            cabinet_id = await get_cabinet_id_for_user(telegram_id)
+            if cabinet_id:
+                system_prompt = enrich_prompt_with_rag(
+                    user_message=message,
+                    cabinet_id=cabinet_id,
+                    original_prompt=SYSTEM_PROMPT
+                )
+                logger.info(
+                    f"✅ Промпт обогащен RAG контекстом для "
+                    f"telegram_id={telegram_id}, cabinet_id={cabinet_id}"
+                )
+            else:
+                logger.debug(
+                    f"⚠️ Кабинет не найден для telegram_id={telegram_id}, "
+                    f"используем исходный промпт"
+                )
+        except Exception as e:
+            logger.error(
+                f"❌ Ошибка при обогащении промпта RAG для "
+                f"telegram_id={telegram_id}: {e}",
+                exc_info=True
+            )
+            # Fallback на исходный промпт
+            system_prompt = SYSTEM_PROMPT
+    
     # Build messages for OpenAI
     messages = [
-        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "system", "content": system_prompt},
         *context_messages,
     ]
     
