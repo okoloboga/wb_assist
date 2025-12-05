@@ -144,27 +144,40 @@ def send_scraping_completion_notification(competitor_link_id: int, status: str, 
 @celery_app.task(bind=True, max_retries=3, autoretry_for=(Exception,), retry_kwargs={'max_retries': 3, 'countdown': 300})
 def scrape_competitor_task(self, competitor_link_id: int) -> Dict[str, Any]:
     """
-    Задача скрапинга данных конкурента.
-    
-    Args:
-        competitor_link_id: ID записи CompetitorLink
-        
-    Returns:
-        Словарь с результатом выполнения
+    Задача скрапинга данных конкурента с распределенной блокировкой.
     """
     db = None
+    redis_client = None
+    lock_key = None
+    is_lock_acquired = False
+
     try:
         logger.info(f"Начало скрапинга конкурента {competitor_link_id}")
         
-        # Получаем сессию БД
+        # Получаем сессию БД и Redis клиент
         db = next(get_db())
-        
+        from ...core.redis import get_redis_client
+        redis_client = get_redis_client()
+
         # Получаем запись конкурента
         competitor = CompetitorLinkCRUD.get_by_id(db, competitor_link_id)
         if not competitor:
             logger.error(f"Конкурент {competitor_link_id} не найден")
             return {"status": "error", "message": "Конкурент не найден"}
-        
+
+        # --- РАСПРЕДЕЛЕННАЯ БЛОКИРОВКА ---
+        lock_key = f"lock:scrape_competitor:{competitor.competitor_url}"
+        # Устанавливаем блокировку на 30 минут (1800 секунд)
+        is_lock_acquired = redis_client.set(lock_key, "1", ex=1800, nx=True)
+
+        if not is_lock_acquired:
+            logger.warning(f"Скрапинг конкурента {competitor.competitor_url} (ID: {competitor_link_id}) уже запущен другим процессом. Пропускаем.")
+            # Если статус 'pending', меняем на 'completed', т.к. кто-то другой уже работает
+            if competitor.status == 'pending':
+                 CompetitorLinkCRUD.update_status(db, competitor_link_id, "completed", "Пропущено из-за параллельного запуска")
+            return {"status": "skipped", "message": "Скрапинг уже запущен"}
+        # --- КОНЕЦ БЛОКИРОВКИ ---
+
         # Обновляем статус на "scraping"
         CompetitorLinkCRUD.update_status(db, competitor_link_id, "scraping")
         
@@ -176,21 +189,19 @@ def scrape_competitor_task(self, competitor_link_id: int) -> Dict[str, Any]:
         scraping_result = scrape_competitor(competitor.competitor_url, max_products=max_products)
         
         if scraping_result["success_count"] == 0:
-            # Если не удалось собрать ни одного товара
             error_msg = f"Не удалось собрать данные: найдено {len(scraping_result.get('products', []))} товаров"
-            CompetitorLinkCRUD.update_status(
-                db, 
-                competitor_link_id, 
-                "error",
-                error_message=error_msg
-            )
+            CompetitorLinkCRUD.update_status(db, competitor_link_id, "error", error_message=error_msg)
             logger.error(f"Скрапинг конкурента {competitor_link_id} завершился с ошибкой: {error_msg}")
+            send_scraping_completion_notification(
+                competitor_link_id=competitor_link_id, status="error",
+                competitor_name=competitor.competitor_name or competitor.competitor_url,
+                products_saved=0, error_message=error_msg
+            )
             return {"status": "error", "message": error_msg}
         
-        # Удаляем старые товары перед добавлением новых (полное обновление)
+        # Удаляем старые товары перед добавлением новых
         CompetitorProductCRUD.delete_by_competitor(db, competitor_link_id)
         
-        # Сохраняем товары в БД
         products_saved = 0
         competitor_name = scraping_result.get("competitor_name")
         
@@ -202,61 +213,42 @@ def scrape_competitor_task(self, competitor_link_id: int) -> Dict[str, Any]:
                 logger.error(f"Ошибка сохранения товара {product_data.get('nm_id')}: {e}")
                 continue
         
-        # Обновляем данные конкурента после успешного скрапинга
-        CompetitorLinkCRUD.update_after_scraping(
-            db,
-            competitor_link_id,
-            competitor_name or "Неизвестный",
-            products_saved
-        )
+        CompetitorLinkCRUD.update_after_scraping(db, competitor_link_id, competitor_name or "Неизвестный", products_saved)
         
         logger.info(f"Скрапинг конкурента {competitor_link_id} завершен успешно: {products_saved} товаров")
         
         send_scraping_completion_notification(
-            competitor_link_id=competitor_link_id,
-            status="success",
-            competitor_name=competitor_name,
-            products_saved=products_saved
+            competitor_link_id=competitor_link_id, status="success",
+            competitor_name=competitor_name, products_saved=products_saved
         )
         
         return {
-            "status": "success",
-            "competitor_id": competitor_link_id,
-            "products_saved": products_saved,
-            "competitor_name": competitor_name
+            "status": "success", "competitor_id": competitor_link_id,
+            "products_saved": products_saved, "competitor_name": competitor_name
         }
         
     except Exception as e:
         logger.error(f"Ошибка скрапинга конкурента {competitor_link_id}: {e}", exc_info=True)
-        
-        # Обновляем статус на "error"
         if db:
             try:
-                CompetitorLinkCRUD.update_status(
-                    db,
-                    competitor_link_id,
-                    "error",
-                    error_message=str(e)
-                )
+                CompetitorLinkCRUD.update_status(db, competitor_link_id, "error", error_message=str(e))
             except Exception as update_error:
                 logger.error(f"Ошибка обновления статуса: {update_error}")
         
-        # Retry логика
         if self.request.retries < self.max_retries:
-            logger.info(f"Повторная попытка скрапинга конкурента {competitor_link_id} через 5 минут")
             raise self.retry(countdown=300, exc=e)
         
         send_scraping_completion_notification(
-            competitor_link_id=competitor_link_id,
-            status="error",
-            competitor_name=competitor.competitor_name or competitor.competitor_url,
-            products_saved=0,
-            error_message=str(e)
+            competitor_link_id=competitor_link_id, status="error",
+            competitor_name="Неизвестный", products_saved=0, error_message=str(e)
         )
         
         return {"status": "error", "message": str(e)}
     
     finally:
+        if is_lock_acquired and redis_client and lock_key:
+            redis_client.delete(lock_key)
+            logger.info(f"Блокировка {lock_key} снята")
         if db:
             db.close()
 

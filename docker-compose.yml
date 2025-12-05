@@ -67,6 +67,11 @@ services:
       # BOT_WEBHOOK_URL удален - используется только polling
     networks:
       - app-network
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: "1024M"
 
   celery-worker:
     build:
@@ -91,6 +96,7 @@ services:
       - BOT_YOUNG_TOKEN=${BOT_YOUNG_TOKEN}
       - GPT_INTEGRATION_URL=http://gpt:9000
       - API_SECRET_KEY=${API_SECRET_KEY}
+      - BOT_TOKEN=${BOT_TOKEN}
       # Конкуренты - скрапинг
       - COMPETITOR_MAX_LINKS_PER_CABINET=${COMPETITOR_MAX_LINKS_PER_CABINET}
       - COMPETITOR_MAX_PRODUCTS_PER_LINK=${COMPETITOR_MAX_PRODUCTS_PER_LINK}
@@ -100,6 +106,11 @@ services:
       - SEMANTIC_CORE_MAX_TEXT_LENGTH=${SEMANTIC_CORE_MAX_TEXT_LENGTH}
     networks:
       - app-network
+    deploy:
+      resources:
+        limits:
+          cpus: "1.5"
+          memory: "1536M"
 
   celery-beat:
     build:
