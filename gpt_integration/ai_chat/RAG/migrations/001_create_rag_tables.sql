@@ -90,3 +90,4 @@ COMMENT ON COLUMN rag_embeddings.embedding IS 'Векторное предста
 
 
 
+
