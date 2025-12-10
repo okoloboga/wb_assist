@@ -322,11 +322,30 @@ async def process_ai_message(message: Message, state: FSMContext):
                     body = await resp.text()
                     logger.error(f"❌ AI Chat Service error {resp.status}: {body}")
                     
+                    # Пытаемся извлечь детали ошибки из ответа
+                    error_detail = "Неизвестная ошибка"
+                    try:
+                        error_data = await resp.json()
+                        if isinstance(error_data, dict):
+                            detail = error_data.get("detail", {})
+                            if isinstance(detail, dict):
+                                error_msg = detail.get("message", detail.get("error", "Неизвестная ошибка"))
+                                error_detail = error_msg
+                            else:
+                                error_detail = str(detail)
+                    except Exception:
+                        # Если не удалось распарсить JSON, используем текст ответа
+                        if body:
+                            error_detail = body[:500]  # Ограничиваем длину
+                    
                     await safe_send_message(
                         message,
-                        "❌ Произошла ошибка при обращении к AI сервису.\n"
+                        f"❌ Произошла ошибка при обращении к AI сервису.\n\n"
+                        f"<code>Статус: {resp.status}</code>\n"
+                        f"<code>{error_detail[:200]}</code>\n\n"
                         "Попробуйте позже или обратитесь к администратору.",
-                        user_id=telegram_id
+                        user_id=telegram_id,
+                        parse_mode="HTML"
                     )
     
     except aiohttp.ClientError as e:
