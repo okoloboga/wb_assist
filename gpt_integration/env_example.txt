@@ -14,7 +14,6 @@ BOT_WEBHOOK_BASE=http://bot:8001
 
 # OpenAI / Совместимый провайдер
 OPENAI_API_KEY=your_openai_api_key
-# OPENAI_BASE_URL=https://api.openai.com/v1
 # Если OpenAI API недоступен в вашем регионе (ошибка 403 unsupported_country_region_territory),
 # используйте альтернативный endpoint:
 # - Прокси-сервер для OpenAI API (например, через Cloudflare Workers)

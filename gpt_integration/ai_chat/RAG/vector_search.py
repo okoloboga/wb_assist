@@ -42,13 +42,29 @@ class VectorSearch:
             embeddings_model: Модель для генерации эмбеддингов (из env или default)
             similarity_threshold: Минимальный порог релевантности (0-1, из env или default)
         """
-        self.openai_client = openai_client or OpenAI()
+        if openai_client is None:
+            api_key = os.getenv("OPENAI_API_KEY")
+            base_url_raw = os.getenv("OPENAI_BASE_URL")
+            base_url = None
+            if base_url_raw and base_url_raw.strip():
+                base_url_clean = base_url_raw.strip()
+                # Проверяем, что URL валидный (начинается с http:// или https://)
+                if base_url_clean.startswith(("http://", "https://")):
+                    base_url = base_url_clean
+            client_kwargs = {}
+            if api_key:
+                client_kwargs["api_key"] = api_key
+            if base_url:
+                client_kwargs["base_url"] = base_url
+            self.openai_client = OpenAI(**client_kwargs) if client_kwargs else OpenAI()
+        else:
+            self.openai_client = openai_client
         self.embeddings_model = embeddings_model or os.getenv(
             "OPENAI_EMBEDDINGS_MODEL",
             "text-embedding-3-small"
         )
         self.similarity_threshold = similarity_threshold or float(
-            os.getenv("RAG_SIMILARITY_THRESHOLD", "0.7")
+            os.getenv("RAG_SIMILARITY_THRESHOLD", "0.5")
         )
     
     def generate_query_embedding(self, query_text: str) -> List[float]:
@@ -72,7 +88,7 @@ class VectorSearch:
             raise ValueError("Запрос не может быть пустым")
         
         try:
-            logger.info(f"🔄 Генерация эмбеддинга для запроса: '{query_text[:50]}...'")
+            logger.info(f"🔄 Generating embedding for query: '{query_text[:50]}...'")
             
             # Вызов OpenAI Embeddings API
             response = self.openai_client.embeddings.create(
@@ -83,12 +99,12 @@ class VectorSearch:
             # Извлечь вектор из ответа
             embedding = response.data[0].embedding
             
-            logger.info(f"✅ Эмбеддинг сгенерирован: размерность {len(embedding)}")
+            logger.info(f"✅ Embedding generated: dimension {len(embedding)}")
             
             return embedding
             
         except Exception as e:
-            logger.error(f"❌ Ошибка при генерации эмбеддинга: {e}")
+            logger.error(f"❌ Error generating embedding: {e}")
             raise
     
     def search(
@@ -129,57 +145,76 @@ class VectorSearch:
             
             # Построить SQL запрос
             # Используем cosine distance (<#>) и вычисляем similarity как 1 - distance
+            # Важно: используем f-string для embedding_str, так как SQLAlchemy не может правильно
+            # обработать placeholder с ::vector из-за двойного двоеточия
             if chunk_types and len(chunk_types) > 0:
                 # Фильтрация по типам чанков
                 # Используем правильный формат массива PostgreSQL
                 chunk_types_array = '{' + ','.join(f'"{ct}"' for ct in chunk_types) + '}'
-                query = text("""
+                query = text(f"""
                     SELECT 
                         e.id AS embedding_id,
                         e.metadata_id,
-                        1 - (e.embedding <#> :query_embedding::vector) AS similarity,
-                        e.embedding <#> :query_embedding::vector AS distance
+                        1 - (e.embedding <#> '{embedding_str}'::vector) AS similarity,
+                        e.embedding <#> '{embedding_str}'::vector AS distance
                     FROM rag_embeddings e
                     JOIN rag_metadata m ON e.metadata_id = m.id
                     WHERE m.cabinet_id = :cabinet_id
                       AND m.chunk_type = ANY(:chunk_types::text[])
-                    ORDER BY e.embedding <#> :query_embedding::vector
+                    ORDER BY e.embedding <#> '{embedding_str}'::vector
                     LIMIT :limit
                 """)
                 params = {
-                    'query_embedding': embedding_str,
                     'cabinet_id': cabinet_id,
                     'chunk_types': chunk_types_array,
                     'limit': limit
                 }
             else:
                 # Без фильтрации по типам
-                query = text("""
+                query = text(f"""
                     SELECT 
                         e.id AS embedding_id,
                         e.metadata_id,
-                        1 - (e.embedding <#> :query_embedding::vector) AS similarity,
-                        e.embedding <#> :query_embedding::vector AS distance
+                        1 - (e.embedding <#> '{embedding_str}'::vector) AS similarity,
+                        e.embedding <#> '{embedding_str}'::vector AS distance
                     FROM rag_embeddings e
                     JOIN rag_metadata m ON e.metadata_id = m.id
                     WHERE m.cabinet_id = :cabinet_id
-                    ORDER BY e.embedding <#> :query_embedding::vector
+                    ORDER BY e.embedding <#> '{embedding_str}'::vector
                     LIMIT :limit
                 """)
                 params = {
-                    'query_embedding': embedding_str,
                     'cabinet_id': cabinet_id,
                     'limit': limit
                 }
             
             # Выполнить запрос
+            logger.info(
+                f"📊 Executing vector search: "
+                f"cabinet_id={cabinet_id}, "
+                f"limit={limit}, "
+                f"chunk_types={chunk_types if chunk_types else 'all'}, "
+                f"similarity_threshold={self.similarity_threshold}"
+            )
+            
             result = db.execute(query, params)
             rows = result.fetchall()
             
+            logger.info(f"📈 Retrieved {len(rows)} results from DB (before threshold filtering)")
+            
             # Преобразовать результаты
             results = []
-            for row in rows:
+            filtered_out = []
+            for idx, row in enumerate(rows):
                 similarity = float(row.similarity)
+                distance = float(row.distance)
+                
+                logger.debug(
+                    f"  [{idx+1}/{len(rows)}] embedding_id={row.embedding_id}, "
+                    f"metadata_id={row.metadata_id}, "
+                    f"similarity={similarity:.4f}, "
+                    f"distance={distance:.4f}"
+                )
                 
                 # Применить порог релевантности
                 if similarity >= self.similarity_threshold:
@@ -187,18 +222,41 @@ class VectorSearch:
                         'embedding_id': row.embedding_id,
                         'metadata_id': row.metadata_id,
                         'similarity': similarity,
-                        'distance': float(row.distance)
+                        'distance': distance
+                    })
+                else:
+                    filtered_out.append({
+                        'embedding_id': row.embedding_id,
+                        'similarity': similarity,
+                        'distance': distance
                     })
             
             logger.info(
-                f"🔍 Найдено {len(results)} релевантных результатов "
-                f"(порог: {self.similarity_threshold}, всего найдено: {len(rows)})"
+                f"✅ Filtering results: "
+                f"passed={len(results)}, "
+                f"filtered_out={len(filtered_out)}, "
+                f"threshold={self.similarity_threshold}"
             )
+            
+            if results:
+                logger.info(
+                    f"📊 Similarity range for passed results: "
+                    f"min={min(r['similarity'] for r in results):.4f}, "
+                    f"max={max(r['similarity'] for r in results):.4f}, "
+                    f"avg={sum(r['similarity'] for r in results) / len(results):.4f}"
+                )
+            
+            if filtered_out:
+                logger.info(
+                    f"⚠️ Filtered out results (below threshold {self.similarity_threshold}): "
+                    f"min={min(f['similarity'] for f in filtered_out):.4f}, "
+                    f"max={max(f['similarity'] for f in filtered_out):.4f}"
+                )
             
             return results
             
         except Exception as e:
-            logger.error(f"❌ Ошибка при векторном поиске: {e}")
+            logger.error(f"❌ Error in vector search: {e}")
             raise
             
         finally:
@@ -261,12 +319,12 @@ class VectorSearch:
                     'source_id': row.source_id
                 })
             
-            logger.info(f"📋 Получено {len(metadata_list)} метаданных")
+            logger.info(f"📋 Retrieved {len(metadata_list)} metadata records")
             
             return metadata_list
             
         except Exception as e:
-            logger.error(f"❌ Ошибка при получении метаданных: {e}")
+            logger.error(f"❌ Error retrieving metadata: {e}")
             raise
     
     def search_relevant_chunks(
@@ -307,11 +365,12 @@ class VectorSearch:
         """
         try:
             logger.info(
-                f"🔍 Поиск релевантных чанков: "
-                f"cabinet_id={cabinet_id}, "
-                f"query='{query_text[:50]}...', "
-                f"chunk_types={chunk_types}, "
-                f"max_chunks={max_chunks}"
+                f"🔍 Starting search for relevant chunks:\n"
+                f"  📝 Query: '{query_text}'\n"
+                f"  🏢 Cabinet ID: {cabinet_id}\n"
+                f"  📦 Chunk types: {chunk_types if chunk_types else 'all'}\n"
+                f"  🔢 Max results: {max_chunks}\n"
+                f"  📊 Similarity threshold: {self.similarity_threshold}"
             )
             
             # 1. Генерация эмбеддинга запроса
@@ -326,13 +385,23 @@ class VectorSearch:
             )
             
             if not search_results:
-                logger.info("⚠️ Релевантные чанки не найдены")
+                logger.warning(
+                    f"⚠️ No relevant chunks found for query '{query_text[:100]}...' "
+                    f"(cabinet_id={cabinet_id}, threshold={self.similarity_threshold})"
+                )
                 return []
+            
+            logger.info(
+                f"📋 Found {len(search_results)} results after filtering, "
+                f"fetching metadata..."
+            )
             
             # 3. Получение метаданных
             db = RAGSessionLocal()
             try:
                 embedding_ids = [r['embedding_id'] for r in search_results]
+                logger.debug(f"🔍 Запрашиваю метаданные для {len(embedding_ids)} embedding IDs: {embedding_ids}")
+                
                 metadata_list = self.get_metadata_for_embeddings(embedding_ids, db)
                 
                 # Объединить с similarity
@@ -345,10 +414,21 @@ class VectorSearch:
                 metadata_list.sort(key=lambda x: x['similarity'], reverse=True)
                 
                 logger.info(
-                    f"✅ Найдено {len(metadata_list)} релевантных чанков "
-                    f"(similarity: {metadata_list[0]['similarity']:.2f} - "
-                    f"{metadata_list[-1]['similarity']:.2f})"
+                    f"✅ Final search results:\n"
+                    f"  📊 Total found: {len(metadata_list)} chunks\n"
+                    f"  📈 Similarity range: {metadata_list[0]['similarity']:.4f} - "
+                    f"{metadata_list[-1]['similarity']:.4f}\n"
+                    f"  📝 Chunk types: {', '.join(set(m['chunk_type'] for m in metadata_list))}"
                 )
+                
+                # Детальный лог по каждому результату
+                for idx, metadata in enumerate(metadata_list, 1):
+                    logger.debug(
+                        f"  [{idx}] similarity={metadata['similarity']:.4f}, "
+                        f"type={metadata['chunk_type']}, "
+                        f"source={metadata['source_table']}:{metadata['source_id']}, "
+                        f"text_preview='{metadata['chunk_text'][:50]}...'"
+                    )
                 
                 return metadata_list
                 
@@ -356,7 +436,7 @@ class VectorSearch:
                 db.close()
                 
         except Exception as e:
-            logger.error(f"❌ Ошибка при поиске релевантных чанков: {e}")
+            logger.error(f"❌ Error searching relevant chunks: {e}")
             # Вернуть пустой список при ошибке (fallback)
             return []
 

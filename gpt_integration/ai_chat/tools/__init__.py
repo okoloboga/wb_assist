@@ -154,6 +154,9 @@ async def execute_tool(name: str, args_json: str) -> str:
         data = await run_report(**args)
         return json.dumps(data, ensure_ascii=False)
     if name == "run_sql_template":
-        data = await run_sql_template(**args)
+        # AI передает все аргументы напрямую, а не в params
+        # Извлекаем 'name' и остальные передаем как params
+        template_name = args.pop("name")
+        data = await run_sql_template(name=template_name, params=args)
         return json.dumps(data, ensure_ascii=False)
     raise ValueError(f"Unknown tool: {name}")

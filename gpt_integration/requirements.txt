@@ -11,6 +11,7 @@ sqlalchemy==2.0.25
 psycopg2-binary==2.9.9
 alembic==1.13.1
 asyncpg>=0.29.0
+pgvector==0.3.0  # PostgreSQL vector extension for RAG
 
 # Validation & settings
 pydantic>=2.10.0

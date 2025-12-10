@@ -42,16 +42,16 @@ def enrich_prompt_with_rag(
         Обогащенный промпт или исходный промпт (при ошибке или отсутствии данных)
     """
     if not RAG_ENABLED:
-        logger.debug("⚠️ RAG отключен, возвращаем исходный промпт")
+        logger.debug("⚠️ RAG disabled, returning original prompt")
         return original_prompt
     
     if not cabinet_id:
-        logger.debug("⚠️ cabinet_id не указан, возвращаем исходный промпт")
+        logger.debug("⚠️ cabinet_id not specified, returning original prompt")
         return original_prompt
     
     try:
         logger.info(
-            f"🔍 Обогащение промпта RAG: cabinet_id={cabinet_id}, "
+            f"🔍 Enriching prompt with RAG: cabinet_id={cabinet_id}, "
             f"query='{user_message[:50]}...'"
         )
         
@@ -66,8 +66,8 @@ def enrich_prompt_with_rag(
         
         if not chunks:
             logger.info(
-                f"⚠️ Релевантные чанки не найдены для cabinet_id={cabinet_id}, "
-                f"возвращаем исходный промпт"
+                f"⚠️ No relevant chunks found for cabinet_id={cabinet_id}, "
+                f"returning original prompt"
             )
             return original_prompt
         
@@ -77,8 +77,8 @@ def enrich_prompt_with_rag(
         
         if not context or not context.strip():
             logger.warning(
-                f"⚠️ Контекст пуст после формирования для cabinet_id={cabinet_id}, "
-                f"возвращаем исходный промпт"
+                f"⚠️ Context is empty after building for cabinet_id={cabinet_id}, "
+                f"returning original prompt"
             )
             return original_prompt
         
@@ -95,9 +95,9 @@ def enrich_prompt_with_rag(
 """
         
         logger.info(
-            f"✅ Промпт обогащен контекстом: "
-            f"длина контекста={len(context)}, "
-            f"чанков={len(chunks)}, "
+            f"✅ Prompt enriched with context: "
+            f"context_length={len(context)}, "
+            f"chunks={len(chunks)}, "
             f"cabinet_id={cabinet_id}"
         )
         
@@ -105,7 +105,7 @@ def enrich_prompt_with_rag(
         
     except Exception as e:
         logger.error(
-            f"❌ Ошибка при обогащении промпта RAG для cabinet_id={cabinet_id}: {e}",
+            f"❌ Error enriching prompt with RAG for cabinet_id={cabinet_id}: {e}",
             exc_info=True
         )
         # Fallback на исходный промпт

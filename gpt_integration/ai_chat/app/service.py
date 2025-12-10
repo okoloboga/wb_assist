@@ -40,8 +40,13 @@ from ..agent import run_agent
 from ..tools.db_pool import init_pool as init_asyncpg_pool, close_pool as close_asyncpg_pool
 
 # RAG integration
-from ..rag.prompt_enricher import enrich_prompt_with_rag, RAG_ENABLED
-from ..rag.utils import get_cabinet_id_for_user
+try:
+    from ..rag.prompt_enricher import enrich_prompt_with_rag, RAG_ENABLED
+    from ..rag.utils import get_cabinet_id_for_user
+except ImportError:
+    # Fallback для случая, когда папка называется RAG (с большой буквы)
+    from ..RAG.prompt_enricher import enrich_prompt_with_rag, RAG_ENABLED
+    from ..RAG.utils import get_cabinet_id_for_user
 
 
 # ============================================================================
@@ -51,7 +56,13 @@ from ..rag.utils import get_cabinet_id_for_user
 # Environment variables
 API_SECRET_KEY = os.getenv("API_SECRET_KEY")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", None)
+_openai_base_url_raw = os.getenv("OPENAI_BASE_URL")
+OPENAI_BASE_URL = None
+if _openai_base_url_raw and _openai_base_url_raw.strip():
+    _openai_base_url_clean = _openai_base_url_raw.strip()
+    # Проверяем, что URL валидный (начинается с http:// или https://)
+    if _openai_base_url_clean.startswith(("http://", "https://")):
+        OPENAI_BASE_URL = _openai_base_url_clean
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 OPENAI_TEMPERATURE = float(os.getenv("OPENAI_TEMPERATURE", "0.7"))
 OPENAI_MAX_TOKENS = int(os.getenv("OPENAI_MAX_TOKENS", "1000"))
@@ -195,135 +206,164 @@ async def send_message(
     
     logger.info(f"📨 Received chat request: telegram_id={telegram_id}, message_length={len(message)}, has_context={user_context is not None}")
     
-    # Initialize CRUD
-    crud = AIChatCRUD(db)
-    
-    # Check and update rate limit
-    can_request, remaining = crud.check_and_update_limit(telegram_id)
-    
-    if not can_request:
-        logger.warning(f"⛔ Rate limit exceeded for telegram_id={telegram_id}")
-        raise HTTPException(
-            status_code=429,
-            detail={
-                "error": "Rate limit exceeded",
-                "message": "Вы исчерпали дневной лимит запросов (30/день). Попробуйте завтра! 🌅",
-                "daily_limit": DAILY_LIMIT,
-                "requests_today": DAILY_LIMIT,
-                "requests_remaining": 0
-            }
-        )
-    
-    # Get recent context for AI
-    context_messages = crud.get_recent_context(telegram_id, limit=5)
-    
-    # RAG: Получить cabinet_id и обогатить промпт
-    system_prompt = SYSTEM_PROMPT
-    cabinet_id = None
-    
-    if RAG_ENABLED:
-        try:
-            cabinet_id = await get_cabinet_id_for_user(telegram_id)
-            if cabinet_id:
-                system_prompt = enrich_prompt_with_rag(
-                    user_message=message,
-                    cabinet_id=cabinet_id,
-                    original_prompt=SYSTEM_PROMPT
-                )
-                logger.info(
-                    f"✅ Промпт обогащен RAG контекстом для "
-                    f"telegram_id={telegram_id}, cabinet_id={cabinet_id}"
-                )
-            else:
-                logger.debug(
-                    f"⚠️ Кабинет не найден для telegram_id={telegram_id}, "
-                    f"используем исходный промпт"
-                )
-        except Exception as e:
-            logger.error(
-                f"❌ Ошибка при обогащении промпта RAG для "
-                f"telegram_id={telegram_id}: {e}",
-                exc_info=True
-            )
-            # Fallback на исходный промпт
-            system_prompt = SYSTEM_PROMPT
-    
-    # Build messages for OpenAI
-    messages = [
-        {"role": "system", "content": system_prompt},
-        *context_messages,
-    ]
-    
-    # Add user context if available
-    if user_context:
-        messages.append({
-            "role": "system",
-            "content": f"📊 ДАННЫЕ ПОЛЬЗОВАТЕЛЯ:\n{user_context}\n\nИспользуй эти данные для персонализированных ответов!"
-        })
-        logger.info(f"✅ Added user context: {len(user_context)} chars")
-    
-    # Add user message
-    messages.append({"role": "user", "content": message})
-    
-    # Stage 1: Call internal agent (LLM + tools in next stage)
     try:
-        agent_result = await run_agent(messages)
-        response_text = agent_result.get("final", "")
-        tokens_used = agent_result.get("tokens_used", 0)
-    except RuntimeError as e:
-        # Handle regional restriction and other runtime errors
-        error_msg = str(e)
-        if "недоступен в вашем регионе" in error_msg or "unsupported_country" in error_msg.lower():
-            logger.error(f"❌ Regional restriction error for telegram_id={telegram_id}: {error_msg}")
+        # Initialize CRUD
+        crud = AIChatCRUD(db)
+        
+        # Check and update rate limit
+        can_request, remaining = crud.check_and_update_limit(telegram_id)
+        
+        if not can_request:
+            logger.warning(f"⛔ Rate limit exceeded for telegram_id={telegram_id}")
             raise HTTPException(
-                status_code=503,
+                status_code=429,
                 detail={
-                    "error": "OpenAI API unavailable",
-                    "message": (
-                        "⚠️ OpenAI API недоступен в вашем регионе.\n\n"
-                        "Для решения проблемы необходимо настроить альтернативный API endpoint:\n"
-                        "1. Используйте прокси-сервер для OpenAI API\n"
-                        "2. Или используйте OpenAI-совместимый провайдер (Azure OpenAI, Anyscale и др.)\n"
-                        "3. Установите переменную окружения OPENAI_BASE_URL с адресом альтернативного endpoint\n\n"
-                        f"Технические детали: {error_msg}"
-                    )
+                    "error": "Rate limit exceeded",
+                    "message": "Вы исчерпали дневной лимит запросов (30/день). Попробуйте завтра! 🌅",
+                    "daily_limit": DAILY_LIMIT,
+                    "requests_today": DAILY_LIMIT,
+                    "requests_remaining": 0
                 }
             )
-        else:
-            logger.error(f"❌ Runtime error for telegram_id={telegram_id}: {error_msg}")
+        
+        # Get recent context for AI
+        context_messages = crud.get_recent_context(telegram_id, limit=5)
+        
+        # RAG: Получить cabinet_id и обогатить промпт
+        system_prompt = SYSTEM_PROMPT
+        cabinet_id = None
+        
+        if RAG_ENABLED:
+            try:
+                cabinet_id = await get_cabinet_id_for_user(telegram_id)
+                if cabinet_id:
+                    system_prompt = enrich_prompt_with_rag(
+                        user_message=message,
+                        cabinet_id=cabinet_id,
+                        original_prompt=SYSTEM_PROMPT
+                    )
+                    logger.info(
+                        f"✅ Prompt enriched with RAG context for "
+                        f"telegram_id={telegram_id}, cabinet_id={cabinet_id}"
+                    )
+                else:
+                    logger.debug(
+                        f"⚠️ Cabinet not found for telegram_id={telegram_id}, "
+                        f"using original prompt"
+                    )
+            except Exception as e:
+                logger.error(
+                    f"❌ Error enriching prompt with RAG for "
+                    f"telegram_id={telegram_id}: {e}",
+                    exc_info=True
+                )
+                # Fallback на исходный промпт
+                system_prompt = SYSTEM_PROMPT
+        
+        # Build messages for OpenAI
+        # Добавляем telegram_id в system prompt, чтобы AI знал его и не запрашивал у пользователя
+        system_prompt_with_context = f"""{system_prompt}
+
+**КРИТИЧЕСКИ ВАЖНО - КОНТЕКСТ ПОЛЬЗОВАТЕЛЯ:**
+- Telegram ID пользователя: {telegram_id}
+- ❌ НИКОГДА не запрашивай Telegram ID у пользователя - он уже известен!
+- ✅ ВСЕГДА используй telegram_id={telegram_id} автоматически во всех tools
+- ✅ При вызове любых tools (get_dashboard, get_sales_timeseries, compute_kpis, forecast_sales, run_sql_template) передавай параметр "telegram_id": {telegram_id}
+- ✅ Если пользователь спрашивает про свои данные, сразу используй tools с telegram_id={telegram_id}, НЕ спрашивая у пользователя"""
+        
+        messages = [
+            {"role": "system", "content": system_prompt_with_context},
+            *context_messages,
+        ]
+        
+        # Add user context if available
+        if user_context:
+            messages.append({
+                "role": "system",
+                "content": f"📊 ДАННЫЕ ПОЛЬЗОВАТЕЛЯ:\n{user_context}\n\nИспользуй эти данные для персонализированных ответов!"
+            })
+            logger.info(f"✅ Added user context: {len(user_context)} chars")
+        
+        # Add user message
+        messages.append({"role": "user", "content": message})
+        
+        # Stage 1: Call internal agent (LLM + tools in next stage)
+        try:
+            agent_result = await run_agent(messages)
+            response_text = agent_result.get("final", "")
+            tokens_used = agent_result.get("tokens_used", 0)
+        except RuntimeError as e:
+            # Handle regional restriction and other runtime errors
+            error_msg = str(e)
+            if "недоступен в вашем регионе" in error_msg or "unsupported_country" in error_msg.lower():
+                logger.error(f"❌ Regional restriction error for telegram_id={telegram_id}: {error_msg}")
+                raise HTTPException(
+                    status_code=503,
+                    detail={
+                        "error": "OpenAI API unavailable",
+                        "message": (
+                            "⚠️ OpenAI API недоступен в вашем регионе.\n\n"
+                            "Для решения проблемы необходимо настроить альтернативный API endpoint:\n"
+                            "1. Используйте прокси-сервер для OpenAI API\n"
+                            "2. Или используйте OpenAI-совместимый провайдер (Azure OpenAI, Anyscale и др.)\n"
+                            "3. Установите переменную окружения OPENAI_BASE_URL с адресом альтернативного endpoint\n\n"
+                            f"Технические детали: {error_msg}"
+                        )
+                    }
+                )
+            else:
+                logger.error(f"❌ Runtime error for telegram_id={telegram_id}: {error_msg}")
+                # Убираем дублирование, если сообщение уже содержит "Ошибка запроса к LLM"
+                if "Ошибка запроса к LLM:" in error_msg:
+                    display_msg = error_msg
+                else:
+                    display_msg = f"⚠️ Ошибка запроса к LLM: {error_msg}"
+                raise HTTPException(
+                    status_code=500,
+                    detail={
+                        "error": "LLM request failed",
+                        "message": display_msg
+                    }
+                )
+        except Exception as e:
+            logger.error(f"❌ Unexpected error for telegram_id={telegram_id}: {e}", exc_info=True)
             raise HTTPException(
                 status_code=500,
                 detail={
-                    "error": "LLM request failed",
-                    "message": f"⚠️ Ошибка запроса к LLM: {error_msg}"
+                    "error": "Internal server error",
+                    "message": "⚠️ Произошла внутренняя ошибка. Пожалуйста, повторите попытку позже."
                 }
             )
+        
+        # Save to database
+        crud.save_chat_request(
+            telegram_id=telegram_id,
+            user_id=None,  # TODO: Link with main database if needed
+            message=message,
+            response=response_text,
+            tokens_used=tokens_used
+        )
+        
+        logger.info(f"✅ Chat request completed: telegram_id={telegram_id}, remaining={remaining}")
+        
+        return ChatSendResponse(
+            response=response_text,
+            remaining_requests=remaining,
+            tokens_used=tokens_used
+        )
+    except HTTPException:
+        # Re-raise HTTP exceptions (rate limit, etc.)
+        raise
     except Exception as e:
-        logger.error(f"❌ Unexpected error for telegram_id={telegram_id}: {e}", exc_info=True)
+        # Catch any other database or CRUD errors
+        logger.error(f"❌ Database/CRUD error for telegram_id={telegram_id}: {e}", exc_info=True)
         raise HTTPException(
             status_code=500,
             detail={
-                "error": "Internal server error",
-                "message": "⚠️ Произошла внутренняя ошибка. Пожалуйста, повторите попытку позже."
+                "error": "Database error",
+                "message": f"⚠️ Ошибка работы с базой данных: {str(e)}"
             }
         )
-    
-    # Save to database
-    crud.save_chat_request(
-        telegram_id=telegram_id,
-        user_id=None,  # TODO: Link with main database if needed
-        message=message,
-        response=response_text,
-        tokens_used=tokens_used
-    )
-    
-    logger.info(f"✅ Chat request completed: telegram_id={telegram_id}, remaining={remaining}")
-    
-    return ChatSendResponse(
-        response=response_text,
-        remaining_requests=remaining,
-        tokens_used=tokens_used
-    )
 
 
 @router.post("/history", response_model=ChatHistoryResponse)
@@ -467,14 +507,26 @@ async def _startup_event():
             Base.metadata.create_all(bind=engine)
             logger.info("✅ Database tables created/verified")
         except Exception as exc:
-            logger.error("❌ Failed to create database tables: %s", exc)
-            raise
+            logger.error("❌ Failed to create database tables: %s", exc, exc_info=True)
+            # Don't raise - allow service to start even if DB init fails
+            # The error will be caught when trying to use DB
+            logger.warning("⚠️  Service will continue, but database operations may fail")
     
     try:
         await init_asyncpg_pool()
         logger.info("✅ asyncpg pool initialized (if Postgres configured)")
     except Exception as exc:
         logger.warning("⚠️  asyncpg pool not initialized: %s", exc)
+    
+    # Initialize RAG database tables
+    try:
+        from ..RAG.database import init_rag_db
+        init_rag_db()
+        logger.info("✅ RAG database tables created/verified")
+    except Exception as exc:
+        logger.error("❌ Failed to initialize RAG database: %s", exc, exc_info=True)
+        # Don't raise - allow service to start even if RAG DB init fails
+        logger.warning("⚠️  Service will continue, but RAG features may not work")
     
     logger.info("🎯 AI Chat components ready")
 

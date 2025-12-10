@@ -73,7 +73,7 @@ class ContextBuilder:
                 reverse=True
             )
         
-        logger.debug(f"📊 Группировка: {len(grouped)} типов, всего чанков: {len(chunks)}")
+        logger.debug(f"📊 Grouping: {len(grouped)} types, total chunks: {len(chunks)}")
         
         return grouped
     
@@ -124,7 +124,7 @@ class ContextBuilder:
         
         removed_count = len(chunks) - len(unique_chunks)
         if removed_count > 0:
-            logger.info(f"🗑️ Удалено {removed_count} дубликатов из {len(chunks)} чанков")
+            logger.info(f"🗑️ Removed {removed_count} duplicates from {len(chunks)} chunks")
         
         return unique_chunks
     
@@ -182,7 +182,7 @@ class ContextBuilder:
         
         context_text = "\n".join(context_parts)
         
-        logger.debug(f"📝 Отформатирован контекст: {len(context_text)} символов")
+        logger.debug(f"📝 Formatted context: {len(context_text)} characters")
         
         return context_text
     
@@ -269,7 +269,7 @@ class ContextBuilder:
             Отформатированный текст контекста для добавления в промпт
         """
         if not chunks:
-            logger.info("⚠️ Нет чанков для формирования контекста")
+            logger.info("⚠️ No chunks to build context from")
             return ""
         
         max_length = max_length or self.max_length
@@ -294,4 +294,9 @@ class ContextBuilder:
         )
         
         return context
+
+
+
+
+
 

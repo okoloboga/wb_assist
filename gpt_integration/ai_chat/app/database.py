@@ -49,12 +49,33 @@ def get_db() -> Generator[Session, None, None]:
     
     Yields:
         Session: SQLAlchemy database session
+        
+    Raises:
+        Exception: If database connection fails
     """
-    db = SessionLocal()
+    db = None
     try:
+        db = SessionLocal()
+        # Test connection with a simple query
+        from sqlalchemy import text
+        db.execute(text("SELECT 1"))
         yield db
+    except Exception as e:
+        if db:
+            try:
+                db.rollback()
+            except Exception:
+                pass
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"❌ Database connection error: {e}", exc_info=True)
+        raise
     finally:
-        db.close()
+        if db:
+            try:
+                db.close()
+            except Exception:
+                pass
 
 
 def init_db() -> None:

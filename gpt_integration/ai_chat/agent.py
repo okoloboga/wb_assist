@@ -18,10 +18,16 @@ def _get_client() -> OpenAI:
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         raise RuntimeError("OPENAI_API_KEY is not configured")
-    base_url = os.getenv("OPENAI_BASE_URL")
+    base_url_raw = os.getenv("OPENAI_BASE_URL")
+    base_url = None
+    if base_url_raw and base_url_raw.strip():
+        base_url_clean = base_url_raw.strip()
+        # Проверяем, что URL валидный (начинается с http:// или https://)
+        if base_url_clean.startswith(("http://", "https://")):
+            base_url = base_url_clean
     kwargs = {"api_key": api_key}
-    if base_url and base_url.strip():
-        kwargs["base_url"] = base_url.strip()
+    if base_url:
+        kwargs["base_url"] = base_url
     return OpenAI(**kwargs)
 
 async def _call_llm(messages: List[Dict[str, Any]], tools: list | None = None) -> Dict[str, Any]:
@@ -87,7 +93,8 @@ async def _call_llm(messages: List[Dict[str, Any]], tools: list | None = None) -
         raise
     except Exception as e:
         logger.error(f"LLM call failed: {e}", exc_info=True)
-        raise RuntimeError(f"Ошибка запроса к LLM: {e}")
+        # Передаем оригинальную ошибку без обертки, чтобы избежать дублирования
+        raise RuntimeError(str(e))
 
 async def run_agent(messages: List[Dict[str, Any]]) -> Dict[str, Any]:
     """Agent loop with tool-calling.
