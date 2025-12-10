@@ -2380,7 +2380,8 @@ class NotificationService:
 Средний рейтинг: {product_info['avg_rating']:.2f}
 Всего отзывов: {product_info['reviews_count']}
 
-📦 Остатки: {sum(product_info['stocks'].values()) if isinstance(product_info['stocks'], dict) else 0} шт."""
+📦 Остатки по размерам:
+{self._format_stocks_for_notification(product_info['stocks_by_warehouse'])}"""
     
     def _format_buyout_notification_simple(self, sale) -> str:
         """Полное форматирование уведомления о выкупе - ИСПРАВЛЕНО для WBSales"""
@@ -2431,7 +2432,8 @@ class NotificationService:
 Средний рейтинг: {product_info['avg_rating']:.2f}
 Всего отзывов: {product_info['reviews_count']}
 
-📦 Остатки: {sum(product_info['stocks'].values()) if isinstance(product_info['stocks'], dict) else 0} шт."""
+📦 Остатки по размерам:
+{self._format_stocks_for_notification(product_info['stocks_by_warehouse'])}"""
     
     def _format_cancellation_notification_simple(self, order) -> str:
         """Полное форматирование уведомления об отмене (как в ORDER.md)"""
@@ -2481,7 +2483,8 @@ class NotificationService:
 Средний рейтинг: {product_info['avg_rating']:.2f}
 Всего отзывов: {product_info['reviews_count']}
 
-📦 Остатки: {sum(product_info['stocks'].values()) if isinstance(product_info['stocks'], dict) else 0} шт."""
+📦 Остатки по размерам:
+{self._format_stocks_for_notification(product_info['stocks_by_warehouse'])}"""
     
     def _format_return_notification_simple(self, sale) -> str:
         """Полное форматирование уведомления о возврате - ИСПРАВЛЕНО для WBSales"""
@@ -2532,7 +2535,8 @@ class NotificationService:
 Средний рейтинг: {product_info['avg_rating']:.2f}
 Всего отзывов: {product_info['reviews_count']}
 
-📦 Остатки: {sum(product_info['stocks'].values()) if isinstance(product_info['stocks'], dict) else 0} шт."""
+📦 Остатки по размерам:
+{self._format_stocks_for_notification(product_info['stocks_by_warehouse'])}"""
     
     def _format_stock_data_simple(self, stock) -> Dict[str, Any]:
         """Простое форматирование данных остатка"""
@@ -2699,6 +2703,7 @@ class NotificationService:
                 logger.warning(f"🔧 [_get_full_product_info] Product not found: cabinet_id={cabinet_id}, nm_id={nm_id}")
                 return {
                     "stocks": {},
+                    "stocks_by_warehouse": {},
                     "sales_periods": {"7_days": 0, "14_days": 0, "30_days": 0},
                     "orders_stats": {"total_orders": 0, "active_orders": 0, "canceled_orders": 0, "buyout_orders": 0, "return_orders": 0},
                     "avg_rating": 0.0,
@@ -2716,13 +2721,28 @@ class NotificationService:
             
             # Формируем остатки по размерам (суммируем по всем складам)
             stocks_dict = {}
+            # Детализация по складам и размерам
+            stocks_by_warehouse = {}
+
             for stock in stocks:
                 size = stock.size or "ONE SIZE"
                 quantity = stock.quantity or 0
+                warehouse_name = stock.warehouse_name or "Неизвестный склад"
+
+                # Суммируем остатки по всем складам для одного размера
                 if size in stocks_dict:
                     stocks_dict[size] += quantity
                 else:
                     stocks_dict[size] = quantity
+
+                # Детализация по складам и размерам
+                if warehouse_name not in stocks_by_warehouse:
+                    stocks_by_warehouse[warehouse_name] = {}
+
+                if size in stocks_by_warehouse[warehouse_name]:
+                    stocks_by_warehouse[warehouse_name][size] += quantity
+                else:
+                    stocks_by_warehouse[warehouse_name][size] = quantity
             
             # Получаем количество отзывов
             reviews_count = self.db.query(WBReview).filter(
@@ -2839,6 +2859,7 @@ class NotificationService:
             
             return {
                 "stocks": stocks_dict,
+                "stocks_by_warehouse": stocks_by_warehouse,
                 "reviews_count": reviews_count,
                 "avg_rating": avg_rating,
                 "rating_distribution": rating_distribution,
@@ -2851,6 +2872,7 @@ class NotificationService:
             logger.error(f"Ошибка получения полной информации о товаре: {e}")
             return {
                 "stocks": {},
+                "stocks_by_warehouse": {},
                 "reviews_count": 0,
                 "avg_rating": 0.0,
                 "rating_distribution": {1: 0, 2: 0, 3: 0, 4: 0, 5: 0},
@@ -2859,19 +2881,33 @@ class NotificationService:
                 "image_url": None
             }
     
-    def _format_stocks_for_notification(self, stocks_dict: Dict[str, int]) -> str:
-        """Форматирование остатков для уведомлений"""
-        if not stocks_dict:
+    def _format_stocks_for_notification(self, stocks_by_warehouse: Dict[str, Dict[str, int]]) -> str:
+        """Форматирование остатков для уведомлений по складам и размерам"""
+        if not stocks_by_warehouse:
             return "Нет данных"
-        
-        # Сортируем размеры
-        sorted_sizes = sorted(stocks_dict.keys())
-        result = []
-        
-        for size in sorted_sizes:
-            quantity = stocks_dict[size]
-            result.append(f"{size}: {quantity} шт.")
-        
+
+        # Считаем общую сумму остатков
+        total_stocks = sum(
+            sum(sizes.values())
+            for sizes in stocks_by_warehouse.values()
+        )
+
+        result = [f"Всего: {total_stocks} шт."]
+
+        # Показываем только склады с остатками > 0
+        for warehouse_name, sizes in stocks_by_warehouse.items():
+            warehouse_total = sum(sizes.values())
+            if warehouse_total > 0:
+                # Формируем строку размеров
+                size_items = []
+                for size in sorted(sizes.keys()):
+                    quantity = sizes[size]
+                    if quantity > 0:  # Показываем только размеры с остатками
+                        size_items.append(f"{size}: {quantity}")
+
+                if size_items:
+                    result.append(f"{warehouse_name} - {warehouse_total} - [{' | '.join(size_items)}]")
+
         return "\n".join(result)
     
     async def _send_simple_notification(self, user_id: int, notification: Dict[str, Any], bot_webhook_url: str = None) -> Dict[str, Any]:
