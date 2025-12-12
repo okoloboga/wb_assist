@@ -130,10 +130,19 @@ async def run_agent(messages: List[Dict[str, Any]]) -> Dict[str, Any]:
         name = func.name
         args_json = func.arguments or "{}"
         try:
+            logger.info(f"🔧 Executing tool: {name} with args: {args_json[:200]}")
             result_json = await execute_tool(name, args_json)
+            logger.info(f"✅ Tool {name} executed successfully, result length: {len(result_json)}")
         except Exception as e:
-            logger.exception("Tool execution failed: %s", name)
-            result_json = json.dumps({"error": str(e)})
+            logger.exception(f"❌ Tool execution failed: {name}")
+            # Формируем детальное сообщение об ошибке для AI
+            error_detail = {
+                "error": str(e),
+                "error_type": type(e).__name__,
+                "tool": name,
+                "message": f"Произошла ошибка при выполнении запроса к базе данных. Детали: {str(e)}"
+            }
+            result_json = json.dumps(error_detail, ensure_ascii=False)
         tool_messages.append({
             "role": "tool",
             "tool_call_id": tc.id,
