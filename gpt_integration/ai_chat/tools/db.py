@@ -1,6 +1,9 @@
 from typing import Dict, Any, List, Tuple
 import re
+import logging
 from .db_pool import get_asyncpg_pool
+
+logger = logging.getLogger(__name__)
 
 SQL_TEMPLATES: Dict[str, str] = {
     "timeseries_sales": (
@@ -92,6 +95,12 @@ def _parse_interval(period: str) -> int:
     return 30  # По умолчанию 30 дней
 
 def _map_params(name: str, params: Dict[str, Any]) -> Tuple:
+    """Преобразует параметры в кортеж для SQL-запроса с проверкой обязательных полей."""
+    # Проверяем наличие telegram_id для всех шаблонов, кроме тех, где он не нужен
+    if name not in ["orders_summary"]:  # orders_summary может иметь другую структуру
+        if "telegram_id" not in params:
+            raise ValueError(f"Missing required parameter 'telegram_id' for template '{name}'. Received params: {list(params.keys())}")
+    
     if name == "timeseries_sales":
         period_str = params.get("period", "30 days")
         days = _parse_interval(period_str)
@@ -109,6 +118,12 @@ def _map_params(name: str, params: Dict[str, Any]) -> Tuple:
             params.get("limit", 10),
         )
     if name == "orders_summary":
+        if "telegram_id" not in params:
+            raise ValueError(f"Missing required parameter 'telegram_id' for template '{name}'. Received params: {list(params.keys())}")
+        if "from" not in params:
+            raise ValueError(f"Missing required parameter 'from' for template '{name}'. Received params: {list(params.keys())}")
+        if "to" not in params:
+            raise ValueError(f"Missing required parameter 'to' for template '{name}'. Received params: {list(params.keys())}")
         return (
             params["telegram_id"],
             params["from"],
@@ -123,17 +138,37 @@ def _map_params(name: str, params: Dict[str, Any]) -> Tuple:
             params["telegram_id"],
             days,  # Передаем число дней вместо строки
         )
-    raise ValueError("Unknown template or missing params")
+    raise ValueError(f"Unknown template: {name}. Available templates: {list(SQL_TEMPLATES.keys())}")
 
 async def run_sql_template(name: str, params: Dict[str, Any]) -> List[Dict[str, Any]]:
     if name not in SQL_TEMPLATES:
+        logger.error(f"❌ Unknown SQL template: {name}")
         raise ValueError("Template not allowed")
     
-    # Получить пул подключений (автоматически инициализируется, если нужно)
-    pool = await get_asyncpg_pool()
-    
-    query = SQL_TEMPLATES[name]
-    args = _map_params(name, params)
-    async with pool.acquire() as conn:
-        rows = await conn.fetch(query, *args)
-    return [dict(r) for r in rows]
+    try:
+        logger.info(f"🔍 Executing SQL template: {name} with params: {params}")
+        
+        # Получить пул подключений (автоматически инициализируется, если нужно)
+        pool = await get_asyncpg_pool()
+        
+        query = SQL_TEMPLATES[name]
+        args = _map_params(name, params)
+        
+        logger.debug(f"📝 SQL query: {query[:200]}... | args: {args}")
+        
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(query, *args)
+        
+        result = [dict(r) for r in rows]
+        logger.info(f"✅ SQL template {name} executed successfully: {len(result)} rows returned")
+        return result
+        
+    except ValueError as e:
+        logger.error(f"❌ Parameter mapping error for template {name}: {e}")
+        raise
+    except RuntimeError as e:
+        logger.error(f"❌ Database pool error for template {name}: {e}")
+        raise
+    except Exception as e:
+        logger.error(f"❌ SQL execution error for template {name} with params {params}: {e}", exc_info=True)
+        raise

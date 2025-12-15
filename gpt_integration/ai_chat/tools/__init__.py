@@ -137,26 +137,58 @@ registry = [
 
 async def execute_tool(name: str, args_json: str) -> str:
     """Execute a tool by name and return JSON string result."""
-    args = json.loads(args_json or "{}")
-    if name == "get_dashboard":
-        data = await get_dashboard(**args)
-        return json.dumps(data, ensure_ascii=False)
-    if name == "get_sales_timeseries":
-        data = await get_sales_timeseries(**args)
-        return json.dumps(data, ensure_ascii=False)
-    if name == "compute_kpis":
-        data = await compute_kpis(**args)
-        return json.dumps(data, ensure_ascii=False)
-    if name == "forecast_sales":
-        data = await forecast_sales(**args)
-        return json.dumps(data, ensure_ascii=False)
-    if name == "run_report":
-        data = await run_report(**args)
-        return json.dumps(data, ensure_ascii=False)
-    if name == "run_sql_template":
-        # AI передает все аргументы напрямую, а не в params
-        # Извлекаем 'name' и остальные передаем как params
-        template_name = args.pop("name")
-        data = await run_sql_template(name=template_name, params=args)
-        return json.dumps(data, ensure_ascii=False)
-    raise ValueError(f"Unknown tool: {name}")
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    try:
+        args = json.loads(args_json or "{}")
+        logger.info(f"🔧 Executing tool: {name} with args: {args}")
+        
+        if name == "get_dashboard":
+            data = await get_dashboard(**args)
+            return json.dumps(data, ensure_ascii=False)
+        if name == "get_sales_timeseries":
+            data = await get_sales_timeseries(**args)
+            return json.dumps(data, ensure_ascii=False)
+        if name == "compute_kpis":
+            data = await compute_kpis(**args)
+            return json.dumps(data, ensure_ascii=False)
+        if name == "forecast_sales":
+            data = await forecast_sales(**args)
+            return json.dumps(data, ensure_ascii=False)
+        if name == "run_report":
+            # AI может передавать параметры в двух форматах:
+            # 1. {"report_name": "...", "params": {...}}
+            # 2. {"report_name": "...", "telegram_id": ..., "period": ..., ...}
+            # Обрабатываем оба случая
+            if "params" in args and isinstance(args["params"], dict):
+                # Формат 1: параметры в отдельном объекте params
+                report_name = args.get("report_name")
+                params = args["params"]
+            else:
+                # Формат 2: все параметры на верхнем уровне
+                report_name = args.pop("report_name", None)
+                if report_name is None:
+                    raise ValueError("Missing required parameter 'report_name' for run_report")
+                params = args  # Остальные параметры становятся params
+            
+            data = await run_report(report_name=report_name, params=params)
+            return json.dumps(data, ensure_ascii=False)
+        if name == "run_sql_template":
+            # AI передает все аргументы напрямую, а не в params
+            # Извлекаем 'name' и остальные передаем как params
+            template_name = args.pop("name")
+            data = await run_sql_template(name=template_name, params=args)
+            return json.dumps(data, ensure_ascii=False)
+        
+        logger.error(f"❌ Unknown tool: {name}")
+        raise ValueError(f"Unknown tool: {name}")
+    except Exception as e:
+        logger.error(f"❌ Error executing tool {name} with args {args_json}: {e}", exc_info=True)
+        # Возвращаем JSON с ошибкой, чтобы AI мог обработать её
+        error_response = {
+            "error": str(e),
+            "error_type": type(e).__name__,
+            "tool": name
+        }
+        return json.dumps(error_response, ensure_ascii=False)

@@ -201,6 +201,7 @@ class RAGIndexer:
         rating = product.get('rating', 0) or 0
         reviews_count = product.get('reviews_count', 0) or 0
         price = product.get('price', 0) or 0
+        nm_id = product.get('nm_id', 'N/A')
         
         if not isinstance(rating, (int, float)):
             rating = 0
@@ -209,17 +210,22 @@ class RAGIndexer:
         if not isinstance(price, (int, float)):
             price = 0
         
+        # Улучшенное описание с большим количеством ключевых слов и синонимов
+        # для лучшего поиска по различным формулировкам запросов
         chunk_text = (
-            f"Товар '{name}' (nm_id: {product.get('nm_id', 'N/A')}), "
-            f"бренд: {brand}, категория: {category}, "
-            f"рейтинг: {rating:.1f}, отзывов: {reviews_count}, "
-            f"цена: {price:.2f}₽"
+            f"Товар продукт '{name}' артикул nm_id {nm_id}. "
+            f"Бренд производитель: {brand}. "
+            f"Категория тип товара: {category}. "
+            f"Рейтинг оценка: {rating:.1f} из 5. "
+            f"Количество отзывов: {reviews_count}. "
+            f"Цена стоимость: {price:.2f} рублей. "
+            f"Артикул nm_id: {nm_id}"
         )
         
         return {
             'chunk_type': 'product',
             'source_table': 'wb_products',
-            'source_id': product.get('nm_id'),
+            'source_id': nm_id,
             'chunk_text': chunk_text
         }
     
