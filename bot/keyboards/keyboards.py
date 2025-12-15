@@ -193,15 +193,14 @@ def content_keyboard() -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="✍️ Текст карточек", callback_data="generate_text"),
             InlineKeyboardButton(text="🖼 Изображения", callback_data="generate_images")
         ],
-        [InlineKeyboardButton(text="📂 Архив", callback_data="content_archive")],
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="main_menu")]
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="wb_menu")]
     ])
 
 
 def ai_assistant_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="💬 AI-чат", callback_data="ai_chat")],
-        [InlineKeyboardButton(text="🎨 Генерация карточки", callback_data="start_card_generation")],
+        [InlineKeyboardButton(text="🎨 Генерация описания", callback_data="start_card_generation")],
         [InlineKeyboardButton(text="📸 Обработка фото", callback_data="start_photo_processing")],
         [InlineKeyboardButton(text="🔙 Назад", callback_data="main_menu")]
     ])
