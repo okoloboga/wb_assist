@@ -41,6 +41,8 @@ DATABASE_URL=sqlite:///./ai_chat.db
 # AI_CHAT_DATABASE_URL=postgresql://wb_user:wb_password@db:5432/ai_chat
 # Уровень логирования AI-чата
 LOG_LEVEL=INFO
+# Лимит обращений к AI/RAG на пользователя (0 = без ограничений)
+RAG_USAGE=30
 
 # Photo Processing - API генерации изображений
 IMAGE_GEN_API_KEY=k-proj-cV54hqZ-Iz5dS5bYSeLG7OvZTNkcZeKMFKaBkCDafVCZbMteFdY5fLp3YdNDL1bsWJciipBjoeT3BlbkFJ5SaoGmExYtWDpKnr4pcIDUr2LPcJj9ETZnr1Rfq5w_E1qQBNzauz52tkbMx_UT5qsqnEkCjZ0A

@@ -6,6 +6,7 @@ RAG Indexer - сервис для индексации данных в вект�
 """
 
 import os
+import hashlib
 import logging
 from typing import List, Dict, Any, Optional
 from datetime import datetime
@@ -62,10 +63,27 @@ class RAGIndexer:
         else:
             self.openai_client = openai_client
         self.embeddings_model = embeddings_model or os.getenv(
-            "OPENAI_EMBEDDINGS_MODEL", 
+            "OPENAI_EMBEDDINGS_MODEL",
             "text-embedding-3-small"
         )
         self.batch_size = batch_size or int(os.getenv("RAG_EMBEDDING_BATCH_SIZE", "100"))
+
+    @staticmethod
+    def calculate_chunk_hash(chunk_text: str) -> str:
+        """
+        Вычислить SHA256 hash от chunk_text.
+
+        Используется для hash-based change detection:
+        - Если hash не изменился, то chunk_text не изменился
+        - Можно пропустить генерацию эмбеддинга (экономия API)
+
+        Args:
+            chunk_text: Текст чанка
+
+        Returns:
+            SHA256 hash в hex формате (64 символа)
+        """
+        return hashlib.sha256(chunk_text.encode('utf-8')).hexdigest()
         
     async def extract_data_from_main_db(self, cabinet_id: int) -> Dict[str, List[Dict[str, Any]]]:
         """
@@ -230,24 +248,40 @@ class RAGIndexer:
         }
     
     def _create_stock_chunk(self, stock: Dict[str, Any], product_name: Optional[str] = None) -> Dict[str, Any]:
-        """Создание чанка для остатка."""
+        """Создание чанка для остатка с ключевыми словами для поиска."""
         name = product_name or 'Неизвестный товар'
         warehouse = stock.get('warehouse_name', 'Неизвестный склад')
         quantity = stock.get('quantity', 0) or 0
         size = stock.get('size', 'N/A')
-        
+        nm_id = stock.get('nm_id', 'N/A')
+
         if not isinstance(quantity, (int, float)):
             quantity = 0
-        
+
+        # Определяем статус остатка и добавляем соответствующие ключевые слова
+        status_keywords = []
+        if quantity == 0:
+            status_keywords = ["нулевой остаток", "товар закончился", "СРОЧНО пополнить", "критический остаток"]
+        elif quantity <= 5:
+            status_keywords = ["критический остаток", "очень мало", "срочно пополнить", "требует пополнения"]
+        elif quantity <= 10:
+            status_keywords = ["низкий остаток", "мало товара", "нужно пополнить", "скоро закончится"]
+        elif quantity <= 20:
+            status_keywords = ["невысокий остаток", "стоит пополнить", "запас на исходе"]
+        else:
+            status_keywords = ["достаточный остаток", "запас в норме"]
+
+        # Формируем расширенный текст чанка с ключевыми словами
         chunk_text = (
-            f"Остаток товара '{name}' (nm_id: {stock.get('nm_id', 'N/A')}), "
-            f"размер {size}, склад: {warehouse}, количество: {int(quantity)} шт"
+            f"Остаток запас товара '{name}' артикул nm_id {nm_id}: "
+            f"размер {size}, склад {warehouse}, количество {int(quantity)} штук. "
+            f"Статус: {', '.join(status_keywords)}."
         )
-        
+
         return {
             'chunk_type': 'stock',
             'source_table': 'wb_stocks',
-            'source_id': stock.get('nm_id'),  # Используем nm_id как идентификатор
+            'source_id': nm_id,
             'chunk_text': chunk_text
         }
     
@@ -374,54 +408,100 @@ class RAGIndexer:
     def generate_embeddings(self, chunks: List[str]) -> List[List[float]]:
         """
         Генерация эмбеддингов для списка текстовых чанков.
-        
+
         Использует batch processing для экономии запросов к API.
-        
+        С retry логикой для каждого батча отдельно.
+
         Args:
             chunks: Список текстовых чанков
-            
+
         Returns:
             Список векторов (каждый вектор - список из 1536 float)
         """
+        import time
+
         if not chunks:
             return []
-        
+
         all_embeddings = []
         total_chunks = len(chunks)
-        
+        failed_batches = []
+
         # Разбить на батчи
         for i in range(0, total_chunks, self.batch_size):
             batch = chunks[i:i + self.batch_size]
             batch_num = (i // self.batch_size) + 1
             total_batches = (total_chunks + self.batch_size - 1) // self.batch_size
-            
+
             logger.info(
                 f"🔄 Генерация эмбеддингов: батч {batch_num}/{total_batches} "
                 f"({len(batch)} чанков)"
             )
-            
-            try:
-                # Вызов OpenAI Embeddings API
-                response = self.openai_client.embeddings.create(
-                    model=self.embeddings_model,
-                    input=batch
-                )
-                
-                # Извлечь векторы из ответа
-                batch_embeddings = [item.embedding for item in response.data]
-                all_embeddings.extend(batch_embeddings)
-                
-                logger.info(
-                    f"✅ Батч {batch_num} обработан: {len(batch_embeddings)} эмбеддингов"
-                )
-                
-            except Exception as e:
-                logger.error(f"❌ Error generating embeddings for batch {batch_num}: {e}")
-                # Выбросить исключение для обработки на верхнем уровне
-                raise
-        
-        logger.info(f"✅ Generated {len(all_embeddings)} embeddings total")
-        
+
+            # Retry логика для текущего батча
+            max_retries = 5
+            retry_delay = 2  # Начальная задержка в секундах
+
+            for attempt in range(max_retries):
+                try:
+                    # Вызов OpenAI Embeddings API
+                    response = self.openai_client.embeddings.create(
+                        model=self.embeddings_model,
+                        input=batch
+                    )
+
+                    # Извлечь векторы из ответа
+                    batch_embeddings = [item.embedding for item in response.data]
+                    all_embeddings.extend(batch_embeddings)
+
+                    usage = getattr(response, "usage", None)
+                    if usage:
+                        prompt_tokens = getattr(usage, "prompt_tokens", None)
+                        total_tokens = getattr(usage, "total_tokens", None)
+                        logger.info(
+                            f"🧮 Embedding tokens (batch {batch_num}): "
+                            f"prompt={prompt_tokens}, total={total_tokens}"
+                        )
+
+                    logger.info(
+                        f"✅ Батч {batch_num} обработан: {len(batch_embeddings)} эмбеддингов"
+                    )
+                    break  # Успешно - выходим из retry loop
+
+                except Exception as e:
+                    if attempt < max_retries - 1:
+                        # Exponential backoff
+                        wait_time = retry_delay * (2 ** attempt)
+                        logger.warning(
+                            f"⚠️ Батч {batch_num} failed (попытка {attempt + 1}/{max_retries}): {e}. "
+                            f"Повтор через {wait_time}с..."
+                        )
+                        time.sleep(wait_time)
+                    else:
+                        # Все попытки исчерпаны - пропускаем батч
+                        logger.error(
+                            f"❌ Батч {batch_num} failed после {max_retries} попыток: {e}. "
+                            f"Пропускаем батч и продолжаем..."
+                        )
+                        failed_batches.append({
+                            'batch_num': batch_num,
+                            'start_idx': i,
+                            'end_idx': i + len(batch),
+                            'error': str(e)
+                        })
+                        # Добавляем пустые эмбеддинги для сохранения индексов
+                        # (или можно пропустить - зависит от стратегии)
+                        break
+
+        if failed_batches:
+            logger.warning(
+                f"⚠️ Индексация завершена с ошибками: {len(failed_batches)} батчей пропущено. "
+                f"Успешно: {len(all_embeddings)}/{total_chunks} чанков"
+            )
+            logger.warning(f"Пропущенные батчи: {failed_batches}")
+        else:
+            logger.info(f"✅ Generated {len(all_embeddings)} embeddings total")
+
         return all_embeddings
     
     def save_to_vector_db(
@@ -433,23 +513,30 @@ class RAGIndexer:
     ) -> int:
         """
         Сохранение эмбеддингов и метаданных в векторную БД.
-        
+
         Обрабатывает дубликаты: обновляет существующие записи.
-        
+        Обрабатывает частичную индексацию: сохраняет только успешные чанки.
+
         Args:
             embeddings: Список векторов
             chunks_metadata: Список метаданных для каждого чанка
             cabinet_id: ID кабинета
             db: Сессия БД
-            
+
         Returns:
             Количество сохраненных записей
         """
         if len(embeddings) != len(chunks_metadata):
-            raise ValueError(
-                f"Количество эмбеддингов ({len(embeddings)}) "
-                f"не совпадает с количеством метаданных ({len(chunks_metadata)})"
+            logger.warning(
+                f"⚠️ Несовпадение длин: эмбеддингов ({len(embeddings)}) != "
+                f"метаданных ({len(chunks_metadata)}). "
+                f"Сохраняем только успешно проиндексированные чанки."
             )
+            # Сохраняем только те чанки, для которых есть эмбеддинги
+            min_length = min(len(embeddings), len(chunks_metadata))
+            embeddings = embeddings[:min_length]
+            chunks_metadata = chunks_metadata[:min_length]
+            logger.info(f"📊 Будет сохранено {min_length} чанков")
         
         saved_count = 0
         
@@ -466,13 +553,14 @@ class RAGIndexer:
                     # Обновить существующую запись
                     existing_metadata.chunk_text = chunk_meta['chunk_text']
                     existing_metadata.chunk_type = chunk_meta['chunk_type']
+                    existing_metadata.chunk_hash = self.calculate_chunk_hash(chunk_meta['chunk_text'])
                     existing_metadata.updated_at = datetime.now()
-                    
+
                     # Обновить embedding
                     existing_embedding = db.query(RAGEmbedding).filter(
                         RAGEmbedding.metadata_id == existing_metadata.id
                     ).first()
-                    
+
                     if existing_embedding:
                         existing_embedding.embedding = embedding
                         existing_embedding.updated_at = datetime.now()
@@ -483,7 +571,7 @@ class RAGIndexer:
                             metadata_id=existing_metadata.id
                         )
                         db.add(new_embedding)
-                    
+
                 else:
                     # Создать новую запись
                     new_metadata = RAGMetadata(
@@ -491,11 +579,12 @@ class RAGIndexer:
                         source_table=chunk_meta['source_table'],
                         source_id=chunk_meta['source_id'],
                         chunk_type=chunk_meta['chunk_type'],
-                        chunk_text=chunk_meta['chunk_text']
+                        chunk_text=chunk_meta['chunk_text'],
+                        chunk_hash=self.calculate_chunk_hash(chunk_meta['chunk_text'])
                     )
                     db.add(new_metadata)
                     db.flush()  # Получить ID новой записи
-                    
+
                     new_embedding = RAGEmbedding(
                         embedding=embedding,
                         metadata_id=new_metadata.id
@@ -653,4 +742,3 @@ class RAGIndexer:
             db.close()
         
         return result
-

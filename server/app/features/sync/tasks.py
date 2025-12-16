@@ -45,6 +45,20 @@ def sync_cabinet_data(self, cabinet_id: int) -> Dict[str, Any]:
         # для правильной работы с уведомлениями
         
         logger.info(f"Синхронизация кабинета {cabinet_id} завершена: {result}")
+
+        # После успешной первичной синхронизации запускаем индексацию RAG (если включено)
+        try:
+            import os
+            rag_enabled = os.getenv("RAG_ENABLED", "true").lower() == "true"
+            if rag_enabled:
+                from app.features.rag.tasks import index_rag_for_cabinet
+                index_rag_for_cabinet.delay(cabinet_id)
+                logger.info(f"🚀 Запущена RAG индексация после первичной синхронизации кабинета {cabinet_id}")
+            else:
+                logger.info("RAG_DISABLED: пропускаем индексацию после синхронизации")
+        except Exception as rag_error:
+            logger.error(f"Ошибка запуска RAG индексации после синхронизации кабинета {cabinet_id}: {rag_error}")
+
         return {"status": "success", "cabinet_id": cabinet_id, "result": result}
         
     except Exception as e:

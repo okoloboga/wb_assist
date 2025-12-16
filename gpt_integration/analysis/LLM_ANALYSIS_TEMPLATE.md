@@ -615,8 +615,6 @@ REDIS_URL=redis://redis:6379/0
     "yesterday": {
       "orders": 0,
       "orders_amount": 0.0,
-      "cancellations": 0,
-      "cancellations_amount": 0.0,
       "buyouts": 0,
       "buyouts_amount": 0.0,
       "returns": 0,
@@ -634,7 +632,7 @@ REDIS_URL=redis://redis:6379/0
   },
   "anomalies": [
     {
-      "type": "high_cancellations|high_returns|sales_drop|low_stock",
+      "type": "high_returns|sales_drop|low_stock",
       "description": "string",
       "severity": "low|medium|high",
       "affected_items": ["string"]
@@ -704,7 +702,6 @@ REDIS_URL=redis://redis:6379/0
 Вчера ({yesterday_date}):
 
 Заказы: {yesterday.orders} шт. — {yesterday.orders_amount}₽
-Отмены: {yesterday.cancellations} шт. — {yesterday.cancellations_amount}₽
 Выкупы: {yesterday.buyouts} шт. — {yesterday.buyouts_amount}₽
 Возвраты: {yesterday.returns} шт. — {yesterday.returns_amount}₽
 

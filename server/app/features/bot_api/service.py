@@ -835,9 +835,10 @@ class BotAPIService:
             chart_days = 14
             fetch_days = max(days_window, chart_days)
 
-            end_msk = TimezoneUtils.get_today_start_msk() - timedelta(seconds=1) # Конец вчерашнего дня
-            start_msk = end_msk.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=fetch_days - 1)
-            
+            # Окно: от полуночи (МСК) fetch_days назад до полуночи сегодня (МСК)
+            today_msk = TimezoneUtils.get_today_start_msk()
+            start_msk = today_msk - timedelta(days=fetch_days)
+            end_msk = today_msk  # не включительно
             start_utc = TimezoneUtils.to_utc(start_msk)
             end_utc = TimezoneUtils.to_utc(end_msk)
 
@@ -853,7 +854,6 @@ class BotAPIService:
                 day_keys.append(key)
                 day_map[key] = {
                     "orders": 0, "orders_amount": 0.0,
-                    "cancellations": 0, "cancellations_amount": 0.0,
                     "buyouts": 0, "buyouts_amount": 0.0,
                     "returns": 0, "returns_amount": 0.0,
                     "avg_rating": 0.0,
@@ -865,13 +865,14 @@ class BotAPIService:
                 day_key = row.day
                 if day_key in day_map:
                     event_type = row.type
-                    if event_type == 'buyout' or event_type == 'return': # From wb_sales
-                         day_map[day_key][event_type] = row.count
-                         day_map[day_key][f"{event_type}_amount"] = float(row.amount or 0.0)
+                    if event_type in ('buyout', 'return'):  # From wb_sales
+                        key = 'buyouts' if event_type == 'buyout' else 'returns'
+                        day_map[day_key][key] = row.count
+                        day_map[day_key][f"{key}_amount"] = float(row.amount or 0.0)
                     elif event_type == 'ratings':
                         day_map[day_key]['avg_rating'] = float(row.amount or 0.0) # amount is avg_rating here
                         day_map[day_key]['rating_count'] = row.count
-                    else: # orders, cancellations from wb_orders
+                    elif event_type == 'orders':  # wb_orders без отмен
                         day_map[day_key][event_type] = row.count
                         day_map[day_key][f"{event_type}_amount"] = float(row.amount or 0.0)
 
@@ -880,7 +881,7 @@ class BotAPIService:
             selected_keys = day_keys[-days_window:]
             time_series = []
             totals = {
-                "orders": 0, "orders_amount": 0.0, "cancellations": 0, "cancellations_amount": 0.0,
+                "orders": 0, "orders_amount": 0.0,
                 "buyouts": 0, "buyouts_amount": 0.0, "returns": 0, "returns_amount": 0.0
             }
 
@@ -888,7 +889,6 @@ class BotAPIService:
                 d = day_map[key]
                 time_series.append({
                     "date": key, "orders": d["orders"], "orders_amount": d["orders_amount"],
-                    "cancellations": d["cancellations"], "cancellations_amount": d["cancellations_amount"],
                     "buyouts": d["buyouts"], "buyouts_amount": d["buyouts_amount"],
                     "returns": d["returns"], "returns_amount": d["returns_amount"],
                     "avg_rating": d["avg_rating"]
@@ -928,7 +928,6 @@ class BotAPIService:
                     "date": yesterday_date,
                     "orders": yesterday_data.get("orders", 0),
                     "orders_amount": yesterday_data.get("orders_amount", 0.0),
-                    "cancellations": yesterday_data.get("cancellations", 0),
                     "buyouts": yesterday_data.get("buyouts", 0),
                     "returns": yesterday_data.get("returns", 0),
                     "avg_check": yesterday_avg_check,
@@ -962,17 +961,6 @@ class BotAPIService:
             GROUP BY day
         """)
 
-        # Отмены
-        cancellations_q = text(f"""
-            SELECT to_char(updated_at AT TIME ZONE 'utc' AT TIME ZONE '{tz}', 'YYYY-MM-DD') AS day,
-                   'cancellations' AS type,
-                   COUNT(id) AS count,
-                   SUM(total_price) AS amount
-            FROM wb_orders
-            WHERE cabinet_id = :cabinet_id AND updated_at BETWEEN :start_utc AND :end_utc AND status = 'canceled'
-            GROUP BY day
-        """)
-
         # Выкупы и возвраты
         sales_q = text(f"""
             SELECT to_char(sale_date AT TIME ZONE 'utc' AT TIME ZONE '{tz}', 'YYYY-MM-DD') AS day,
@@ -995,10 +983,21 @@ class BotAPIService:
             GROUP BY day
         """)
 
-        # Объединяем все запросы
-        union_q = text(" UNION ALL ").join([orders_q, cancellations_q, sales_q, reviews_q])
-        
-        result = self.db.execute(union_q, {"cabinet_id": cabinet_id, "start_utc": start_utc, "end_utc": end_utc})
+        # Объединяем все запросы (TextClause не поддерживает .join)
+        union_sql = f"""
+            ({orders_q.text})
+            UNION ALL
+            ({sales_q.text})
+            UNION ALL
+            ({reviews_q.text})
+        """
+
+        union_q = text(union_sql)
+        params = {"cabinet_id": cabinet_id, "start_utc": start_utc, "end_utc": end_utc}
+        logger.info(
+            f"🧮 Daily trends window UTC: start={start_utc}, end={end_utc} (cabinet_id={cabinet_id})"
+        )
+        result = self.db.execute(union_q, params)
         return result.fetchall()
 
     def _get_top_products_for_period(self, cabinet_id: int, start_utc: datetime, end_utc: datetime) -> List[Dict]:
@@ -1028,7 +1027,16 @@ class BotAPIService:
         ).limit(10).all()
 
         return [
-            {"nm_id": p.nm_id, "name": p.name or str(p.nm_id), "orders": p.orders_count}
+            {
+                "nm_id": p.nm_id,
+                "name": p.name or str(p.nm_id),
+                "orders": p.orders_count,
+                # buyouts/returns могут быть заполнены позже отдельными агрегациями
+                "buyouts": 0,
+                "returns": 0,
+                "buyout_rate_percent": 0.0,
+                "return_rate_percent": 0.0,
+            }
             for p in products_with_stats
         ]
 

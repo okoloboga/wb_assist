@@ -20,6 +20,9 @@ sync_interval = int(sync_interval_env)
 # Получаем интервал экспорта в Google Sheets (используем тот же что и для синхронизации)
 export_interval = sync_interval
 
+# Получаем интервал индексации RAG из переменной окружения (по умолчанию 6 часов)
+rag_indexing_interval_hours = int(os.getenv("RAG_INDEXING_INTERVAL_HOURS", "6"))
+
 # Получаем время проверки алертов из переменной окружения
 stock_alert_check_time = os.getenv("STOCK_ALERT_CHECK_TIME")
 if not stock_alert_check_time:
@@ -38,6 +41,8 @@ logger.info(f"  Redis URL: {redis_url}")
 logger.info(f"Sync configuration:")
 logger.info(f"  Sync interval: {sync_interval} seconds ({sync_interval/60:.1f} minutes)")
 logger.info(f"  Export interval (same as sync): {export_interval} seconds ({export_interval/60:.1f} minutes)")
+logger.info(f"RAG configuration:")
+logger.info(f"  Indexing interval: {rag_indexing_interval_hours} hours")
 logger.info(f"Stock alerts configuration:")
 logger.info(f"  Check time: {stock_alert_check_time} MSK")
 
@@ -52,6 +57,7 @@ celery_app = Celery(
         "app.features.export.tasks",
         "app.features.digest.tasks",
         "app.features.competitors.tasks",
+        "app.features.rag.tasks",
     ]
 )
 
@@ -91,6 +97,11 @@ celery_app.conf.update(
         # Скрапинг конкурентов - отдельная очередь
         "app.features.competitors.tasks.scrape_competitor_task": {"queue": "scraping_queue"},
         "app.features.competitors.tasks.update_all_competitors_task": {"queue": "scraping_queue"},
+
+        # RAG индексация - отдельная очередь
+        "app.features.rag.tasks.index_rag_for_cabinet": {"queue": "rag_queue"},
+        "app.features.rag.tasks.index_all_cabinets_rag": {"queue": "rag_queue"},
+        "app.features.rag.tasks.check_rag_indexing_status": {"queue": "rag_queue"},
     },
     
     # Настройки для периодических задач
@@ -118,6 +129,10 @@ celery_app.conf.update(
         "update-all-competitors": {
             "task": "app.features.competitors.tasks.update_all_competitors_task",
             "schedule": crontab(hour=0, minute=0),  # Каждый день в полночь
+        },
+        "index-all-cabinets-rag": {
+            "task": "app.features.rag.tasks.index_all_cabinets_rag",
+            "schedule": crontab(hour=f'*/{rag_indexing_interval_hours}', minute=0),  # Каждые N часов (по умолчанию 6)
         },
     },
     

@@ -7,6 +7,7 @@ Vector Search - модуль для векторного поиска в pgvecto
 
 import os
 import logging
+import re
 from typing import List, Dict, Any, Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import text
@@ -63,8 +64,13 @@ class VectorSearch:
             "OPENAI_EMBEDDINGS_MODEL",
             "text-embedding-3-small"
         )
+        # Similarity threshold для cosine similarity (1 - cosine distance), диапазон [0, 1]
+        # 0.7-1.0 = высокая релевантность
+        # 0.4-0.7 = средняя релевантность
+        # 0.0-0.4 = низкая релевантность
+        # Рекомендуемое значение: 0.3-0.5 для баланса между precision и recall
         self.similarity_threshold = similarity_threshold or float(
-            os.getenv("RAG_SIMILARITY_THRESHOLD", "0.5")
+            os.getenv("RAG_SIMILARITY_THRESHOLD", "0.3")
         )
     
     def generate_query_embedding(self, query_text: str) -> List[float]:
@@ -98,6 +104,14 @@ class VectorSearch:
             
             # Извлечь вектор из ответа
             embedding = response.data[0].embedding
+            # Логируем токены, если доступны
+            usage = getattr(response, "usage", None)
+            if usage:
+                prompt_tokens = getattr(usage, "prompt_tokens", None)
+                total_tokens = getattr(usage, "total_tokens", None)
+                logger.info(
+                    f"🧮 Embedding tokens: prompt={prompt_tokens}, total={total_tokens}"
+                )
             
             logger.info(f"✅ Embedding generated: dimension {len(embedding)}")
             
@@ -112,7 +126,8 @@ class VectorSearch:
         query_embedding: List[float],
         cabinet_id: int,
         chunk_types: Optional[List[str]] = None,
-        limit: int = 5
+        limit: int = 5,
+        source_id: Optional[int] = None
     ) -> List[Dict[str, Any]]:
         """
         Векторный поиск в pgvector.
@@ -124,6 +139,7 @@ class VectorSearch:
             cabinet_id: ID кабинета (обязательная фильтрация)
             chunk_types: Список типов чанков для фильтрации (опционально)
             limit: Максимальное количество результатов
+            source_id: Фильтр по source_id (например, nm_id из запроса)
             
         Returns:
             Список словарей с результатами:
@@ -144,49 +160,53 @@ class VectorSearch:
             embedding_str = '[' + ','.join(map(str, query_embedding)) + ']'
             
             # Построить SQL запрос
-            # Используем cosine distance (<#>) и вычисляем similarity как 1 - distance
+            # Используем inner product (<=>) для нормализованных векторов (OpenAI embeddings)
+            # Для нормализованных векторов: cosine similarity ≈ inner product
+            # pgvector возвращает NEGATIVE inner product с оператором <=>
+            # Значения в диапазоне [-1, 1], где -1 = наиболее похожие, 1 = наименее похожие
+            # Поэтому умножаем на -1 для получения similarity в диапазоне [0, 1]
+            # Сортируем по ASC (от меньшего к большему = от самого отрицательного к положительному)
             # Важно: используем f-string для embedding_str, так как SQLAlchemy не может правильно
             # обработать placeholder с ::vector из-за двойного двоеточия
-            if chunk_types and len(chunk_types) > 0:
-                # Фильтрация по типам чанков
-                # Используем правильный формат массива PostgreSQL
-                chunk_types_array = '{' + ','.join(f'"{ct}"' for ct in chunk_types) + '}'
+            filter_by_chunk_types = bool(chunk_types and len(chunk_types) > 0)
+            if filter_by_chunk_types:
                 query = text(f"""
-                    SELECT 
+                    SELECT
                         e.id AS embedding_id,
                         e.metadata_id,
-                        1 - (e.embedding <#> '{embedding_str}'::vector) AS similarity,
-                        e.embedding <#> '{embedding_str}'::vector AS distance
+                        (1 - (e.embedding <=> '{embedding_str}'::vector)) AS similarity,
+                        e.embedding <=> '{embedding_str}'::vector AS distance
                     FROM rag_embeddings e
                     JOIN rag_metadata m ON e.metadata_id = m.id
                     WHERE m.cabinet_id = :cabinet_id
-                      AND m.chunk_type = ANY(:chunk_types::text[])
-                    ORDER BY e.embedding <#> '{embedding_str}'::vector
+                      AND m.chunk_type = ANY(:chunk_types)
+                      {"AND m.source_id = :source_id" if source_id is not None else ""}
+                    ORDER BY e.embedding <=> '{embedding_str}'::vector ASC
                     LIMIT :limit
                 """)
-                params = {
-                    'cabinet_id': cabinet_id,
-                    'chunk_types': chunk_types_array,
-                    'limit': limit
-                }
             else:
-                # Без фильтрации по типам
                 query = text(f"""
-                    SELECT 
+                    SELECT
                         e.id AS embedding_id,
                         e.metadata_id,
-                        1 - (e.embedding <#> '{embedding_str}'::vector) AS similarity,
-                        e.embedding <#> '{embedding_str}'::vector AS distance
+                        (1 - (e.embedding <=> '{embedding_str}'::vector)) AS similarity,
+                        e.embedding <=> '{embedding_str}'::vector AS distance
                     FROM rag_embeddings e
                     JOIN rag_metadata m ON e.metadata_id = m.id
                     WHERE m.cabinet_id = :cabinet_id
-                    ORDER BY e.embedding <#> '{embedding_str}'::vector
+                      {"AND m.source_id = :source_id" if source_id is not None else ""}
+                    ORDER BY e.embedding <=> '{embedding_str}'::vector ASC
                     LIMIT :limit
                 """)
-                params = {
-                    'cabinet_id': cabinet_id,
-                    'limit': limit
-                }
+
+            params = {
+                'cabinet_id': cabinet_id,
+                'limit': limit
+            }
+            if filter_by_chunk_types:
+                params['chunk_types'] = chunk_types
+            if source_id is not None:
+                params['source_id'] = source_id
             
             # Выполнить запрос
             logger.info(
@@ -194,7 +214,8 @@ class VectorSearch:
                 f"cabinet_id={cabinet_id}, "
                 f"limit={limit}, "
                 f"chunk_types={chunk_types if chunk_types else 'all'}, "
-                f"similarity_threshold={self.similarity_threshold}"
+                f"similarity_threshold={self.similarity_threshold}, "
+                f"source_id_filter={source_id if source_id is not None else 'none'}"
             )
             
             result = db.execute(query, params)
@@ -208,14 +229,15 @@ class VectorSearch:
             for idx, row in enumerate(rows):
                 similarity = float(row.similarity)
                 distance = float(row.distance)
-                
-                logger.debug(
+
+                # Детальное логирование каждого результата
+                logger.info(
                     f"  [{idx+1}/{len(rows)}] embedding_id={row.embedding_id}, "
                     f"metadata_id={row.metadata_id}, "
-                    f"similarity={similarity:.4f}, "
+                    f"similarity={similarity:.4f} (1 - distance), "
                     f"distance={distance:.4f}"
                 )
-                
+
                 # Применить порог релевантности
                 if similarity >= self.similarity_threshold:
                     results.append({
@@ -224,12 +246,14 @@ class VectorSearch:
                         'similarity': similarity,
                         'distance': distance
                     })
+                    logger.info(f"    ✅ PASSED threshold ({similarity:.4f} >= {self.similarity_threshold})")
                 else:
                     filtered_out.append({
                         'embedding_id': row.embedding_id,
                         'similarity': similarity,
                         'distance': distance
                     })
+                    logger.info(f"    ❌ FILTERED ({similarity:.4f} < {self.similarity_threshold})")
             
             logger.info(
                 f"✅ Filtering results: "
@@ -364,13 +388,22 @@ class VectorSearch:
             ]
         """
         try:
+            # Детектируем nm_id в тексте запроса, чтобы точнее фильтровать
+            nm_id_match = re.search(r"\b\d{6,}\b", query_text)
+            nm_id_filter = int(nm_id_match.group()) if nm_id_match else None
+            # Если нашли nm_id и типы не заданы – акцентируемся на stock/product
+            effective_chunk_types = chunk_types
+            if nm_id_filter and not effective_chunk_types:
+                effective_chunk_types = ["stock", "product"]
+
             logger.info(
                 f"🔍 Starting search for relevant chunks:\n"
                 f"  📝 Query: '{query_text}'\n"
                 f"  🏢 Cabinet ID: {cabinet_id}\n"
-                f"  📦 Chunk types: {chunk_types if chunk_types else 'all'}\n"
+                f"  📦 Chunk types: {effective_chunk_types if effective_chunk_types else 'all'}\n"
                 f"  🔢 Max results: {max_chunks}\n"
-                f"  📊 Similarity threshold: {self.similarity_threshold}"
+                f"  📊 Similarity threshold: {self.similarity_threshold}\n"
+                f"  🔎 Source ID filter: {nm_id_filter if nm_id_filter else 'none'}"
             )
             
             # 1. Генерация эмбеддинга запроса
@@ -380,8 +413,9 @@ class VectorSearch:
             search_results = self.search(
                 query_embedding=query_embedding,
                 cabinet_id=cabinet_id,
-                chunk_types=chunk_types,
-                limit=max_chunks
+                chunk_types=effective_chunk_types,
+                limit=max_chunks,
+                source_id=nm_id_filter
             )
             
             if not search_results:
@@ -439,4 +473,3 @@ class VectorSearch:
             logger.error(f"❌ Error searching relevant chunks: {e}")
             # Вернуть пустой список при ошибке (fallback)
             return []
-

@@ -114,6 +114,13 @@ async def run_agent(messages: List[Dict[str, Any]]) -> Dict[str, Any]:
     first = await _call_llm(enriched, tools=registry)
     msg = first["message"]
     usage = first.get("usage")
+    if usage:
+        logger.info(
+            "🧮 LLM call #1 tokens: prompt=%s, completion=%s, total=%s",
+            getattr(usage, "prompt_tokens", None),
+            getattr(usage, "completion_tokens", None),
+            getattr(usage, "total_tokens", None),
+        )
 
     # If no tool calls — return content
     tool_calls = getattr(msg, "tool_calls", None)
@@ -166,6 +173,13 @@ async def run_agent(messages: List[Dict[str, Any]]) -> Dict[str, Any]:
     final = await _call_llm(followup)
     fmsg = final["message"]
     fusage = final.get("usage")
+    if fusage:
+        logger.info(
+            "🧮 LLM call #2 tokens: prompt=%s, completion=%s, total=%s",
+            getattr(fusage, "prompt_tokens", None),
+            getattr(fusage, "completion_tokens", None),
+            getattr(fusage, "total_tokens", None),
+        )
     return {
         "final": fmsg.content or "",
         "tokens_used": getattr(fusage, "total_tokens", 0) if fusage else 0,

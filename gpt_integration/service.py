@@ -36,6 +36,7 @@ from gpt_integration.ai_chat.app.service import (
 )
 from gpt_integration.card_generation.service import generate_card as card_generation_service
 from gpt_integration.semantic_core.service import generate_semantic_core as semantic_core_service # New import
+from gpt_integration.ai_chat.RAG.api import router as rag_router
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -45,6 +46,9 @@ app = FastAPI(title="GPT Integration Service", version="1.0.0")
 # Включаем полнофункциональный AI Chat Router
 setup_ai_chat_components(app)
 app.include_router(ai_chat_router, prefix="/v1/chat")
+
+# Включаем RAG Router
+app.include_router(rag_router)
 
 
 # ============================================================================

@@ -98,6 +98,14 @@ class GPTClient:
                 # Re-raise with more context for better error detection
                 logger.debug(f"OpenAI API call failed: {type(e).__name__}: {str(e)}")
                 raise
+            usage = getattr(resp, "usage", None)
+            if usage:
+                prompt_tokens = getattr(usage, "prompt_tokens", None)
+                completion_tokens = getattr(usage, "completion_tokens", None)
+                total_tokens = getattr(usage, "total_tokens", None)
+                logger.info(
+                    f"🧮 Chat tokens: prompt={prompt_tokens}, completion={completion_tokens}, total={total_tokens}"
+                )
             choice = getattr(resp, "choices", [None])[0]
             if choice is None:
                 return ""

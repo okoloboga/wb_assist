@@ -547,8 +547,6 @@ class DailyTrendPoint(BaseModel):
     date: str
     orders: int
     orders_amount: float
-    cancellations: int
-    cancellations_amount: float
     buyouts: int
     buyouts_amount: float
     returns: int
@@ -560,8 +558,6 @@ class DailyTrendTotals(BaseModel):
     """Суммарные значения"""
     orders: int
     orders_amount: float
-    cancellations: int
-    cancellations_amount: float
     buyouts: int
     buyouts_amount: float
     returns: int
@@ -585,7 +581,6 @@ class DailyTrendTopProduct(BaseModel):
     nm_id: int
     name: str
     orders: int
-    cancellations: int
     buyouts: int
     returns: int
     buyout_rate_percent: float

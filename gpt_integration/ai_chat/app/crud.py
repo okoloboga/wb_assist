@@ -5,6 +5,7 @@ Handles database operations for chat history and rate limiting.
 """
 
 import logging
+import os
 from datetime import date, datetime, timedelta
 from typing import Tuple, List, Optional
 from sqlalchemy.orm import Session
@@ -16,8 +17,18 @@ from .models import AIChatRequest, AIChatDailyLimit
 # Configure logging
 logger = logging.getLogger(__name__)
 
-# Daily request limit constant
-DAILY_LIMIT = 30
+# Daily request limit (0 = unlimited)
+def _load_daily_limit() -> int:
+    raw = os.getenv("RAG_USAGE") or os.getenv("DAILY_LIMIT") or "30"
+    try:
+        value = int(raw)
+        return max(0, value)
+    except ValueError:
+        logger.warning(f"⚠️ Invalid RAG_USAGE/DAILY_LIMIT value '{raw}', fallback to 30")
+        return 30
+
+
+DAILY_LIMIT = _load_daily_limit()
 
 
 class AIChatCRUD:
@@ -57,6 +68,10 @@ class AIChatCRUD:
                 - can_request: True if request allowed
                 - remaining_requests: Number of requests left (0 if exceeded)
         """
+        if DAILY_LIMIT == 0:
+            logger.debug(f"♾️ Limit disabled (RAG_USAGE=0) for telegram_id={telegram_id}")
+            return (True, None)
+
         today = date.today()
         
         # Get or create limit record
@@ -112,6 +127,15 @@ class AIChatCRUD:
                 - daily_limit: Daily limit (30)
                 - reset_date: Last reset date
         """
+        if DAILY_LIMIT == 0:
+            today = date.today()
+            return {
+                "requests_today": 0,
+                "requests_remaining": None,
+                "daily_limit": 0,
+                "reset_date": today
+            }
+
         today = date.today()
         
         limit_record = self.db.query(AIChatDailyLimit).filter(
@@ -311,4 +335,3 @@ class AIChatCRUD:
         logger.info(f"📊 Stats for telegram_id={telegram_id}: {stats}")
         
         return stats
-
