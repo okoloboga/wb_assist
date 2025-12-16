@@ -370,7 +370,7 @@ def _validate_output(parsed: Dict[str, Any], schema_text: Optional[str]) -> List
     return errors
 
 
-def run_analysis(
+async def run_analysis(
     client: GPTClient, data: Dict[str, Any], template_path: Optional[str] = None, validate: bool = False
 ) -> Dict[str, Any]:
     """
@@ -384,7 +384,7 @@ def run_analysis(
     logger = logging.getLogger(__name__)
     
     messages = compose_messages(data, template_path)
-    text = client.complete_messages(messages)
+    text = await client.complete_messages(messages)
     
     # Save raw response to file for debugging
     try:

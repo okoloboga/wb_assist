@@ -203,18 +203,32 @@ X-API-KEY: {API_SECRET_KEY}
 
 ## 🔧 Изменения в Celery Tasks (server)
 
-### 1. `index_rag_for_cabinet(cabinet_id, full_rebuild=False)`
+### 1. `index_rag_for_cabinet(cabinet_id, full_rebuild=False, changed_ids=None)`
 
-**Описание:** Индексация RAG для конкретного кабинета
+**Описание:** Индексация RAG для конкретного кабинета (Event-driven или Full)
 
 **Параметры:**
 - `cabinet_id` (int, required) - ID кабинета
 - `full_rebuild` (bool, optional, default=False) - Тип индексации
+- `changed_ids` (dict, optional, default=None) - Дельта изменений от WB sync
+  ```python
+  {
+      "orders": [12345, 12346],
+      "products": [98765],
+      "stocks": [11111, 11112],
+      "reviews": [55555],
+      "sales": [77777]
+  }
+  ```
 
 **Использование:**
 ```python
-# Инкрементальная индексация (по умолчанию)
-index_rag_for_cabinet.delay(1)
+# Event-driven индексация (вызывается из WB sync task)
+changed_ids = {
+    "orders": [12345, 12346],
+    "products": [98765]
+}
+index_rag_for_cabinet.delay(1, changed_ids=changed_ids)
 
 # Полная переиндексация
 index_rag_for_cabinet.delay(1, full_rebuild=True)
@@ -287,14 +301,10 @@ def full_rebuild_all_cabinets_rag():
 }
 ```
 
-### Новый schedule:
+### Новый schedule (Event-driven):
 ```python
-# Инкрементальная индексация (каждые 6 часов)
-"index-incremental-rag": {
-    "task": "app.features.rag.tasks.index_all_cabinets_rag",
-    "schedule": crontab(hour=f'*/{rag_indexing_interval_hours}', minute=0),
-    "kwargs": {"full_rebuild": False}  # Явно указываем инкремент
-},
+# УДАЛЕНО: Инкрементальная индексация по расписанию
+# Теперь индексация триггерится из WB sync task (Event-driven)
 
 # Полная переиндексация (воскресенье, 03:00 UTC)
 "index-full-rebuild-rag": {
@@ -306,17 +316,38 @@ def full_rebuild_all_cabinets_rag():
 
 **Альтернативный вариант (с wrapper):**
 ```python
-# Инкрементальная индексация
-"index-incremental-rag": {
-    "task": "app.features.rag.tasks.index_all_cabinets_rag",
-    "schedule": crontab(hour=f'*/{rag_indexing_interval_hours}', minute=0),
-},
-
 # Полная переиндексация
 "index-full-rebuild-rag": {
     "task": "app.features.rag.tasks.full_rebuild_all_cabinets_rag",
     "schedule": crontab(hour=3, minute=0, day_of_week=0),
 },
+```
+
+### Триггер инкрементальной индексации:
+Инкрементальная индексация НЕ запускается по расписанию. Она триггерится из WB sync task:
+
+```python
+# В sync_cabinet_data task (server/app/features/sync/tasks.py)
+@celery_app.task
+def sync_cabinet_data(cabinet_id: int):
+    """Синхронизация данных WB API для кабинета."""
+
+    # ... синхронизация WB API ...
+
+    # Собрать дельту изменений
+    changed_ids = {
+        "orders": [id for id in new_or_updated_orders],
+        "products": [id for id in new_or_updated_products],
+        "stocks": [id for id in new_or_updated_stocks],
+        "reviews": [id for id in new_or_updated_reviews],
+        "sales": [id for id in new_or_updated_sales]
+    }
+
+    # Триггер RAG индексации (Event-driven)
+    if changed_ids:
+        index_rag_for_cabinet.delay(cabinet_id, changed_ids=changed_ids)
+
+    return result
 ```
 
 ---

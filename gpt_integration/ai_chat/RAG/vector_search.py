@@ -11,7 +11,7 @@ import re
 from typing import List, Dict, Any, Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import text
-from openai import OpenAI
+from gpt_integration.comet_client import comet_client
 
 from .database import RAGSessionLocal
 from .models import RAGEmbedding, RAGMetadata
@@ -31,84 +31,37 @@ class VectorSearch:
     
     def __init__(
         self,
-        openai_client: Optional[OpenAI] = None,
-        embeddings_model: Optional[str] = None,
         similarity_threshold: Optional[float] = None
     ):
         """
-        Инициализация поиска.
-        
-        Args:
-            openai_client: Клиент OpenAI (если None, создается новый)
-            embeddings_model: Модель для генерации эмбеддингов (из env или default)
-            similarity_threshold: Минимальный порог релевантности (0-1, из env или default)
+        Initializes the searcher.
+        The client for creating embeddings is now the centralized CometClient.
         """
-        if openai_client is None:
-            api_key = os.getenv("OPENAI_API_KEY")
-            base_url_raw = os.getenv("OPENAI_BASE_URL")
-            base_url = None
-            if base_url_raw and base_url_raw.strip():
-                base_url_clean = base_url_raw.strip()
-                # Проверяем, что URL валидный (начинается с http:// или https://)
-                if base_url_clean.startswith(("http://", "https://")):
-                    base_url = base_url_clean
-            client_kwargs = {}
-            if api_key:
-                client_kwargs["api_key"] = api_key
-            if base_url:
-                client_kwargs["base_url"] = base_url
-            self.openai_client = OpenAI(**client_kwargs) if client_kwargs else OpenAI()
-        else:
-            self.openai_client = openai_client
-        self.embeddings_model = embeddings_model or os.getenv(
-            "OPENAI_EMBEDDINGS_MODEL",
-            "text-embedding-3-small"
-        )
         # Similarity threshold для cosine similarity (1 - cosine distance), диапазон [0, 1]
-        # 0.7-1.0 = высокая релевантность
-        # 0.4-0.7 = средняя релевантность
-        # 0.0-0.4 = низкая релевантность
-        # Рекомендуемое значение: 0.3-0.5 для баланса между precision и recall
         self.similarity_threshold = similarity_threshold or float(
             os.getenv("RAG_SIMILARITY_THRESHOLD", "0.3")
         )
     
-    def generate_query_embedding(self, query_text: str) -> List[float]:
+    async def generate_query_embedding(self, query_text: str) -> List[float]:
         """
-        Генерация эмбеддинга для запроса пользователя.
-        
-        Использует ту же модель, что и при индексации, для обеспечения
-        совместимости векторов.
-        
-        Args:
-            query_text: Текст запроса пользователя
-            
-        Returns:
-            Вектор размерности 1536
-            
-        Raises:
-            ValueError: Если запрос пустой
-            Exception: При ошибке API OpenAI
+        Generate an embedding for a user query using CometAPI.
         """
         if not query_text or not query_text.strip():
-            raise ValueError("Запрос не может быть пустым")
+            raise ValueError("Query text cannot be empty")
         
         try:
-            logger.info(f"🔄 Generating embedding for query: '{query_text[:50]}...'")
+            logger.info(f"🔄 Generating embedding via CometAPI for query: '{query_text[:50]}...'")
             
-            # Вызов OpenAI Embeddings API
-            response = self.openai_client.embeddings.create(
-                model=self.embeddings_model,
-                input=[query_text]  # Один запрос
+            response = await comet_client.create_embeddings(
+                texts=[query_text]
             )
             
-            # Извлечь вектор из ответа
-            embedding = response.data[0].embedding
-            # Логируем токены, если доступны
-            usage = getattr(response, "usage", None)
+            embedding = response['data'][0]['embedding']
+            
+            usage = response.get("usage")
             if usage:
-                prompt_tokens = getattr(usage, "prompt_tokens", None)
-                total_tokens = getattr(usage, "total_tokens", None)
+                prompt_tokens = usage.get("prompt_tokens")
+                total_tokens = usage.get("total_tokens")
                 logger.info(
                     f"🧮 Embedding tokens: prompt={prompt_tokens}, total={total_tokens}"
                 )
@@ -118,7 +71,7 @@ class VectorSearch:
             return embedding
             
         except Exception as e:
-            logger.error(f"❌ Error generating embedding: {e}")
+            logger.error(f"❌ Error generating embedding: {e}", exc_info=True)
             raise
     
     def search(
@@ -351,7 +304,7 @@ class VectorSearch:
             logger.error(f"❌ Error retrieving metadata: {e}")
             raise
     
-    def search_relevant_chunks(
+    async def search_relevant_chunks(
         self,
         query_text: str,
         cabinet_id: int,
@@ -359,39 +312,13 @@ class VectorSearch:
         max_chunks: int = 5
     ) -> List[Dict[str, Any]]:
         """
-        Главный метод поиска релевантных чанков.
-        
-        Объединяет все этапы:
-        1. Генерация эмбеддинга запроса
-        2. Векторный поиск
-        3. Получение метаданных
-        
-        Args:
-            query_text: Текст запроса пользователя
-            cabinet_id: ID кабинета
-            chunk_types: Типы чанков для фильтрации (опционально)
-            max_chunks: Максимальное количество результатов
-            
-        Returns:
-            Список релевантных чанков с метаданными и similarity:
-            [
-                {
-                    'id': 1,
-                    'embedding_id': 1,
-                    'chunk_text': '...',
-                    'chunk_type': 'order',
-                    'source_table': 'wb_orders',
-                    'source_id': 123,
-                    'similarity': 0.85
-                },
-                ...
-            ]
+        Main method for finding relevant chunks.
+        Combines all steps: query embedding, vector search, and metadata retrieval.
         """
         try:
-            # Детектируем nm_id в тексте запроса, чтобы точнее фильтровать
+            # Detect nm_id in the query text to filter more accurately
             nm_id_match = re.search(r"\b\d{6,}\b", query_text)
             nm_id_filter = int(nm_id_match.group()) if nm_id_match else None
-            # Если нашли nm_id и типы не заданы – акцентируемся на stock/product
             effective_chunk_types = chunk_types
             if nm_id_filter and not effective_chunk_types:
                 effective_chunk_types = ["stock", "product"]
@@ -406,10 +333,10 @@ class VectorSearch:
                 f"  🔎 Source ID filter: {nm_id_filter if nm_id_filter else 'none'}"
             )
             
-            # 1. Генерация эмбеддинга запроса
-            query_embedding = self.generate_query_embedding(query_text)
+            # 1. Generate query embedding
+            query_embedding = await self.generate_query_embedding(query_text)
             
-            # 2. Векторный поиск
+            # 2. Vector Search
             search_results = self.search(
                 query_embedding=query_embedding,
                 cabinet_id=cabinet_id,
@@ -430,21 +357,21 @@ class VectorSearch:
                 f"fetching metadata..."
             )
             
-            # 3. Получение метаданных
+            # 3. Retrieve metadata
             db = RAGSessionLocal()
             try:
                 embedding_ids = [r['embedding_id'] for r in search_results]
-                logger.debug(f"🔍 Запрашиваю метаданные для {len(embedding_ids)} embedding IDs: {embedding_ids}")
+                logger.debug(f"🔍 Requesting metadata for {len(embedding_ids)} embedding IDs: {embedding_ids}")
                 
                 metadata_list = self.get_metadata_for_embeddings(embedding_ids, db)
                 
-                # Объединить с similarity
+                # Combine with similarity scores
                 similarity_map = {r['embedding_id']: r['similarity'] for r in search_results}
                 for metadata in metadata_list:
                     embedding_id = metadata['embedding_id']
                     metadata['similarity'] = similarity_map.get(embedding_id, 0.0)
                 
-                # Сортировать по similarity (от большего к меньшему)
+                # Sort by similarity (descending)
                 metadata_list.sort(key=lambda x: x['similarity'], reverse=True)
                 
                 logger.info(
@@ -455,7 +382,7 @@ class VectorSearch:
                     f"  📝 Chunk types: {', '.join(set(m['chunk_type'] for m in metadata_list))}"
                 )
                 
-                # Детальный лог по каждому результату
+                # Detailed log for each result
                 for idx, metadata in enumerate(metadata_list, 1):
                     logger.debug(
                         f"  [{idx}] similarity={metadata['similarity']:.4f}, "
@@ -470,6 +397,6 @@ class VectorSearch:
                 db.close()
                 
         except Exception as e:
-            logger.error(f"❌ Error searching relevant chunks: {e}")
-            # Вернуть пустой список при ошибке (fallback)
+            logger.error(f"❌ Error searching relevant chunks: {e}", exc_info=True)
+            # Fallback to empty list on error
             return []

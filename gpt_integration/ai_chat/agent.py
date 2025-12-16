@@ -3,7 +3,7 @@ import os
 import json
 import asyncio
 import logging
-from openai import OpenAI
+from gpt_integration.comet_client import comet_client
 from .tools import registry, execute_tool
 
 logger = logging.getLogger(__name__)
@@ -14,87 +14,33 @@ SYSTEM_PROMPT = (
     "сами выполните и предоставьте результат. Отвечайте кратко, с цифрами и выводами."
 )
 
-def _get_client() -> OpenAI:
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        raise RuntimeError("OPENAI_API_KEY is not configured")
-    base_url_raw = os.getenv("OPENAI_BASE_URL")
-    base_url = None
-    if base_url_raw and base_url_raw.strip():
-        base_url_clean = base_url_raw.strip()
-        # Проверяем, что URL валидный (начинается с http:// или https://)
-        if base_url_clean.startswith(("http://", "https://")):
-            base_url = base_url_clean
-    kwargs = {"api_key": api_key}
-    if base_url:
-        kwargs["base_url"] = base_url
-    return OpenAI(**kwargs)
-
 async def _call_llm(messages: List[Dict[str, Any]], tools: list | None = None) -> Dict[str, Any]:
-    model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
-    temperature = float(os.getenv("OPENAI_TEMPERATURE", "0.2"))
-    max_tokens = int(os.getenv("OPENAI_MAX_TOKENS", "900"))
-
-    def _sync_call():
-        client = _get_client()
-        try:
-            return client.chat.completions.create(
-                model=model,
-                messages=messages,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                tools=tools or None,
-                tool_choice="auto" if tools else None,
-            )
-        except Exception as e:
-            # Check for regional restriction error (403)
-            error_code = None
-            error_message = None
-            status_code = None
-            
-            if hasattr(e, 'response') and hasattr(e.response, 'json'):
-                try:
-                    error_data = e.response.json()
-                    if isinstance(error_data, dict) and 'error' in error_data:
-                        error_info = error_data['error']
-                        error_code = error_info.get('code')
-                        error_message = error_info.get('message', '')
-                except Exception:
-                    pass
-            
-            if hasattr(e, 'status_code'):
-                status_code = e.status_code
-            elif hasattr(e, 'response') and hasattr(e.response, 'status_code'):
-                status_code = e.response.status_code
-            
-            # If it's a regional restriction, provide helpful message
-            is_regional_error = (
-                status_code == 403 and 
-                (error_code == 'unsupported_country_region_territory' or 
-                 'unsupported_country' in str(e).lower() or
-                 'region' in str(e).lower() and 'not supported' in str(e).lower())
-            )
-            
-            if is_regional_error:
-                raise RuntimeError(
-                    f"OpenAI API недоступен в вашем регионе (403: {error_code or 'unsupported_country_region_territory'}). "
-                    f"Настройте OPENAI_BASE_URL для использования альтернативного endpoint."
-                )
-            raise
+    model = os.getenv("COMET_TEXT_MODEL", "comet-chat-mini") # Use COMET_TEXT_MODEL
+    temperature = float(os.getenv("COMET_TEMPERATURE", "0.2")) # Use COMET_TEMPERATURE
+    max_tokens = int(os.getenv("COMET_MAX_TOKENS", "900")) # Use COMET_MAX_TOKENS
 
     try:
-        resp = await asyncio.to_thread(_sync_call)
+        resp = await comet_client.create_completion(
+            model=model,
+            messages=messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            # Pass tools and tool_choice as kwargs if CometAPI supports OpenAI-like tool_calling
+            tools=tools or None, 
+            tool_choice="auto" if tools else None,
+        )
+        
+        # CometClient is designed to be OpenAI-compatible in response format
+        # The message object from OpenAI is typically accessed via resp.choices[0].message
+        # CometClient returns JSON, so we access as dictionary
         return {
-            "message": resp.choices[0].message,
-            "usage": getattr(resp, "usage", None),
+            "message": resp["choices"][0]["message"],
+            "usage": resp.get("usage"),
         }
-    except RuntimeError:
-        # Re-raise regional errors as-is
-        raise
     except Exception as e:
         logger.error(f"LLM call failed: {e}", exc_info=True)
-        # Передаем оригинальную ошибку без обертки, чтобы избежать дублирования
-        raise RuntimeError(str(e))
+        # Rethrow the original exception for upstream handling
+        raise
 
 async def run_agent(messages: List[Dict[str, Any]]) -> Dict[str, Any]:
     """Agent loop with tool-calling.
@@ -117,16 +63,16 @@ async def run_agent(messages: List[Dict[str, Any]]) -> Dict[str, Any]:
     if usage:
         logger.info(
             "🧮 LLM call #1 tokens: prompt=%s, completion=%s, total=%s",
-            getattr(usage, "prompt_tokens", None),
-            getattr(usage, "completion_tokens", None),
-            getattr(usage, "total_tokens", None),
+            usage.get("prompt_tokens"),
+            usage.get("completion_tokens"),
+            usage.get("total_tokens"),
         )
 
     # If no tool calls — return content
-    tool_calls = getattr(msg, "tool_calls", None)
+    tool_calls = msg.get("tool_calls")
     if not tool_calls:
         return {
-            "final": msg.content or "",
+            "final": msg.get("content") or "",
             "tokens_used": getattr(usage, "total_tokens", 0) if usage else 0,
         }
 
@@ -165,8 +111,8 @@ async def run_agent(messages: List[Dict[str, Any]]) -> Dict[str, Any]:
     # include assistant with tool_calls per API contract
     followup.append({
         "role": "assistant",
-        "content": msg.content,
-        "tool_calls": msg.tool_calls,
+        "content": msg.get("content"),
+        "tool_calls": msg.get("tool_calls"),
     })
     followup.extend(tool_messages)
 
@@ -176,11 +122,11 @@ async def run_agent(messages: List[Dict[str, Any]]) -> Dict[str, Any]:
     if fusage:
         logger.info(
             "🧮 LLM call #2 tokens: prompt=%s, completion=%s, total=%s",
-            getattr(fusage, "prompt_tokens", None),
-            getattr(fusage, "completion_tokens", None),
-            getattr(fusage, "total_tokens", None),
+            fusage.get("prompt_tokens"),
+            fusage.get("completion_tokens"),
+            fusage.get("total_tokens"),
         )
     return {
-        "final": fmsg.content or "",
+        "final": fmsg.get("content") or "",
         "tokens_used": getattr(fusage, "total_tokens", 0) if fusage else 0,
     }

@@ -8,7 +8,7 @@
 import os
 import logging
 import requests
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from datetime import datetime
 from sqlalchemy.orm import Session
 
@@ -62,27 +62,48 @@ def _get_api_key() -> str:
     time_limit=1800,  # 30 минут максимум на задачу
     soft_time_limit=1500  # 25 минут soft limit
 )
-def index_rag_for_cabinet(self, cabinet_id: int) -> Dict[str, Any]:
+def index_rag_for_cabinet(
+    self,
+    cabinet_id: int,
+    full_rebuild: bool = False,
+    changed_ids: Optional[Dict[str, List[int]]] = None
+) -> Dict[str, Any]:
     """
     Индексация RAG для конкретного кабинета.
 
-    Вызывает API AI-сервиса для запуска индексации данных кабинета
-    в векторную БД.
+    Поддерживает два режима:
+    1. Event-driven (changed_ids): Индексация только измененных записей
+    2. Full rebuild: Полная переиндексация с очисткой устаревших данных
 
     Args:
         cabinet_id: ID кабинета Wildberries
+        full_rebuild: Полная переиндексация (weekly cleanup)
+        changed_ids: Дельта изменений от WB sync (Event-driven)
+            {
+                "orders": [12345, 12346],
+                "products": [98765],
+                "stocks": [11111],
+                "reviews": [55555],
+                "sales": [77777]
+            }
 
     Returns:
         Результат индексации:
         {
             'status': 'success' | 'error',
             'cabinet_id': int,
+            'indexing_mode': 'incremental' | 'full_rebuild',
             'message': str,
-            'total_chunks': int (если успешно)
+            'total_chunks': int,
+            'metrics': {...}
         }
     """
     try:
-        logger.info(f"🔄 Starting RAG indexing for cabinet {cabinet_id}")
+        indexing_mode = 'full_rebuild' if full_rebuild else 'incremental'
+        logger.info(
+            f"Starting {indexing_mode} RAG indexing for cabinet {cabinet_id}"
+            + (f" with {sum(len(ids) for ids in changed_ids.values())} changed IDs" if changed_ids else "")
+        )
 
         # Получаем сессию БД
         db = next(get_db())
@@ -95,7 +116,7 @@ def index_rag_for_cabinet(self, cabinet_id: int) -> Dict[str, Any]:
             ).first()
 
             if not cabinet:
-                logger.warning(f"⚠️ Cabinet {cabinet_id} not found or inactive")
+                logger.warning(f"Cabinet {cabinet_id} not found or inactive")
                 return {
                     "status": "error",
                     "cabinet_id": cabinet_id,
@@ -107,18 +128,24 @@ def index_rag_for_cabinet(self, cabinet_id: int) -> Dict[str, Any]:
             api_key = _get_api_key()
 
             # Формируем запрос к AI-сервису
-            endpoint = f"{gpt_service_url}/v1/rag/index/{cabinet_id}"
+            endpoint = f"{gpt_service_url}/v1/rag/index/{cabinet_id}?full_rebuild={str(full_rebuild).lower()}"
             headers = {
                 "X-API-KEY": api_key,
                 "Content-Type": "application/json"
             }
 
-            logger.info(f"📡 Calling AI service: POST {endpoint}")
+            # Формируем тело запроса
+            request_body = None
+            if changed_ids:
+                request_body = {"changed_ids": changed_ids}
+
+            logger.info(f"Calling AI service: POST {endpoint}")
 
             # Отправляем запрос (timeout 10 минут для генерации эмбеддингов)
             response = requests.post(
                 endpoint,
                 headers=headers,
+                json=request_body,
                 timeout=600  # 10 минут
             )
 
@@ -126,14 +153,16 @@ def index_rag_for_cabinet(self, cabinet_id: int) -> Dict[str, Any]:
             if response.status_code == 200:
                 result = response.json()
                 logger.info(
-                    f"✅ RAG indexing completed for cabinet {cabinet_id}: "
+                    f"{indexing_mode.capitalize()} indexing completed for cabinet {cabinet_id}: "
                     f"{result.get('total_chunks', 0)} chunks indexed"
                 )
                 return {
                     "status": "success",
                     "cabinet_id": cabinet_id,
+                    "indexing_mode": result.get('indexing_mode', indexing_mode),
                     "message": result.get('message', 'Индексация завершена'),
-                    "total_chunks": result.get('total_chunks', 0)
+                    "total_chunks": result.get('total_chunks', 0),
+                    "metrics": result.get('metrics', {})
                 }
             else:
                 error_detail = response.json() if response.headers.get('content-type') == 'application/json' else response.text
@@ -205,17 +234,18 @@ def index_rag_for_cabinet(self, cabinet_id: int) -> Dict[str, Any]:
     autoretry_for=(Exception,),
     retry_kwargs={'max_retries': 3, 'countdown': 60}
 )
-def index_all_cabinets_rag(self) -> Dict[str, Any]:
+def index_all_cabinets_rag(self, full_rebuild: bool = False) -> Dict[str, Any]:
     """
     Индексация RAG для всех активных кабинетов.
 
-    Эта задача запускается периодически (по расписанию в beat_schedule)
-    и запускает индексацию для каждого активного кабинета.
+    Args:
+        full_rebuild: Полная переиндексация (weekly cleanup)
 
     Returns:
         Статистика индексации:
         {
             'status': 'success',
+            'indexing_mode': 'incremental' | 'full_rebuild',
             'started': int,  # Количество запущенных индексаций
             'skipped': int,  # Количество пропущенных кабинетов
             'total': int,    # Общее количество активных кабинетов
@@ -223,7 +253,8 @@ def index_all_cabinets_rag(self) -> Dict[str, Any]:
         }
     """
     try:
-        logger.info("🚀 Starting RAG indexing for all active cabinets")
+        indexing_mode = 'full_rebuild' if full_rebuild else 'incremental'
+        logger.info(f"Starting {indexing_mode} RAG indexing for all active cabinets")
 
         # Получаем сессию БД
         db = next(get_db())
@@ -238,25 +269,26 @@ def index_all_cabinets_rag(self) -> Dict[str, Any]:
             started_count = 0
             skipped_count = 0
 
-            logger.info(f"📊 Found {total_cabinets} active cabinets for RAG indexing")
+            logger.info(f"Found {total_cabinets} active cabinets for {indexing_mode} RAG indexing")
 
             # Запускаем индексацию для каждого кабинета
             for cabinet in cabinets:
                 try:
                     # Запускаем задачу в фоне (асинхронно)
-                    index_rag_for_cabinet.delay(cabinet.id)
+                    index_rag_for_cabinet.delay(cabinet.id, full_rebuild=full_rebuild)
                     started_count += 1
-                    logger.info(f"✅ RAG indexing started for cabinet {cabinet.id}")
+                    logger.info(f"{indexing_mode.capitalize()} indexing started for cabinet {cabinet.id}")
 
                 except Exception as e:
                     logger.error(
-                        f"❌ Failed to start RAG indexing for cabinet {cabinet.id}: {e}",
+                        f"Failed to start RAG indexing for cabinet {cabinet.id}: {e}",
                         exc_info=True
                     )
                     skipped_count += 1
 
             result = {
                 "status": "success",
+                "indexing_mode": indexing_mode,
                 "started": started_count,
                 "skipped": skipped_count,
                 "total": total_cabinets,
@@ -303,7 +335,7 @@ def check_rag_indexing_status(cabinet_id: int) -> Dict[str, Any]:
         Статус индексации
     """
     try:
-        logger.info(f"📊 Checking RAG indexing status for cabinet {cabinet_id}")
+        logger.info(f"Checking RAG indexing status for cabinet {cabinet_id}")
 
         # Получаем URL и API ключ
         gpt_service_url = _get_gpt_service_url()
@@ -324,14 +356,14 @@ def check_rag_indexing_status(cabinet_id: int) -> Dict[str, Any]:
         if response.status_code == 200:
             result = response.json()
             logger.info(
-                f"✅ RAG status for cabinet {cabinet_id}: "
+                f"RAG status for cabinet {cabinet_id}: "
                 f"{result.get('indexing_status', 'unknown')}, "
                 f"{result.get('total_chunks', 0)} chunks"
             )
             return result
         else:
             logger.error(
-                f"❌ Failed to get RAG status for cabinet {cabinet_id}: "
+                f"Failed to get RAG status for cabinet {cabinet_id}: "
                 f"Status {response.status_code}"
             )
             return {
@@ -341,10 +373,31 @@ def check_rag_indexing_status(cabinet_id: int) -> Dict[str, Any]:
 
     except Exception as e:
         logger.error(
-            f"❌ Error checking RAG status for cabinet {cabinet_id}: {e}",
+            f"Error checking RAG status for cabinet {cabinet_id}: {e}",
             exc_info=True
         )
         return {
             "status": "error",
             "message": str(e)
         }
+
+
+@celery_app.task(
+    bind=True,
+    max_retries=3,
+    autoretry_for=(Exception,),
+    retry_kwargs={'max_retries': 3, 'countdown': 60}
+)
+def full_rebuild_all_cabinets_rag(self) -> Dict[str, Any]:
+    """
+    Полная переиндексация RAG для всех активных кабинетов (weekly).
+
+    Wrapper для index_all_cabinets_rag с full_rebuild=True.
+    Запускается раз в неделю (воскресенье, 03:00 UTC) для очистки
+    устаревших данных и гарантии консистентности.
+
+    Returns:
+        Статистика полной переиндексации
+    """
+    logger.info("Starting weekly full rebuild for all cabinets")
+    return index_all_cabinets_rag(full_rebuild=True)

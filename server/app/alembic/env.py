@@ -20,7 +20,14 @@ if config.config_file_name is not None:
 # add your model's MetaData object here
 # for 'autogenerate' support
 from app.core.database import Base
-from app.models import *  # noqa
+# Import all models here for Alembic 'autogenerate' support
+from app.features.competitors import models  # noqa
+from app.features.digest import models  # noqa
+from app.features.export import models  # noqa
+from app.features.notifications import models  # noqa
+from app.features.stock_alerts import models  # noqa
+from app.features.user import models  # noqa
+from app.features.wb_api import models  # noqa
 
 target_metadata = Base.metadata
 
@@ -31,11 +38,11 @@ target_metadata = Base.metadata
 
 # Получаем URL базы данных из переменных окружения
 def get_url():
-    user = os.getenv("POSTGRES_USER", "postgres")
-    password = os.getenv("POSTGRES_PASSWORD", "")
-    server = os.getenv("POSTGRES_SERVER", "db")
-    db = os.getenv("POSTGRES_DB", "app")
-    return f"postgresql://{user}:{password}@{server}/{db}"
+    # В контейнере URL базы данных уже собран в переменной DATABASE_URL
+    db_url = os.getenv("DATABASE_URL")
+    if db_url is None:
+        raise ValueError("DATABASE_URL environment variable is not set")
+    return db_url
 
 
 def run_migrations_offline() -> None:

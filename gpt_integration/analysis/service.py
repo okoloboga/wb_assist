@@ -322,7 +322,7 @@ async def orchestrate_analysis(telegram_id: int, period: str, validate_output: b
         client = GPTClient.from_env()
         logger.info(f"🔧 GPT client config: model={client.model}, max_tokens={client.max_tokens}, temperature={client.temperature}")
         template_path = "gpt_integration/analysis/LLM_ANALYSIS_TEMPLATE.md"
-        result = run_analysis(client, data=data, template_path=template_path, validate=validate_output)
+        result = await run_analysis(client, data=data, template_path=template_path, validate=validate_output)
         
         logger.info(f"✅ LLM analysis completed, result keys: {list(result.keys())}")
         

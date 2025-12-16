@@ -5,8 +5,9 @@ Provides REST API for triggering RAG indexing and checking status.
 """
 
 import logging
-from typing import Optional
+from typing import Optional, Dict, List
 from fastapi import APIRouter, HTTPException, Depends, Header
+from pydantic import BaseModel
 import os
 
 from .indexer import RAGIndexer
@@ -16,6 +17,11 @@ from .models import RAGIndexStatus
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/v1/rag", tags=["rag"])
+
+
+class IndexRequest(BaseModel):
+    """Request body для индексации."""
+    changed_ids: Optional[Dict[str, List[int]]] = None
 
 
 def _verify_api_key(x_api_key: Optional[str] = Header(None, alias="X-API-KEY")) -> None:
@@ -47,37 +53,57 @@ def _verify_api_key(x_api_key: Optional[str] = Header(None, alias="X-API-KEY")) 
 @router.post("/index/{cabinet_id}")
 async def trigger_indexing(
     cabinet_id: int,
+    full_rebuild: bool = False,
+    request_body: Optional[IndexRequest] = None,
     _: None = Depends(_verify_api_key)
 ):
     """
-    Запуск индексации для кабинета вручную или через Celery.
+    Запуск индексации для кабинета.
+
+    Поддерживает два режима:
+    1. Event-driven (changed_ids): Индексация только измененных записей
+    2. Full rebuild: Полная переиндексация с очисткой устаревших данных
 
     Args:
         cabinet_id: ID кабинета Wildberries
+        full_rebuild: Полная переиндексация (weekly cleanup)
+        request_body: Дельта изменений от WB sync (Event-driven)
 
     Returns:
-        Результат индексации
+        Результат индексации с метриками
     """
-    logger.info(f"🚀 Starting RAG indexing for cabinet {cabinet_id}")
+    indexing_mode = 'full_rebuild' if full_rebuild else 'incremental'
+    changed_ids = request_body.changed_ids if request_body else None
+
+    logger.info(
+        f"Starting {indexing_mode} RAG indexing for cabinet {cabinet_id}"
+        + (f" with {sum(len(ids) for ids in changed_ids.values())} changed IDs" if changed_ids else "")
+    )
 
     try:
         indexer = RAGIndexer()
-        result = await indexer.index_cabinet(cabinet_id)
+        result = await indexer.index_cabinet(
+            cabinet_id=cabinet_id,
+            full_rebuild=full_rebuild,
+            changed_ids=changed_ids
+        )
 
         if result['success']:
             logger.info(
-                f"✅ RAG indexing completed for cabinet {cabinet_id}: "
+                f"{indexing_mode.capitalize()} indexing completed for cabinet {cabinet_id}: "
                 f"{result['total_chunks']} chunks indexed"
             )
             return {
                 "status": "success",
                 "message": f"Индексация кабинета {cabinet_id} завершена успешно",
                 "cabinet_id": cabinet_id,
-                "total_chunks": result['total_chunks']
+                "indexing_mode": result['indexing_mode'],
+                "total_chunks": result['total_chunks'],
+                "metrics": result.get('metrics', {})
             }
         else:
             logger.error(
-                f"❌ RAG indexing failed for cabinet {cabinet_id}: "
+                f"{indexing_mode.capitalize()} indexing failed for cabinet {cabinet_id}: "
                 f"{result.get('errors', [])}"
             )
             raise HTTPException(
@@ -90,7 +116,7 @@ async def trigger_indexing(
             )
 
     except Exception as e:
-        logger.error(f"❌ Unexpected error during indexing cabinet {cabinet_id}: {e}", exc_info=True)
+        logger.error(f"Unexpected error during indexing cabinet {cabinet_id}: {e}", exc_info=True)
         raise HTTPException(
             status_code=500,
             detail={

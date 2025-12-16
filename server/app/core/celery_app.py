@@ -130,9 +130,13 @@ celery_app.conf.update(
             "task": "app.features.competitors.tasks.update_all_competitors_task",
             "schedule": crontab(hour=0, minute=0),  # Каждый день в полночь
         },
-        "index-all-cabinets-rag": {
-            "task": "app.features.rag.tasks.index_all_cabinets_rag",
-            "schedule": crontab(hour=f'*/{rag_indexing_interval_hours}', minute=0),  # Каждые N часов (по умолчанию 6)
+        # УДАЛЕНО: Инкрементальная RAG индексация по расписанию
+        # Теперь индексация триггерится из WB sync (Event-driven)
+
+        # Полная RAG переиндексация (воскресенье, 03:00 UTC)
+        "index-full-rebuild-rag": {
+            "task": "app.features.rag.tasks.full_rebuild_all_cabinets_rag",
+            "schedule": crontab(hour=3, minute=0, day_of_week=0),  # Воскресенье
         },
     },
     

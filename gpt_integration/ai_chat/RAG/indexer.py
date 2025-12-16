@@ -6,12 +6,13 @@ RAG Indexer - сервис для индексации данных в вект�
 """
 
 import os
+import asyncio
 import hashlib
 import logging
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 from sqlalchemy.orm import Session
-from openai import OpenAI
+from gpt_integration.comet_client import comet_client
 
 from .database import RAGSessionLocal
 from .models import RAGMetadata, RAGEmbedding, RAGIndexStatus
@@ -33,39 +34,12 @@ class RAGIndexer:
     
     def __init__(
         self,
-        openai_client: Optional[OpenAI] = None,
-        embeddings_model: Optional[str] = None,
         batch_size: Optional[int] = None
     ):
         """
-        Инициализация индексера.
-        
-        Args:
-            openai_client: Клиент OpenAI (если None, создается новый)
-            embeddings_model: Модель для генерации эмбеддингов (из env или default)
-            batch_size: Размер батча для генерации эмбеддингов (из env или default)
+        Initializes the indexer.
+        The client for creating embeddings is now the centralized CometClient.
         """
-        if openai_client is None:
-            api_key = os.getenv("OPENAI_API_KEY")
-            base_url_raw = os.getenv("OPENAI_BASE_URL")
-            base_url = None
-            if base_url_raw and base_url_raw.strip():
-                base_url_clean = base_url_raw.strip()
-                # Проверяем, что URL валидный (начинается с http:// или https://)
-                if base_url_clean.startswith(("http://", "https://")):
-                    base_url = base_url_clean
-            client_kwargs = {}
-            if api_key:
-                client_kwargs["api_key"] = api_key
-            if base_url:
-                client_kwargs["base_url"] = base_url
-            self.openai_client = OpenAI(**client_kwargs) if client_kwargs else OpenAI()
-        else:
-            self.openai_client = openai_client
-        self.embeddings_model = embeddings_model or os.getenv(
-            "OPENAI_EMBEDDINGS_MODEL",
-            "text-embedding-3-small"
-        )
         self.batch_size = batch_size or int(os.getenv("RAG_EMBEDDING_BATCH_SIZE", "100"))
 
     @staticmethod
@@ -179,7 +153,116 @@ class RAGIndexer:
         )
         
         return data
-    
+
+    async def extract_data_by_ids(
+        self,
+        cabinet_id: int,
+        changed_ids: Dict[str, List[int]]
+    ) -> Dict[str, List[Dict[str, Any]]]:
+        """
+        Извлечение данных по списку ID (Event-driven indexing).
+
+        Вместо запросов по timestamp, извлекаем только данные по переданным ID.
+        Гораздо быстрее т.к. использует indexed lookup.
+
+        Args:
+            cabinet_id: ID кабинета
+            changed_ids: Дельта изменений от WB sync
+                {
+                    "orders": [12345, 12346],
+                    "products": [98765],
+                    "stocks": [11111, 11112],
+                    "reviews": [55555],
+                    "sales": [77777]
+                }
+
+        Returns:
+            Словарь с данными по типам (только для измененных записей)
+        """
+        pool = await get_asyncpg_pool()
+
+        data = {
+            'orders': [],
+            'products': [],
+            'stocks': [],
+            'reviews': [],
+            'sales': []
+        }
+
+        try:
+            async with pool.acquire() as conn:
+                # 1. Заказы
+                if changed_ids.get('orders'):
+                    orders = await conn.fetch("""
+                        SELECT id, order_id, nm_id, name, size, price, total_price,
+                               order_date, status
+                        FROM wb_orders
+                        WHERE cabinet_id = $1
+                          AND id = ANY($2::bigint[])
+                          AND order_date >= NOW() - INTERVAL '90 days'
+                        ORDER BY order_date DESC
+                    """, cabinet_id, changed_ids['orders'])
+                    data['orders'] = [dict(row) for row in orders]
+
+                # 2. Товары
+                if changed_ids.get('products'):
+                    products = await conn.fetch("""
+                        SELECT nm_id, name, brand, category, price, rating, reviews_count
+                        FROM wb_products
+                        WHERE cabinet_id = $1
+                          AND id = ANY($2::bigint[])
+                          AND is_active = true
+                    """, cabinet_id, changed_ids['products'])
+                    data['products'] = [dict(row) for row in products]
+
+                # 3. Остатки
+                if changed_ids.get('stocks'):
+                    stocks = await conn.fetch("""
+                        SELECT nm_id, size, warehouse_name, quantity, name
+                        FROM wb_stocks
+                        WHERE cabinet_id = $1
+                          AND id = ANY($2::bigint[])
+                          AND quantity > 0
+                    """, cabinet_id, changed_ids['stocks'])
+                    data['stocks'] = [dict(row) for row in stocks]
+
+                # 4. Отзывы
+                if changed_ids.get('reviews'):
+                    reviews = await conn.fetch("""
+                        SELECT id, nm_id, rating, text, created_at
+                        FROM wb_reviews
+                        WHERE cabinet_id = $1
+                          AND id = ANY($2::bigint[])
+                          AND created_at >= NOW() - INTERVAL '90 days'
+                        ORDER BY created_at DESC
+                    """, cabinet_id, changed_ids['reviews'])
+                    data['reviews'] = [dict(row) for row in reviews]
+
+                # 5. Продажи
+                if changed_ids.get('sales'):
+                    sales = await conn.fetch("""
+                        SELECT id, nm_id, type, sale_date, amount, product_name
+                        FROM wb_sales
+                        WHERE cabinet_id = $1
+                          AND id = ANY($2::bigint[])
+                          AND sale_date >= NOW() - INTERVAL '90 days'
+                        ORDER BY sale_date DESC
+                    """, cabinet_id, changed_ids['sales'])
+                    data['sales'] = [dict(row) for row in sales]
+
+        except Exception as e:
+            logger.error(f"Error extracting data by IDs for cabinet {cabinet_id}: {e}")
+            raise
+
+        logger.info(
+            f"Extracted data by IDs for cabinet {cabinet_id}: "
+            f"orders={len(data['orders'])}, products={len(data['products'])}, "
+            f"stocks={len(data['stocks'])}, reviews={len(data['reviews'])}, "
+            f"sales={len(data['sales'])}"
+        )
+
+        return data
+
     def _create_order_chunk(self, order: Dict[str, Any], product_name: Optional[str] = None) -> Dict[str, Any]:
         """Создание чанка для заказа."""
         name = product_name or order.get('name', 'Неизвестный товар')
@@ -405,18 +488,10 @@ class RAGIndexer:
         
         return chunks
     
-    def generate_embeddings(self, chunks: List[str]) -> List[List[float]]:
+    async def generate_embeddings(self, chunks: List[str]) -> List[List[float]]:
         """
-        Генерация эмбеддингов для списка текстовых чанков.
-
-        Использует batch processing для экономии запросов к API.
-        С retry логикой для каждого батча отдельно.
-
-        Args:
-            chunks: Список текстовых чанков
-
-        Returns:
-            Список векторов (каждый вектор - список из 1536 float)
+        Generate embeddings for a list of text chunks using CometAPI.
+        Uses batch processing and includes retry logic for each batch.
         """
         import time
 
@@ -427,61 +502,54 @@ class RAGIndexer:
         total_chunks = len(chunks)
         failed_batches = []
 
-        # Разбить на батчи
         for i in range(0, total_chunks, self.batch_size):
             batch = chunks[i:i + self.batch_size]
             batch_num = (i // self.batch_size) + 1
             total_batches = (total_chunks + self.batch_size - 1) // self.batch_size
 
             logger.info(
-                f"🔄 Генерация эмбеддингов: батч {batch_num}/{total_batches} "
-                f"({len(batch)} чанков)"
+                f"🔄 Generating embeddings via CometAPI: batch {batch_num}/{total_batches} "
+                f"({len(batch)} chunks)"
             )
 
-            # Retry логика для текущего батча
             max_retries = 5
-            retry_delay = 2  # Начальная задержка в секундах
+            retry_delay = 2
 
             for attempt in range(max_retries):
                 try:
-                    # Вызов OpenAI Embeddings API
-                    response = self.openai_client.embeddings.create(
-                        model=self.embeddings_model,
-                        input=batch
+                    response = await comet_client.create_embeddings(
+                        texts=batch
                     )
-
-                    # Извлечь векторы из ответа
-                    batch_embeddings = [item.embedding for item in response.data]
+                    
+                    batch_embeddings = [item['embedding'] for item in response['data']]
                     all_embeddings.extend(batch_embeddings)
 
-                    usage = getattr(response, "usage", None)
+                    usage = response.get("usage")
                     if usage:
-                        prompt_tokens = getattr(usage, "prompt_tokens", None)
-                        total_tokens = getattr(usage, "total_tokens", None)
+                        prompt_tokens = usage.get("prompt_tokens")
+                        total_tokens = usage.get("total_tokens")
                         logger.info(
                             f"🧮 Embedding tokens (batch {batch_num}): "
                             f"prompt={prompt_tokens}, total={total_tokens}"
                         )
 
                     logger.info(
-                        f"✅ Батч {batch_num} обработан: {len(batch_embeddings)} эмбеддингов"
+                        f"✅ Batch {batch_num} processed: {len(batch_embeddings)} embeddings"
                     )
-                    break  # Успешно - выходим из retry loop
+                    break
 
                 except Exception as e:
                     if attempt < max_retries - 1:
-                        # Exponential backoff
                         wait_time = retry_delay * (2 ** attempt)
                         logger.warning(
-                            f"⚠️ Батч {batch_num} failed (попытка {attempt + 1}/{max_retries}): {e}. "
-                            f"Повтор через {wait_time}с..."
+                            f"⚠️ Batch {batch_num} failed (attempt {attempt + 1}/{max_retries}): {e}. "
+                            f"Retrying in {wait_time}s..."
                         )
-                        time.sleep(wait_time)
+                        await asyncio.sleep(wait_time)
                     else:
-                        # Все попытки исчерпаны - пропускаем батч
                         logger.error(
-                            f"❌ Батч {batch_num} failed после {max_retries} попыток: {e}. "
-                            f"Пропускаем батч и продолжаем..."
+                            f"❌ Batch {batch_num} failed after {max_retries} attempts: {e}. "
+                            f"Skipping batch and continuing..."
                         )
                         failed_batches.append({
                             'batch_num': batch_num,
@@ -489,16 +557,14 @@ class RAGIndexer:
                             'end_idx': i + len(batch),
                             'error': str(e)
                         })
-                        # Добавляем пустые эмбеддинги для сохранения индексов
-                        # (или можно пропустить - зависит от стратегии)
                         break
 
         if failed_batches:
             logger.warning(
-                f"⚠️ Индексация завершена с ошибками: {len(failed_batches)} батчей пропущено. "
-                f"Успешно: {len(all_embeddings)}/{total_chunks} чанков"
+                f"⚠️ Indexing completed with errors: {len(failed_batches)} batches failed. "
+                f"Successfully processed: {len(all_embeddings)}/{total_chunks} chunks"
             )
-            logger.warning(f"Пропущенные батчи: {failed_batches}")
+            logger.warning(f"Failed batches info: {failed_batches}")
         else:
             logger.info(f"✅ Generated {len(all_embeddings)} embeddings total")
 
@@ -604,53 +670,77 @@ class RAGIndexer:
         
         return saved_count
     
-    async def index_cabinet(self, cabinet_id: int) -> Dict[str, Any]:
+    async def index_cabinet(
+        self,
+        cabinet_id: int,
+        full_rebuild: bool = False,
+        changed_ids: Optional[Dict[str, List[int]]] = None
+    ) -> Dict[str, Any]:
         """
         Главный метод индексации кабинета.
-        
-        Выполняет полный цикл индексации с управлением статусом:
-        1. Проверка статуса
-        2. Извлечение данных
-        3. Создание чанков
-        4. Генерация эмбеддингов
-        5. Сохранение в БД
-        
+
+        Поддерживает два режима:
+        1. Event-driven (changed_ids): Индексация только измененных записей
+        2. Full rebuild: Полная переиндексация с очисткой устаревших данных
+
         Args:
             cabinet_id: ID кабинета
-            
+            full_rebuild: Полная переиндексация (weekly cleanup)
+            changed_ids: Дельта изменений от WB sync (Event-driven)
+                {
+                    "orders": [12345, 12346],
+                    "products": [98765],
+                    "stocks": [11111],
+                    "reviews": [55555],
+                    "sales": [77777]
+                }
+
         Returns:
             Словарь с результатами:
             {
                 'success': True/False,
                 'cabinet_id': int,
+                'indexing_mode': 'incremental' | 'full_rebuild',
                 'total_chunks': int,
+                'metrics': {...},
                 'errors': List[str]
             }
         """
+        # Определить режим индексации
+        indexing_mode = 'full_rebuild' if full_rebuild else 'incremental'
+
         result = {
             'success': False,
             'cabinet_id': cabinet_id,
+            'indexing_mode': indexing_mode,
             'total_chunks': 0,
+            'metrics': {
+                'new_chunks': 0,
+                'updated_chunks': 0,
+                'skipped_chunks': 0,
+                'deleted_chunks': 0,
+                'embeddings_generated': 0
+            },
             'errors': []
         }
-        
+
         # Получить сессию БД
         db = RAGSessionLocal()
         index_status = None
-        
+
         try:
             # 1. Проверить статус индексации
             index_status = db.query(RAGIndexStatus).filter(
                 RAGIndexStatus.cabinet_id == cabinet_id
             ).first()
-            
+
             if index_status and index_status.indexing_status == 'in_progress':
                 logger.warning(
-                    f"⚠️ Индексация кабинета {cabinet_id} уже выполняется. Пропуск."
+                    f"Индексация кабинета {cabinet_id} уже выполняется. Пропуск."
                 )
                 result['errors'].append("Индексация уже выполняется")
                 return result
-            
+
             # 2. Установить статус 'in_progress'
             if not index_status:
                 index_status = RAGIndexStatus(
@@ -661,16 +751,24 @@ class RAGIndexer:
             else:
                 index_status.indexing_status = 'in_progress'
                 index_status.updated_at = datetime.now()
-            
+
             db.commit()
-            
-            logger.info(f"🚀 Starting indexing for cabinet {cabinet_id}")
-            
+
+            logger.info(
+                f"Starting {indexing_mode} indexing for cabinet {cabinet_id}"
+                + (f" with {sum(len(ids) for ids in changed_ids.values())} changed IDs" if changed_ids else "")
+            )
+
             # 3. Извлечение данных
             try:
-                data = await self.extract_data_from_main_db(cabinet_id)
+                if changed_ids and not full_rebuild:
+                    # Event-driven: извлечь только измененные данные
+                    data = await self.extract_data_by_ids(cabinet_id, changed_ids)
+                else:
+                    # Full rebuild: извлечь все данные
+                    data = await self.extract_data_from_main_db(cabinet_id)
             except Exception as e:
-                logger.error(f"❌ Error extracting data: {e}")
+                logger.error(f"Error extracting data: {e}")
                 result['errors'].append(f"Извлечение данных: {str(e)}")
                 raise
             
@@ -694,7 +792,7 @@ class RAGIndexer:
             # 5. Генерация эмбеддингов
             try:
                 chunk_texts = [chunk['chunk_text'] for chunk in chunks_metadata]
-                embeddings = self.generate_embeddings(chunk_texts)
+                embeddings = await self.generate_embeddings(chunk_texts)
             except Exception as e:
                 logger.error(f"❌ Error generating embeddings: {e}")
                 result['errors'].append(f"Генерация эмбеддингов: {str(e)}")
@@ -715,17 +813,25 @@ class RAGIndexer:
             
             # 7. Обновить статус 'completed'
             index_status.indexing_status = 'completed'
-            index_status.last_indexed_at = datetime.now()
             index_status.total_chunks = saved_count
             index_status.updated_at = datetime.now()
+
+            # Обновить timestamps в зависимости от режима
+            if full_rebuild:
+                index_status.last_indexed_at = datetime.now()
+                index_status.last_incremental_at = datetime.now()  # Full rebuild обновляет оба
+            else:
+                index_status.last_incremental_at = datetime.now()
+
             db.commit()
-            
+
             result['success'] = True
             result['total_chunks'] = saved_count
-            
+            result['metrics']['embeddings_generated'] = len(embeddings)
+
             logger.info(
-                f"✅ Индексация кабинета {cabinet_id} завершена: "
-                f"{saved_count} чанков проиндексировано"
+                f"{indexing_mode.capitalize()} indexing completed for cabinet {cabinet_id}: "
+                f"{saved_count} chunks indexed"
             )
             
         except Exception as e:

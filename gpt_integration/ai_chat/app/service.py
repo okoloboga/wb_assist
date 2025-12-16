@@ -240,7 +240,7 @@ async def send_message(
             try:
                 cabinet_id = await get_cabinet_id_for_user(telegram_id)
                 if cabinet_id:
-                    system_prompt = enrich_prompt_with_rag(
+                    system_prompt = await enrich_prompt_with_rag(
                         user_message=message,
                         cabinet_id=cabinet_id,
                         original_prompt=SYSTEM_PROMPT
