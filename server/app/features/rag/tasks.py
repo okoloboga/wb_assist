@@ -56,9 +56,8 @@ def _get_api_key() -> str:
 
 @celery_app.task(
     bind=True,
-    max_retries=5,  # Увеличено с 3 до 5
-    autoretry_for=(requests.RequestException,),
-    retry_kwargs={'max_retries': 5, 'countdown': 600},  # 10 минут между попытками (было 5)
+    max_retries=3,  # Снижено с 5 до 3 (т.к. убрали autoretry)
+    # ❌ УБРАНО: autoretry_for - контролируем retry вручную
     time_limit=1800,  # 30 минут максимум на задачу
     soft_time_limit=1500  # 25 минут soft limit
 )
@@ -164,6 +163,17 @@ def index_rag_for_cabinet(
                     "total_chunks": result.get('total_chunks', 0),
                     "metrics": result.get('metrics', {})
                 }
+            elif response.status_code == 409:
+                # 409 Conflict - индексация уже выполняется (НЕ повторяем!)
+                logger.info(
+                    f"⏭️ Индексация кабинета {cabinet_id} уже выполняется другой задачей. Пропуск."
+                )
+                return {
+                    "status": "skipped",
+                    "cabinet_id": cabinet_id,
+                    "message": "Индексация уже выполняется",
+                    "reason": "concurrent_indexing"
+                }
             else:
                 error_detail = response.json() if response.headers.get('content-type') == 'application/json' else response.text
                 logger.error(
@@ -171,7 +181,7 @@ def index_rag_for_cabinet(
                     f"Status {response.status_code}, Detail: {error_detail}"
                 )
 
-                # Не повторяем при ошибках валидации (4xx)
+                # Не повторяем при ошибках валидации (4xx, кроме 409)
                 if 400 <= response.status_code < 500:
                     return {
                         "status": "error",
@@ -180,10 +190,19 @@ def index_rag_for_cabinet(
                         "detail": error_detail
                     }
 
-                # Повторяем при серверных ошибках (5xx)
-                raise requests.RequestException(
-                    f"Server error {response.status_code}: {error_detail}"
-                )
+                # Повторяем при серверных ошибках (5xx) - только если не исчерпаны попытки
+                if self.request.retries < self.max_retries:
+                    logger.info(f"🔄 Retrying RAG indexing for cabinet {cabinet_id} after server error (attempt {self.request.retries + 1}/{self.max_retries})")
+                    raise self.retry(countdown=300, exc=requests.RequestException(
+                        f"Server error {response.status_code}: {error_detail}"
+                    ))
+                else:
+                    return {
+                        "status": "error",
+                        "cabinet_id": cabinet_id,
+                        "message": f"Ошибка индексации после {self.max_retries} попыток (код {response.status_code})",
+                        "detail": error_detail
+                    }
 
         finally:
             db.close()
@@ -191,24 +210,48 @@ def index_rag_for_cabinet(
     except requests.Timeout as e:
         logger.error(f"⏱️ Timeout during RAG indexing for cabinet {cabinet_id}: {e}")
 
-        # Повторяем при timeout
-        if self.request.retries < self.max_retries:
-            logger.info(f"🔄 Retrying RAG indexing for cabinet {cabinet_id} after timeout")
-            raise self.retry(countdown=300, exc=e)
+        # Повторяем при timeout только для небольших задач (не full_rebuild)
+        if not full_rebuild and self.request.retries < self.max_retries:
+            wait_time = 120 * (2 ** self.request.retries)  # Exponential backoff: 120s, 240s, 480s
+            logger.info(
+                f"🔄 Retrying RAG indexing for cabinet {cabinet_id} after timeout "
+                f"(attempt {self.request.retries + 1}/{self.max_retries}, wait {wait_time}s)"
+            )
+            raise self.retry(countdown=wait_time, exc=e)
 
         return {
             "status": "error",
             "cabinet_id": cabinet_id,
-            "message": "Превышено время ожидания индексации"
+            "message": f"Превышено время ожидания индексации после {self.request.retries} попыток"
+        }
+
+    except requests.ConnectionError as e:
+        # Connection refused, host unreachable и т.д.
+        logger.error(f"🔌 Connection error during RAG indexing for cabinet {cabinet_id}: {e}")
+
+        # Повторяем при connection errors (AI-сервис может быть временно недоступен)
+        if self.request.retries < self.max_retries:
+            wait_time = 60 * (2 ** self.request.retries)  # Exponential backoff: 60s, 120s, 240s
+            logger.info(
+                f"🔄 Retrying RAG indexing for cabinet {cabinet_id} after connection error "
+                f"(attempt {self.request.retries + 1}/{self.max_retries}, wait {wait_time}s)"
+            )
+            raise self.retry(countdown=wait_time, exc=e)
+
+        return {
+            "status": "error",
+            "cabinet_id": cabinet_id,
+            "message": f"AI-сервис недоступен после {self.request.retries} попыток: {str(e)}"
         }
 
     except requests.RequestException as e:
+        # Другие сетевые ошибки
         logger.error(f"❌ Request error during RAG indexing for cabinet {cabinet_id}: {e}")
 
-        # Повторяем при сетевых ошибках
-        if self.request.retries < self.max_retries:
-            logger.info(f"🔄 Retrying RAG indexing for cabinet {cabinet_id} after request error")
-            raise self.retry(countdown=300, exc=e)
+        # Повторяем только 1 раз для неизвестных ошибок
+        if self.request.retries == 0:
+            logger.info(f"🔄 Retrying RAG indexing for cabinet {cabinet_id} after request error (1 attempt)")
+            raise self.retry(countdown=60, exc=e)
 
         return {
             "status": "error",

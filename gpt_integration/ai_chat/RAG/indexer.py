@@ -332,7 +332,8 @@ class RAGIndexer:
     
     def _create_stock_chunk(self, stock: Dict[str, Any], product_name: Optional[str] = None) -> Dict[str, Any]:
         """Создание чанка для остатка с ключевыми словами для поиска."""
-        name = product_name or 'Неизвестный товар'
+        # Приоритет: product_name из словаря -> name из БД -> fallback
+        name = product_name or stock.get('name') or 'Неизвестный товар'
         warehouse = stock.get('warehouse_name', 'Неизвестный склад')
         quantity = stock.get('quantity', 0) or 0
         size = stock.get('size', 'N/A')
@@ -403,7 +404,8 @@ class RAGIndexer:
     
     def _create_sale_chunk(self, sale: Dict[str, Any], product_name: Optional[str] = None) -> Dict[str, Any]:
         """Создание чанка для продажи."""
-        name = product_name or 'Неизвестный товар'
+        # Приоритет: product_name из словаря -> product_name из БД -> fallback
+        name = product_name or sale.get('product_name') or 'Неизвестный товар'
         sale_type = sale.get('type', 'N/A')
         sale_date = sale.get('sale_date')
         
@@ -620,7 +622,8 @@ class RAGIndexer:
                     existing_metadata.chunk_text = chunk_meta['chunk_text']
                     existing_metadata.chunk_type = chunk_meta['chunk_type']
                     existing_metadata.chunk_hash = self.calculate_chunk_hash(chunk_meta['chunk_text'])
-                    existing_metadata.updated_at = datetime.now()
+                    from datetime import timezone
+                    existing_metadata.updated_at = datetime.now(timezone.utc)
 
                     # Обновить embedding
                     existing_embedding = db.query(RAGEmbedding).filter(
@@ -629,7 +632,8 @@ class RAGIndexer:
 
                     if existing_embedding:
                         existing_embedding.embedding = embedding
-                        existing_embedding.updated_at = datetime.now()
+                        from datetime import timezone
+                        existing_embedding.updated_at = datetime.now(timezone.utc)
                     else:
                         # Создать новый embedding (если по какой-то причине его нет)
                         new_embedding = RAGEmbedding(
@@ -729,19 +733,60 @@ class RAGIndexer:
         index_status = None
 
         try:
-            # 1. Проверить статус индексации
+            # 1. Атомарная проверка и установка статуса с SELECT FOR UPDATE
+            # Это предотвращает race condition между параллельными задачами
+            from sqlalchemy import text
+            from datetime import timedelta, timezone
+
+            # Начинаем транзакцию с блокировкой
             index_status = db.query(RAGIndexStatus).filter(
                 RAGIndexStatus.cabinet_id == cabinet_id
-            ).first()
+            ).with_for_update(nowait=False).first()
 
-            if index_status and index_status.indexing_status == 'in_progress':
-                logger.warning(
-                    f"Индексация кабинета {cabinet_id} уже выполняется. Пропуск."
-                )
-                result['errors'].append("Индексация уже выполняется")
-                return result
+            # Проверяем статус индексации
+            if index_status:
+                current_status = index_status.indexing_status
 
-            # 2. Установить статус 'in_progress'
+                # Проверка 1: Индексация уже выполняется
+                if current_status == 'in_progress':
+                    # Проверяем, не зависла ли задача (timeout 30 минут)
+                    if index_status.updated_at:
+                        # Используем UTC aware datetime для корректного сравнения
+                        now_utc = datetime.now(timezone.utc)
+                        updated_at = index_status.updated_at
+
+                        # Если updated_at naive, делаем его aware (UTC)
+                        if updated_at.tzinfo is None:
+                            updated_at = updated_at.replace(tzinfo=timezone.utc)
+
+                        time_since_update = now_utc - updated_at
+
+                        if time_since_update > timedelta(minutes=30):
+                            logger.warning(
+                                f"⏰ Индексация кабинета {cabinet_id} зависла "
+                                f"(обновление {time_since_update.total_seconds():.0f} секунд назад). "
+                                f"Сбрасываем статус и перезапускаем."
+                            )
+                            # Сбрасываем зависший статус
+                            index_status.indexing_status = 'failed'
+                            db.commit()
+                        else:
+                            logger.warning(
+                                f"Индексация кабинета {cabinet_id} уже выполняется "
+                                f"(обновление {time_since_update.total_seconds():.0f} секунд назад). Пропуск."
+                            )
+                            result['errors'].append("Индексация уже выполняется")
+                            db.rollback()  # Отменяем блокировку
+                            return result
+
+                # Проверка 2: Предыдущая индексация провалилась - разрешаем повторный запуск
+                if current_status == 'failed':
+                    logger.info(
+                        f"⚠️ Предыдущая индексация кабинета {cabinet_id} провалилась. "
+                        f"Перезапускаем индексацию."
+                    )
+
+            # 2. Установить статус 'in_progress' (атомарно)
             if not index_status:
                 index_status = RAGIndexStatus(
                     cabinet_id=cabinet_id,
@@ -750,9 +795,10 @@ class RAGIndexer:
                 db.add(index_status)
             else:
                 index_status.indexing_status = 'in_progress'
-                index_status.updated_at = datetime.now()
+                # Используем UTC aware datetime
+                index_status.updated_at = datetime.now(timezone.utc)
 
-            db.commit()
+            db.commit()  # Commit и освобождение блокировки
 
             logger.info(
                 f"Starting {indexing_mode} indexing for cabinet {cabinet_id}"
@@ -784,7 +830,8 @@ class RAGIndexer:
                 logger.warning(f"⚠️ No data to index for cabinet {cabinet_id}")
                 index_status.indexing_status = 'completed'
                 index_status.total_chunks = 0
-                index_status.last_indexed_at = datetime.now()
+                from datetime import timezone
+                index_status.last_indexed_at = datetime.now(timezone.utc)
                 db.commit()
                 result['success'] = True
                 return result
@@ -812,16 +859,17 @@ class RAGIndexer:
                 raise
             
             # 7. Обновить статус 'completed'
+            from datetime import timezone
             index_status.indexing_status = 'completed'
             index_status.total_chunks = saved_count
-            index_status.updated_at = datetime.now()
+            index_status.updated_at = datetime.now(timezone.utc)
 
             # Обновить timestamps в зависимости от режима
             if full_rebuild:
-                index_status.last_indexed_at = datetime.now()
-                index_status.last_incremental_at = datetime.now()  # Full rebuild обновляет оба
+                index_status.last_indexed_at = datetime.now(timezone.utc)
+                index_status.last_incremental_at = datetime.now(timezone.utc)  # Full rebuild обновляет оба
             else:
-                index_status.last_incremental_at = datetime.now()
+                index_status.last_incremental_at = datetime.now(timezone.utc)
 
             db.commit()
 
@@ -837,10 +885,11 @@ class RAGIndexer:
         except Exception as e:
             # Установить статус 'failed'
             if index_status:
+                from datetime import timezone
                 index_status.indexing_status = 'failed'
-                index_status.updated_at = datetime.now()
+                index_status.updated_at = datetime.now(timezone.utc)
                 db.commit()
-            
+
             logger.error(f"❌ Error indexing cabinet {cabinet_id}: {e}")
             result['errors'].append(str(e))
             

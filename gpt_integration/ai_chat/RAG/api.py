@@ -102,20 +102,44 @@ async def trigger_indexing(
                 "metrics": result.get('metrics', {})
             }
         else:
-            logger.error(
-                f"{indexing_mode.capitalize()} indexing failed for cabinet {cabinet_id}: "
-                f"{result.get('errors', [])}"
-            )
-            raise HTTPException(
-                status_code=500,
-                detail={
-                    "status": "error",
-                    "message": f"Ошибка индексации кабинета {cabinet_id}",
-                    "errors": result.get('errors', [])
-                }
-            )
+            errors = result.get('errors', [])
 
+            # Проверяем, является ли ошибка конфликтом (индексация уже выполняется)
+            is_concurrent_conflict = any("уже выполняется" in str(err) for err in errors)
+
+            if is_concurrent_conflict:
+                # 409 Conflict - индексация уже выполняется (не триггерит retry в Celery)
+                logger.warning(
+                    f"Concurrent indexing detected for cabinet {cabinet_id}. Skipping."
+                )
+                raise HTTPException(
+                    status_code=409,  # ✅ Conflict - Celery НЕ делает retry для 4xx
+                    detail={
+                        "status": "conflict",
+                        "message": f"Индексация кабинета {cabinet_id} уже выполняется",
+                        "errors": errors
+                    }
+                )
+            else:
+                # 500 Internal Server Error - реальная ошибка (может триггерить retry)
+                logger.error(
+                    f"{indexing_mode.capitalize()} indexing failed for cabinet {cabinet_id}: "
+                    f"{errors}"
+                )
+                raise HTTPException(
+                    status_code=500,
+                    detail={
+                        "status": "error",
+                        "message": f"Ошибка индексации кабинета {cabinet_id}",
+                        "errors": errors
+                    }
+                )
+
+    except HTTPException:
+        # Пробрасываем HTTPException (409, 500) как есть, не оборачивая в новый 500
+        raise
     except Exception as e:
+        # Только для неожиданных ошибок (не HTTPException)
         logger.error(f"Unexpected error during indexing cabinet {cabinet_id}: {e}", exc_info=True)
         raise HTTPException(
             status_code=500,

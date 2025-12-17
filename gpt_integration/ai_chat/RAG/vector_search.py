@@ -128,13 +128,14 @@ class VectorSearch:
                         e.id AS embedding_id,
                         e.metadata_id,
                         (1 - (e.embedding <=> '{embedding_str}'::vector)) AS similarity,
-                        e.embedding <=> '{embedding_str}'::vector AS distance
+                        e.embedding <=> '{embedding_str}'::vector AS distance,
+                        m.source_id
                     FROM rag_embeddings e
                     JOIN rag_metadata m ON e.metadata_id = m.id
                     WHERE m.cabinet_id = :cabinet_id
                       AND m.chunk_type = ANY(:chunk_types)
                       {"AND m.source_id = :source_id" if source_id is not None else ""}
-                    ORDER BY e.embedding <=> '{embedding_str}'::vector ASC
+                    ORDER BY e.embedding <=> '{embedding_str}'::vector ASC, m.source_id DESC
                     LIMIT :limit
                 """)
             else:
@@ -143,12 +144,13 @@ class VectorSearch:
                         e.id AS embedding_id,
                         e.metadata_id,
                         (1 - (e.embedding <=> '{embedding_str}'::vector)) AS similarity,
-                        e.embedding <=> '{embedding_str}'::vector AS distance
+                        e.embedding <=> '{embedding_str}'::vector AS distance,
+                        m.source_id
                     FROM rag_embeddings e
                     JOIN rag_metadata m ON e.metadata_id = m.id
                     WHERE m.cabinet_id = :cabinet_id
                       {"AND m.source_id = :source_id" if source_id is not None else ""}
-                    ORDER BY e.embedding <=> '{embedding_str}'::vector ASC
+                    ORDER BY e.embedding <=> '{embedding_str}'::vector ASC, m.source_id DESC
                     LIMIT :limit
                 """)
 
@@ -197,7 +199,8 @@ class VectorSearch:
                         'embedding_id': row.embedding_id,
                         'metadata_id': row.metadata_id,
                         'similarity': similarity,
-                        'distance': distance
+                        'distance': distance,
+                        'source_id': row.source_id  # Добавлено для debug и future use
                     })
                     logger.info(f"    ✅ PASSED threshold ({similarity:.4f} >= {self.similarity_threshold})")
                 else:
