@@ -75,7 +75,7 @@ services:
     build:
       context: ./server
       dockerfile: Dockerfile
-    command: celery -A app.core.celery_app worker --loglevel=info --queues=sync_queue,alerts_queue,export_queue,digest_queue,scraping_queue,rag_queue
+    command: celery -A app.core.celery_app worker --loglevel=info --queues=sync_queue,alerts_queue,export_queue,digest_queue,scraping_queue --concurrency=4
     depends_on:
       db:
         condition: service_healthy
@@ -111,6 +111,31 @@ services:
         limits:
           cpus: "1.5"
           memory: "1536M"
+
+  celery-worker-rag:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    command: celery -A app.core.celery_app worker --loglevel=info --queues=rag_queue --concurrency=1 --max-tasks-per-child=1 --prefetch-multiplier=1
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      - REDIS_URL=redis://redis:6379/0
+      - GPT_INTEGRATION_URL=http://gpt:9000
+      - API_SECRET_KEY=${API_SECRET_KEY}
+      - RAG_INDEXING_INTERVAL_HOURS=${RAG_INDEXING_INTERVAL_HOURS:-6}
+    networks:
+      - app-network
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: "3072M"
+    restart: unless-stopped
 
   celery-beat:
     build:
