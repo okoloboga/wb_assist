@@ -25,19 +25,20 @@ SQL_TEMPLATES: Dict[str, str] = {
     ),
     "top_products_by_revenue": (
         """
-        SELECT 
-            ws.nm_id AS sku_id, 
-            ws.product_name AS name, 
-            SUM(ws.amount) AS revenue, 
+        SELECT
+            ws.nm_id AS sku_id,
+            COALESCE(p.name, ws.product_name) AS name,
+            SUM(ws.amount) AS revenue,
             COUNT(*) AS qty
         FROM wb_sales ws
         JOIN cabinet_users cu ON ws.cabinet_id = cu.cabinet_id
         JOIN users u ON cu.user_id = u.id
-        WHERE u.telegram_id = $1 
+        LEFT JOIN wb_products p ON ws.nm_id = p.nm_id AND ws.cabinet_id = p.cabinet_id
+        WHERE u.telegram_id = $1
           AND ws.sale_date >= CURRENT_DATE - make_interval(days => $2)
           AND ws.type = 'buyout'
           AND (ws.is_cancel IS NULL OR ws.is_cancel = false)
-        GROUP BY ws.nm_id, ws.product_name
+        GROUP BY ws.nm_id, COALESCE(p.name, ws.product_name)
         ORDER BY revenue DESC
         LIMIT $3
         """
