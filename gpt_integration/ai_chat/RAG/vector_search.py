@@ -331,6 +331,7 @@ class VectorSearch:
                 'sales', 'sale', 'buyout', 'return',
                 'купи', 'купили', 'купил',  # "кто купил товар"
                 'проданн',  # проданный, проданных, проданные
+                'прода',  # продались, продают, продал, продано
             ],
             'order': [
                 'заказ', 'заказов', 'заказы', 'заказа',
@@ -533,6 +534,24 @@ class VectorSearch:
                 limit=search_limit,
                 source_id=nm_id_filter
             )
+
+            # Fallback: если ничего не нашли с keyword filter → повторить без фильтра
+            if not search_results and effective_chunk_types is not None:
+                logger.warning(
+                    f"⚠️ No chunks found with keyword filter {effective_chunk_types}, "
+                    f"retrying without filter (all chunk types)"
+                )
+                search_results = self.search(
+                    query_embedding=query_embedding,
+                    cabinet_id=cabinet_id,
+                    chunk_types=None,  # Искать во всех типах!
+                    limit=search_limit,
+                    source_id=nm_id_filter
+                )
+                if search_results:
+                    logger.info(
+                        f"✅ Fallback successful: found {len(search_results)} chunks without filter"
+                    )
 
             if not search_results:
                 logger.warning(
