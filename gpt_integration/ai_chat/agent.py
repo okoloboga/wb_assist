@@ -79,9 +79,18 @@ async def run_agent(messages: List[Dict[str, Any]]) -> Dict[str, Any]:
     # Execute tools
     tool_messages: List[Dict[str, Any]] = []
     for tc in tool_calls:
-        func = tc.function
-        name = func.name
-        args_json = func.arguments or "{}"
+        # Handle both dict (CometAPI/JSON) and object (OpenAI SDK) formats
+        if isinstance(tc, dict):
+            func = tc.get("function", {})
+            name = func.get("name", "")
+            args_json = func.get("arguments", "{}")
+            tool_call_id = tc.get("id", "")
+        else:
+            # OpenAI SDK object format
+            func = tc.function
+            name = func.name
+            args_json = func.arguments or "{}"
+            tool_call_id = tc.id
         try:
             logger.info(f"🔧 Executing tool: {name} with args: {args_json[:200]}")
             result_json = await execute_tool(name, args_json)
@@ -98,7 +107,7 @@ async def run_agent(messages: List[Dict[str, Any]]) -> Dict[str, Any]:
             result_json = json.dumps(error_detail, ensure_ascii=False)
         tool_messages.append({
             "role": "tool",
-            "tool_call_id": tc.id,
+            "tool_call_id": tool_call_id,
             "name": name,
             "content": result_json,
         })
