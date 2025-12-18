@@ -163,6 +163,19 @@ def index_rag_for_cabinet(
                     "total_chunks": result.get('total_chunks', 0),
                     "metrics": result.get('metrics', {})
                 }
+            elif response.status_code == 202:
+                # 202 Accepted - индексация запущена в фоне (асинхронная)
+                result = response.json()
+                logger.info(
+                    f"✅ {indexing_mode.capitalize()} indexing started in background for cabinet {cabinet_id}"
+                )
+                return {
+                    "status": "accepted",
+                    "cabinet_id": cabinet_id,
+                    "indexing_mode": result.get('indexing_mode', indexing_mode),
+                    "message": result.get('message', 'Индексация запущена в фоне'),
+                    "note": "Индексация выполняется асинхронно"
+                }
             elif response.status_code == 409:
                 # 409 Conflict - индексация уже выполняется (НЕ повторяем!)
                 logger.info(
