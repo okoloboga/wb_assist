@@ -68,7 +68,8 @@ class WBSyncService:
             logger.info(f"API key validation successful for cabinet {cabinet.id}")
             
             # КРИТИЧНО: Сохраняем время предыдущей синхронизации ДО начала новой
-            if not cabinet.last_sync_at:
+            is_first_sync = not cabinet.last_sync_at
+            if is_first_sync:
                 # Если это первая синхронизация, НЕ отправляем уведомления
                 previous_sync_at = None
                 logger.info(f"📅 First sync detected for cabinet {cabinet.id} - NO notifications will be sent")
@@ -169,7 +170,8 @@ class WBSyncService:
             return {
                 "status": "success",
                 "results": results,
-                "sync_time": cabinet.last_sync_at.isoformat()
+                "sync_time": cabinet.last_sync_at.isoformat(),
+                "is_first_sync": is_first_sync
             }
             
         except Exception as e:

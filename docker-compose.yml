@@ -75,7 +75,7 @@ services:
     build:
       context: ./server
       dockerfile: Dockerfile
-    command: celery -A app.core.celery_app worker --loglevel=info --queues=sync_queue,alerts_queue,export_queue,digest_queue,scraping_queue
+    command: celery -A app.core.celery_app worker --loglevel=info --queues=sync_queue,alerts_queue,export_queue,digest_queue,scraping_queue --concurrency=4
     depends_on:
       db:
         condition: service_healthy
@@ -102,6 +102,8 @@ services:
       - COMPETITOR_UPDATE_SPREAD_HOURS=${COMPETITOR_UPDATE_SPREAD_HOURS}
       - COMPETITOR_UPDATE_BASE_HOUR=${COMPETITOR_UPDATE_BASE_HOUR}
       - SEMANTIC_CORE_MAX_TEXT_LENGTH=${SEMANTIC_CORE_MAX_TEXT_LENGTH}
+      # RAG индексация
+      - RAG_INDEXING_INTERVAL_HOURS=${RAG_INDEXING_INTERVAL_HOURS:-6}
     networks:
       - app-network
     deploy:
@@ -109,6 +111,34 @@ services:
         limits:
           cpus: "1.5"
           memory: "1536M"
+
+  celery-worker-rag:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    command: celery -A app.core.celery_app worker --loglevel=info --queues=rag_queue --concurrency=1 --max-tasks-per-child=1 --prefetch-multiplier=1
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      - REDIS_URL=redis://redis:6379/0
+      - SYNC_INTERVAL=${SYNC_INTERVAL}
+      - SYNC_DAYS=${SYNC_DAYS}
+      - STOCK_ALERT_CHECK_TIME=${STOCK_ALERT_CHECK_TIME}
+      - GPT_INTEGRATION_URL=http://gpt:9000
+      - API_SECRET_KEY=${API_SECRET_KEY}
+      - RAG_INDEXING_INTERVAL_HOURS=${RAG_INDEXING_INTERVAL_HOURS:-6}
+    networks:
+      - app-network
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: "3072M"
+    restart: unless-stopped
 
   celery-beat:
     build:
@@ -133,6 +163,8 @@ services:
       - COMPETITOR_UPDATE_INTERVAL_HOURS=${COMPETITOR_UPDATE_INTERVAL_HOURS:-24}
       - COMPETITOR_UPDATE_SPREAD_HOURS=${COMPETITOR_UPDATE_SPREAD_HOURS:-2}
       - COMPETITOR_UPDATE_BASE_HOUR=${COMPETITOR_UPDATE_BASE_HOUR:-0}
+      # RAG индексация
+      - RAG_INDEXING_INTERVAL_HOURS=${RAG_INDEXING_INTERVAL_HOURS:-6}
     volumes:
       - celery_beat_data:/app/beat_data
     networks:
@@ -176,18 +208,24 @@ services:
       - BOT_TOKEN=${BOT_TOKEN}
       # AI Chat - Database
       - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      - RAG_USAGE=${RAG_USAGE:-30}
       - DAILY_LIMIT=${DAILY_LIMIT:-30}
-      # OpenAI API
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o-mini}
-      - OPENAI_TEMPERATURE=${OPENAI_TEMPERATURE:-0.7}
-      - OPENAI_MAX_TOKENS=${OPENAI_MAX_TOKENS:-4000}
-      - OPENAI_TIMEOUT=${OPENAI_TIMEOUT:-60}
-      - OPENAI_MAX_RETRIES=${OPENAI_MAX_RETRIES:-3}
-      - OPENAI_MAX_RETRIES_CONNECTION=${OPENAI_MAX_RETRIES_CONNECTION:-8}
-      - OPENAI_RETRY_DELAY_MS=${OPENAI_RETRY_DELAY_MS:-500}
-      - OPENAI_RETRY_DELAY_CONNECTION_MS=${OPENAI_RETRY_DELAY_CONNECTION_MS:-2000}
-      - OPENAI_RETRY_BACKOFF=${OPENAI_RETRY_BACKOFF:-2}
+      # Comet API (Text Generation, Embeddings, Image Generation)
+      - COMET_API_KEY=${COMET_API_KEY}
+      # Text Generation
+      - COMET_TEXT_BASE_URL=${COMET_TEXT_BASE_URL}
+      - COMET_TEXT_MODEL=${COMET_TEXT_MODEL}
+      - COMET_TEMPERATURE=${COMET_TEMPERATURE:-0.5}
+      - COMET_MAX_TOKENS=${COMET_MAX_TOKENS:-4000}
+      # Embeddings
+      - COMET_EMBEDDINGS_BASE_URL=${COMET_EMBEDDINGS_BASE_URL}
+      - COMET_EMBEDDINGS_MODEL=${COMET_EMBEDDINGS_MODEL}
+      # Common API settings
+      - COMET_API_TIMEOUT=${COMET_API_TIMEOUT:-60}
+      - COMET_API_MAX_RETRIES=${COMET_API_MAX_RETRIES:-3}
+      - COMET_API_RETRY_DELAY_MS=${COMET_API_RETRY_DELAY_MS:-500}
+      - COMET_API_RETRY_BACKOFF=${COMET_API_RETRY_BACKOFF:-2}
+
       # Analytics - период по умолчанию для daily trends
       - ANALYTICS_DAYS_WINDOW=${ANALYTICS_DAYS_WINDOW}
       # Photo Processing - API генерации изображений
@@ -202,9 +240,8 @@ services:
       # RAG Configuration
       - RAG_ENABLED=${RAG_ENABLED:-true}
       - RAG_VECTOR_DB_URL=${RAG_VECTOR_DB_URL:-postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}}
-      - OPENAI_EMBEDDINGS_MODEL=${OPENAI_EMBEDDINGS_MODEL:-text-embedding-3-small}
       - RAG_MAX_CHUNKS=${RAG_MAX_CHUNKS:-5}
-      - RAG_SIMILARITY_THRESHOLD=${RAG_SIMILARITY_THRESHOLD:-0.5}
+      - RAG_SIMILARITY_THRESHOLD=${RAG_SIMILARITY_THRESHOLD:-0.3}
       - RAG_CONTEXT_MAX_LENGTH=${RAG_CONTEXT_MAX_LENGTH:-3000}
       - RAG_INDEXING_INTERVAL_HOURS=${RAG_INDEXING_INTERVAL_HOURS:-6}
       - RAG_EMBEDDING_BATCH_SIZE=${RAG_EMBEDDING_BATCH_SIZE:-100}
@@ -233,21 +270,21 @@ services:
       - app-network
     restart: unless-stopped
 
-  dashboard:
-    build:
-      context: ./dashboard
-      dockerfile: Dockerfile
-      args:
-        - VITE_API_BASE_URL=http://localhost:8002/api/v1/bot
-        - VITE_API_SECRET_KEY=${API_SECRET_KEY}
-        - VITE_TELEGRAM_ID=${DASHBOARD_TELEGRAM_ID:-123456789}
-    ports:
-      - "3000:80"
-    depends_on:
-      - server
-    networks:
-      - app-network
-    restart: unless-stopped
+  # dashboard:
+  #   build:
+  #     context: ./dashboard
+  #     dockerfile: Dockerfile
+  #     args:
+  #       - VITE_API_BASE_URL=http://localhost:8002/api/v1/bot
+  #       - VITE_API_SECRET_KEY=${API_SECRET_KEY}
+  #       - VITE_TELEGRAM_ID=${DASHBOARD_TELEGRAM_ID:-123456789}
+  #   ports:
+  #     - "3000:80"
+  #   depends_on:
+  #     - server
+  #   networks:
+  #     - app-network
+  #   restart: unless-stopped
 
 
 volumes:

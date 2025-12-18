@@ -161,8 +161,7 @@ async def callback_ai_chat(callback: CallbackQuery, state: FSMContext):
         "Просто напишите ваш вопрос, и я отвечу!\n\n"
         "🎯 <b>Персонализация:</b>\n"
         "<i>Я вижу статистику ваших продаж и могу давать конкретные советы на основе ваших данных!</i>\n\n"
-        "💡 <b>Для глубокого анализа:</b> Используйте кнопку <b>🧠 AI-анализ</b> - детальный отчет с рекомендациями\n"
-        "📊 <i>У вас есть 30 запросов в сутки</i>"
+        "💡 <b>Для глубокого анализа:</b> Используйте кнопку <b>🧠 AI-анализ</b> - детальный отчет с рекомендациями"
     )
     
     await callback.message.edit_text(
@@ -268,20 +267,14 @@ async def process_ai_message(message: Message, state: FSMContext):
                     data = await resp.json()
                     response_text = data.get("response", "")
                     remaining = data.get("remaining_requests", 0)
-                    
-                    # Формируем ответ с информацией о лимитах
-                    full_response = (
-                        f"{response_text}\n\n"
-                        f"<i>Осталось запросов: {remaining}/30</i>"
-                    )
-                    
+
                     await safe_send_message(
                         message,
-                        full_response,
+                        response_text,
                         user_id=telegram_id,
                         parse_mode="HTML"
                     )
-                    
+
                     logger.info(f"✅ AI response sent to user {telegram_id}: {remaining} requests remaining")
                 
                 # Лимит исчерпан

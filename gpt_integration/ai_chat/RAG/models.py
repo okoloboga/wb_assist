@@ -20,27 +20,29 @@ from .database import RAGBase
 class RAGMetadata(RAGBase):
     """
     Метаданные и исходный текст чанков.
-    
+
     Связывает векторные представления с исходными данными из основной БД.
     """
     __tablename__ = "rag_metadata"
-    
+
     id = Column(Integer, primary_key=True, index=True)
     cabinet_id = Column(Integer, nullable=False, index=True)
     source_table = Column(String(50), nullable=False)
     source_id = Column(Integer, nullable=False)
     chunk_type = Column(String(20), nullable=False, index=True)
     chunk_text = Column(Text, nullable=False)
+    chunk_hash = Column(String(64), nullable=True, index=True)  # SHA256 hash для hash-based change detection
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
-    
+
     # Связи
     embeddings = relationship("RAGEmbedding", back_populates="rag_metadata", cascade="all, delete-orphan")
-    
+
     # Индексы и ограничения
     __table_args__ = (
         Index('idx_rag_metadata_cabinet_type', 'cabinet_id', 'chunk_type'),
         Index('idx_rag_metadata_source', 'source_table', 'source_id'),
+        Index('idx_rag_metadata_cabinet_source', 'cabinet_id', 'source_table', 'source_id'),  # Для full rebuild
         UniqueConstraint('cabinet_id', 'source_table', 'source_id', name='uq_rag_metadata_cabinet_source'),
     )
     

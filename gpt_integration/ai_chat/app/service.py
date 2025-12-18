@@ -198,7 +198,7 @@ async def send_message(
     """
     Send message to AI and get response.
     
-    Rate limited to 30 requests per day per user.
+    Rate limited to DAILY_LIMIT requests per day per user (0 = unlimited).
     """
     telegram_id = request.telegram_id
     message = request.message
@@ -219,7 +219,10 @@ async def send_message(
                 status_code=429,
                 detail={
                     "error": "Rate limit exceeded",
-                    "message": "Вы исчерпали дневной лимит запросов (30/день). Попробуйте завтра! 🌅",
+                    "message": (
+                        f"Вы исчерпали дневной лимит запросов ({DAILY_LIMIT}/день). "
+                        "Попробуйте завтра! 🌅"
+                    ),
                     "daily_limit": DAILY_LIMIT,
                     "requests_today": DAILY_LIMIT,
                     "requests_remaining": 0
@@ -237,7 +240,7 @@ async def send_message(
             try:
                 cabinet_id = await get_cabinet_id_for_user(telegram_id)
                 if cabinet_id:
-                    system_prompt = enrich_prompt_with_rag(
+                    system_prompt = await enrich_prompt_with_rag(
                         user_message=message,
                         cabinet_id=cabinet_id,
                         original_prompt=SYSTEM_PROMPT
@@ -267,9 +270,9 @@ async def send_message(
 **КРИТИЧЕСКИ ВАЖНО - КОНТЕКСТ ПОЛЬЗОВАТЕЛЯ:**
 - Telegram ID пользователя: {telegram_id}
 - ❌ НИКОГДА не запрашивай Telegram ID у пользователя - он уже известен!
-- ✅ ВСЕГДА используй telegram_id={telegram_id} автоматически во всех tools
-- ✅ При вызове любых tools (get_dashboard, get_sales_timeseries, compute_kpis, forecast_sales, run_sql_template) передавай параметр "telegram_id": {telegram_id}
-- ✅ Если пользователь спрашивает про свои данные, сразу используй tools с telegram_id={telegram_id}, НЕ спрашивая у пользователя"""
+- ✅ ВСЕГДА используй `telegram_id={telegram_id}` при вызове любого инструмента.
+- ✅ Например, вызов инструмента `run_report` должен выглядеть так: `run_report(report_name='top_products', params={{'telegram_id': {telegram_id}}})`. `telegram_id` должен быть внутри `params`.
+- ✅ Если пользователь спрашивает про свои данные, сразу используй инструменты с `telegram_id={telegram_id}`, НЕ спрашивая у пользователя."""
         
         messages = [
             {"role": "system", "content": system_prompt_with_context},
@@ -570,4 +573,3 @@ if __name__ == "__main__":
         port=AI_CHAT_PORT,
         reload=True
     )
-

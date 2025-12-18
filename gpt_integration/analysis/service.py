@@ -127,7 +127,6 @@ def _build_yesterday_header(dt: Dict[str, Any]) -> str:
         f"Вчера ({date}):",
         "",
         f"Заказы: {orders} шт. — {_format_money_no_round(orders_amount)}",
-        f"Отмены: {cancels} шт. — {_format_money_no_round(cancels_amount)}",
         f"Выкупы: {buyouts} шт. — {_format_money_no_round(buyouts_amount)}",
         f"Возвраты: {returns} шт. — {_format_money_no_round(returns_amount)}",
         "",
@@ -323,7 +322,7 @@ async def orchestrate_analysis(telegram_id: int, period: str, validate_output: b
         client = GPTClient.from_env()
         logger.info(f"🔧 GPT client config: model={client.model}, max_tokens={client.max_tokens}, temperature={client.temperature}")
         template_path = "gpt_integration/analysis/LLM_ANALYSIS_TEMPLATE.md"
-        result = run_analysis(client, data=data, template_path=template_path, validate=validate_output)
+        result = await run_analysis(client, data=data, template_path=template_path, validate=validate_output)
         
         logger.info(f"✅ LLM analysis completed, result keys: {list(result.keys())}")
         
@@ -462,4 +461,3 @@ async def orchestrate_analysis(telegram_id: int, period: str, validate_output: b
             logger.error(f"❌ Failed to send fallback webhook: {webhook_err}")
             # Last resort: swallow to avoid crashing the service
             pass
-

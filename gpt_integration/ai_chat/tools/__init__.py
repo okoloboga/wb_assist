@@ -31,18 +31,31 @@ registry = [
         "type": "function",
         "function": {
             "name": "run_report",
-            "description": "Предопределенные отчеты (топы, просадки, маржинальность, отзывы, реклама).",
+            "description": "Получить отчет о топ-товарах по выручке за выбранный период. ВАЖНО: params ОБЯЗАТЕЛЬНО должен содержать telegram_id.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "report_name": {"type": "string", "enum": [
-                        "top_products",
-                        "decliners",
-                        "margins",
-                        "reviews",
-                        "ad_performance",
-                    ]},
-                    "params": {"type": "object", "additionalProperties": True},
+                    "report_name": {
+                        "type": "string",
+                        "enum": ["top_products"],
+                        "description": "Тип отчета. Сейчас доступен только 'top_products' (топ товаров по выручке)"
+                    },
+                    "params": {
+                        "type": "object",
+                        "properties": {
+                            "telegram_id": {
+                                "type": "integer",
+                                "description": "ID пользователя в Telegram (ОБЯЗАТЕЛЬНО)"
+                            },
+                            "period": {
+                                "type": "string",
+                                "description": "Период для отчета (опционально)",
+                                "enum": ["7d", "14d", "30d", "90d"]
+                            }
+                        },
+                        "required": ["telegram_id"],
+                        "additionalProperties": True
+                    },
                 },
                 "required": ["report_name", "params"],
             },

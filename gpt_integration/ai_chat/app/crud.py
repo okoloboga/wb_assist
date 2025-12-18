@@ -5,6 +5,7 @@ Handles database operations for chat history and rate limiting.
 """
 
 import logging
+import os
 from datetime import date, datetime, timedelta
 from typing import Tuple, List, Optional
 from sqlalchemy.orm import Session
@@ -16,8 +17,18 @@ from .models import AIChatRequest, AIChatDailyLimit
 # Configure logging
 logger = logging.getLogger(__name__)
 
-# Daily request limit constant
-DAILY_LIMIT = 30
+# Daily request limit (0 = unlimited)
+def _load_daily_limit() -> int:
+    raw = os.getenv("RAG_USAGE") or os.getenv("DAILY_LIMIT") or "30"
+    try:
+        value = int(raw)
+        return max(0, value)
+    except ValueError:
+        logger.warning(f"⚠️ Invalid RAG_USAGE/DAILY_LIMIT value '{raw}', fallback to 30")
+        return 30
+
+
+DAILY_LIMIT = _load_daily_limit()
 
 
 class AIChatCRUD:
@@ -42,21 +53,25 @@ class AIChatCRUD:
     def check_and_update_limit(self, telegram_id: int) -> Tuple[bool, int]:
         """
         Check if user can make a request and update counter.
-        
+
         This method:
         1. Gets or creates limit record
         2. Resets counter if it's a new day
         3. Checks if limit is exceeded
         4. Increments counter if allowed
-        
+
         Args:
             telegram_id: Telegram user ID
-            
+
         Returns:
             Tuple[bool, int]: (can_request, remaining_requests)
                 - can_request: True if request allowed
-                - remaining_requests: Number of requests left (0 if exceeded)
+                - remaining_requests: Number of requests left (0 if exceeded, -1 if unlimited)
         """
+        if DAILY_LIMIT == 0:
+            logger.debug(f"♾️ Limit disabled (DAILY_LIMIT=0) for telegram_id={telegram_id}")
+            return (True, -1)  # -1 indicates unlimited
+
         today = date.today()
         
         # Get or create limit record
@@ -101,17 +116,26 @@ class AIChatCRUD:
     def get_limits(self, telegram_id: int) -> dict:
         """
         Get current rate limits for user WITHOUT modifying counter.
-        
+
         Args:
             telegram_id: Telegram user ID
-            
+
         Returns:
             dict: Limit information
                 - requests_today: Current counter
-                - requests_remaining: Remaining requests
-                - daily_limit: Daily limit (30)
+                - requests_remaining: Remaining requests (-1 if unlimited)
+                - daily_limit: Daily limit (0 if unlimited)
                 - reset_date: Last reset date
         """
+        if DAILY_LIMIT == 0:
+            today = date.today()
+            return {
+                "requests_today": 0,
+                "requests_remaining": -1,  # -1 indicates unlimited
+                "daily_limit": 0,
+                "reset_date": today
+            }
+
         today = date.today()
         
         limit_record = self.db.query(AIChatDailyLimit).filter(
@@ -311,4 +335,3 @@ class AIChatCRUD:
         logger.info(f"📊 Stats for telegram_id={telegram_id}: {stats}")
         
         return stats
-

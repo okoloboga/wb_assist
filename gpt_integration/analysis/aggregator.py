@@ -98,6 +98,13 @@ def aggregate(sources: Dict[str, Any]) -> Dict[str, Any]:
                 "top_products": list(daily_trends_raw.get("top_products") or []),
                 "yesterday": dict(daily_trends_raw.get("yesterday") or {}),
             }
+            # Удаляем отмены из агрегатов и yesterday
+            agg_totals = daily_trends.get("aggregates", {}).get("totals") or {}
+            agg_totals.pop("cancellations", None)
+            agg_totals.pop("cancellations_amount", None)
+            y = daily_trends.get("yesterday") or {}
+            y.pop("cancellations", None)
+            y.pop("cancellations_amount", None)
             # Удаляем chart из промпта
             # (картинка отправляется в Telegram отдельно, в промпт не нужна)
             # daily_trends_raw.get("chart") намеренно игнорируем
@@ -111,8 +118,6 @@ def aggregate(sources: Dict[str, Any]) -> Dict[str, Any]:
                     "date": p.get("date"),
                     "orders": p.get("orders", 0),
                     "orders_amount": float(p.get("orders_amount", 0.0) or 0.0),
-                    "cancellations": p.get("cancellations", 0),
-                    "cancellations_amount": float(p.get("cancellations_amount", 0.0) or 0.0),
                     "buyouts": p.get("buyouts", 0),
                     "buyouts_amount": float(p.get("buyouts_amount", 0.0) or 0.0),
                     "returns": p.get("returns", 0),
