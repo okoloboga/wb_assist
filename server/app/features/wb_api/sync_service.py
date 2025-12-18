@@ -104,7 +104,14 @@ class WBSyncService:
             date_from = (now_msk - timedelta(days=sync_days)).strftime("%Y-%m-%d")
             
             results = {}
-            
+            changed_ids = {  # Агрегированные ID изменений для RAG индексации
+                "orders": [],
+                "products": [],
+                "stocks": [],
+                "reviews": [],
+                "sales": []
+            }
+
             # Синхронизируем данные последовательно для избежания конфликтов
             logger.info(f"Starting sync_all_data for cabinet {cabinet.id}, period: {sync_days} days ({date_from} to {date_to})")
             sync_tasks = [
@@ -120,7 +127,13 @@ class WBSyncService:
                 try:
                     result = await task
                     results[task_name] = result
-                    logger.info(f"Sync {task_name} completed: {result.get('status', 'unknown')}")
+
+                    # Собираем changed_ids для RAG индексации
+                    if task_name in changed_ids and result.get("changed_ids"):
+                        changed_ids[task_name] = result["changed_ids"]
+                        logger.info(f"Sync {task_name} completed: {result.get('status', 'unknown')}, {len(result['changed_ids'])} changes")
+                    else:
+                        logger.info(f"Sync {task_name} completed: {result.get('status', 'unknown')}")
                 except Exception as e:
                     logger.error(f"Sync {task_name} failed: {e}")
                     results[task_name] = {"status": "error", "error": str(e)}
@@ -167,11 +180,16 @@ class WBSyncService:
                 from app.features.sync.tasks import schedule_cabinet_sync
                 schedule_cabinet_sync(cabinet.id)
             
+            # Логируем итоговую статистику изменений
+            total_changes = sum(len(ids) for ids in changed_ids.values())
+            logger.info(f"📊 Total changes for RAG indexing: {total_changes} ({', '.join(f'{k}:{len(v)}' for k, v in changed_ids.items())})")
+
             return {
                 "status": "success",
                 "results": results,
                 "sync_time": cabinet.last_sync_at.isoformat(),
-                "is_first_sync": is_first_sync
+                "is_first_sync": is_first_sync,
+                "changed_ids": changed_ids  # ID изменений для event-driven RAG индексации
             }
             
         except Exception as e:
@@ -342,6 +360,7 @@ class WBSyncService:
                     "records_processed": cached_data.get("total", 0),
                     "records_created": 0,
                     "records_updated": 0,
+                    "changed_ids": [],  # Нет изменений при использовании кэша
                     "cached": True
                 }
             
@@ -352,9 +371,10 @@ class WBSyncService:
                 return {"status": "error", "error_message": "No products data received"}
             
             logger.info(f"Fetched {len(products_data)} products from WB API")
-            
+
             created = 0
             updated = 0
+            changed_ids = []  # Список nm_id новых/измененных товаров для RAG
             
             # Вспомогательная функция извлечения первой фото-ссылки
             def extract_first_photo_url(card: dict) -> str:
@@ -402,6 +422,7 @@ class WBSyncService:
                     existing.is_active = product_data.get("isActive", True)
                     existing.updated_at = TimezoneUtils.now_msk()
                     updated += 1
+                    changed_ids.append(nm_id)  # Добавляем nm_id для RAG индексации
                 else:
                     # Создаем новый товар
                     product = WBProduct(
@@ -422,6 +443,7 @@ class WBSyncService:
                     )
                     self.db.add(product)
                     created += 1
+                    changed_ids.append(nm_id)  # Добавляем nm_id для RAG индексации
             
             self.db.commit()
             
@@ -435,7 +457,8 @@ class WBSyncService:
                 "status": "success",
                 "records_processed": len(products_data),
                 "records_created": created,
-                "records_updated": updated
+                "records_updated": updated,
+                "changed_ids": changed_ids  # nm_id новых/измененных товаров для RAG
             }
             
         except Exception as e:
@@ -509,7 +532,8 @@ class WBSyncService:
             created = 0
             updated = 0
             processed_order_ids = set()  # Отслеживаем обработанные order_id в рамках одного запроса
-            
+            changed_ids = []  # Список ID новых/измененных записей для RAG индексации
+
             logger.info(f"Processing {len(orders_data)} orders from WB API")
             
             
@@ -641,9 +665,10 @@ class WBSyncService:
                         # Логистика исключена из системы
                         
                         # logger.info(f"Updated order {order_id}: commission_percent={commission_percent}, commission_amount={commission_amount}")
-                        
+
                         existing.updated_at = TimezoneUtils.now_msk()
                         updated += 1
+                        changed_ids.append(existing.id)  # Добавляем ID для RAG индексации
                     else:
                         # Создаем новый заказ
                         try:
@@ -707,9 +732,10 @@ class WBSyncService:
                                 
                                 # Уведомления о новых заказах обрабатываются через систему уведомлений
                                 # (удален вызов несуществующего метода _send_new_order_notification)
-                                
+
                                 # logger.info(f"Created order {order_id}: commission_percent={commission_percent}, commission_amount={commission_amount}")
                                 created += 1
+                                changed_ids.append(order.id)  # Добавляем ID для RAG индексации
                             except Exception as flush_error:
                                 # Если заказ уже существует (race condition), пропускаем его
                                 if "duplicate key" in str(flush_error).lower() or "unique constraint" in str(flush_error).lower() or "uniqueviolation" in str(flush_error).lower():
@@ -736,7 +762,8 @@ class WBSyncService:
                 "status": "success",
                 "records_processed": len(orders_data),
                 "records_created": created,
-                "records_updated": updated
+                "records_updated": updated,
+                "changed_ids": changed_ids  # ID новых/измененных записей для RAG
             }
             
         except Exception as e:
@@ -766,7 +793,8 @@ class WBSyncService:
             
             created = 0
             updated = 0
-            
+            changed_ids = []  # Список nm_id новых/измененных остатков для RAG
+
             for stock_data in stocks_data:
                 nm_id = stock_data.get("nmId")
                 warehouse_name = stock_data.get("warehouseName")
@@ -853,6 +881,7 @@ class WBSyncService:
                         # Обновляем updated_at ТОЛЬКО при реальных изменениях
                         existing.updated_at = TimezoneUtils.now_msk()
                         updated += 1
+                        changed_ids.append(nm_id)  # Добавляем nm_id для RAG индексации
                     else:
                         # Данные не изменились, пропускаем обновление
                         continue
@@ -884,6 +913,7 @@ class WBSyncService:
                     )
                     self.db.add(stock)
                     created += 1
+                    changed_ids.append(nm_id)  # Добавляем nm_id для RAG индексации
             
             self.db.commit()
             
@@ -894,7 +924,8 @@ class WBSyncService:
                 "status": "success",
                 "records_processed": len(stocks_data),
                 "records_created": created,
-                "records_updated": updated
+                "records_updated": updated,
+                "changed_ids": changed_ids  # nm_id новых/измененных остатков для RAG
             }
             
         except Exception as e:
@@ -912,6 +943,7 @@ class WBSyncService:
         try:
             # Оптимизированная синхронизация отзывов с batch обработкой
             all_reviews_data = []
+            all_changed_ids = []  # Список ID новых/измененных отзывов для RAG
             skip = 0
             take = 5000  # Увеличиваем размер страницы для уменьшения количества запросов
             total_fetched = 0
@@ -940,14 +972,16 @@ class WBSyncService:
                 
                 # Batch обработка: записываем в БД каждые batch_size отзывов
                 if len(all_reviews_data) >= batch_size:
-                    await self._process_reviews_batch(cabinet, all_reviews_data[:batch_size])
+                    batch_changed_ids = await self._process_reviews_batch(cabinet, all_reviews_data[:batch_size])
+                    all_changed_ids.extend(batch_changed_ids)
                     all_reviews_data = all_reviews_data[batch_size:]
             
             logger.info(f"Total reviews fetched from WB API: {total_fetched}")
             
             # Обрабатываем оставшиеся отзывы
             if all_reviews_data:
-                await self._process_reviews_batch(cabinet, all_reviews_data)
+                batch_changed_ids = await self._process_reviews_batch(cabinet, all_reviews_data)
+                all_changed_ids.extend(batch_changed_ids)
             
             # Получаем статистику из batch обработки
             total_created, total_updated = await self._get_reviews_batch_stats()
@@ -956,18 +990,24 @@ class WBSyncService:
                 "status": "success",
                 "records_processed": total_fetched,
                 "records_created": total_created,
-                "records_updated": total_updated
+                "records_updated": total_updated,
+                "changed_ids": all_changed_ids  # ID новых/измененных отзывов для RAG
             }
             
         except Exception as e:
             logger.error(f"Reviews sync failed: {str(e)}")
             return {"status": "error", "error_message": str(e)}
     
-    async def _process_reviews_batch(self, cabinet: WBCabinet, reviews_data: List[Dict]) -> None:
-        """Обработка batch отзывов с оптимизированной записью в БД"""
+    async def _process_reviews_batch(self, cabinet: WBCabinet, reviews_data: List[Dict]) -> List[int]:
+        """Обработка batch отзывов с оптимизированной записью в БД
+
+        Returns:
+            List[int]: ID новых/измененных отзывов для RAG индексации
+        """
         try:
             created = 0
             updated = 0
+            changed_ids = []  # Список ID для RAG индексации
             
             for review_data in reviews_data:
                 review_id = review_data.get("id")
@@ -1003,9 +1043,10 @@ class WBSyncService:
                     existing.was_viewed = review_data.get("wasViewed")
                     existing.supplier_feedback_valuation = review_data.get("supplierFeedbackValuation")
                     existing.supplier_product_valuation = review_data.get("supplierProductValuation")
-                    
+
                     existing.updated_at = TimezoneUtils.now_msk()
                     updated += 1
+                    changed_ids.append(existing.id)  # Добавляем id для RAG индексации
                 else:
                     # Создаем новый отзыв
                     review = WBReview(
@@ -1030,7 +1071,9 @@ class WBSyncService:
                         supplier_product_valuation=review_data.get("supplierProductValuation")
                     )
                     self.db.add(review)
+                    self.db.flush()  # Получаем id для нового отзыва
                     created += 1
+                    changed_ids.append(review.id)  # Добавляем id для RAG индексации
             
             # Коммитим batch
             self.db.commit()
@@ -1040,9 +1083,11 @@ class WBSyncService:
                 self._batch_stats = {'created': 0, 'updated': 0}
             self._batch_stats['created'] += created
             self._batch_stats['updated'] += updated
-            
-            logger.info(f"Processed batch: {created} created, {updated} updated")
-            
+
+            logger.info(f"Processed batch: {created} created, {updated} updated, {len(changed_ids)} changed")
+
+            return changed_ids  # Возвращаем ID для RAG индексации
+
         except Exception as e:
             logger.error(f"Error processing reviews batch: {e}")
             self.db.rollback()
@@ -1537,7 +1582,8 @@ class WBSyncService:
             
             records_processed = 0
             records_created = 0
-            
+            changed_ids = []  # Список ID новых продаж для RAG индексации
+
             for sale_item in sales_data:
                 try:
                     # Определяем тип продажи (выкуп или возврат)
@@ -1590,8 +1636,9 @@ class WBSyncService:
                     
                     if not existing_sale:
                         # Создаем новую запись (как buyout, так и return)
-                        sales_crud.create_sale(self.db, sale_data)
+                        sale = sales_crud.create_sale(self.db, sale_data)
                         records_created += 1
+                        changed_ids.append(sale.id)  # Добавляем id для RAG индексации
                         
                         # Уведомления о продажах обрабатываются через NotificationService.process_sync_events
                         # после завершения всей синхронизации
@@ -1610,7 +1657,8 @@ class WBSyncService:
             return {
                 "status": "success",
                 "records_processed": records_processed,
-                "records_created": records_created
+                "records_created": records_created,
+                "changed_ids": changed_ids  # ID новых продаж для RAG
             }
             
         except Exception as e:
