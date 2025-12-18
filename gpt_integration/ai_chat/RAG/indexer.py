@@ -131,13 +131,15 @@ class RAGIndexer:
                 """, cabinet_id)
                 data['reviews'] = [dict(row) for row in reviews]
                 
-                # 5. Продажи
+                # 5. Продажи (JOIN с wb_products для получения полного названия товара)
                 sales = await conn.fetch("""
-                    SELECT id, nm_id, type, sale_date, amount, product_name
-                    FROM wb_sales
-                    WHERE cabinet_id = $1
-                      AND sale_date >= NOW() - INTERVAL '90 days'
-                    ORDER BY sale_date DESC
+                    SELECT s.id, s.nm_id, s.type, s.sale_date, s.amount,
+                           COALESCE(p.name, s.product_name) as product_name
+                    FROM wb_sales s
+                    LEFT JOIN wb_products p ON s.nm_id = p.nm_id AND s.cabinet_id = p.cabinet_id
+                    WHERE s.cabinet_id = $1
+                      AND s.sale_date >= NOW() - INTERVAL '90 days'
+                    ORDER BY s.sale_date DESC
                 """, cabinet_id)
                 data['sales'] = [dict(row) for row in sales]
                 
@@ -238,15 +240,17 @@ class RAGIndexer:
                     """, cabinet_id, changed_ids['reviews'])
                     data['reviews'] = [dict(row) for row in reviews]
 
-                # 5. Продажи
+                # 5. Продажи (JOIN с wb_products для получения полного названия товара)
                 if changed_ids.get('sales'):
                     sales = await conn.fetch("""
-                        SELECT id, nm_id, type, sale_date, amount, product_name
-                        FROM wb_sales
-                        WHERE cabinet_id = $1
-                          AND id = ANY($2::bigint[])
-                          AND sale_date >= NOW() - INTERVAL '90 days'
-                        ORDER BY sale_date DESC
+                        SELECT s.id, s.nm_id, s.type, s.sale_date, s.amount,
+                               COALESCE(p.name, s.product_name) as product_name
+                        FROM wb_sales s
+                        LEFT JOIN wb_products p ON s.nm_id = p.nm_id AND s.cabinet_id = p.cabinet_id
+                        WHERE s.cabinet_id = $1
+                          AND s.id = ANY($2::bigint[])
+                          AND s.sale_date >= NOW() - INTERVAL '90 days'
+                        ORDER BY s.sale_date DESC
                     """, cabinet_id, changed_ids['sales'])
                     data['sales'] = [dict(row) for row in sales]
 
