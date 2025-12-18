@@ -53,28 +53,36 @@ def sync_cabinet_data(self, cabinet_id: int) -> Dict[str, Any]:
             if rag_enabled:
                 from app.features.rag.tasks import index_rag_for_cabinet
 
-                # Извлекаем дельту изменений из результата sync (если доступно)
-                # ПРИМЕЧАНИЕ: Для полной реализации Event-driven архитектуры,
-                # sync_all_data() должен возвращать changed_ids в формате:
-                # {
-                #     "orders": [12345, 12346],
-                #     "products": [98765],
-                #     "stocks": [11111],
-                #     "reviews": [55555],
-                #     "sales": [77777]
-                # }
-                changed_ids = result.get('changed_ids') if isinstance(result, dict) else None
+                # Проверяем, была ли это первая синхронизация
+                is_first_sync = result.get('is_first_sync', False) if isinstance(result, dict) else False
 
-                if changed_ids:
-                    # Event-driven: передаем дельту для быстрой инкрементальной индексации
-                    total_changes = sum(len(ids) for ids in changed_ids.values() if isinstance(ids, list))
-                    logger.info(f"Triggering Event-driven RAG indexing for cabinet {cabinet_id} with {total_changes} changes")
-                    index_rag_for_cabinet.delay(cabinet_id, changed_ids=changed_ids)
+                if is_first_sync:
+                    # Первая синхронизация: полная индексация
+                    logger.info(f"Triggering FULL rebuild RAG indexing for cabinet {cabinet_id} (first sync)")
+                    index_rag_for_cabinet.delay(cabinet_id, full_rebuild=True)
                 else:
-                    # Fallback: без дельты (обратная совместимость)
-                    # TODO: Обновить sync_all_data() для возврата changed_ids
-                    logger.info(f"Triggering RAG indexing for cabinet {cabinet_id} (no delta available)")
-                    index_rag_for_cabinet.delay(cabinet_id)
+                    # Извлекаем дельту изменений из результата sync (если доступно)
+                    # ПРИМЕЧАНИЕ: Для полной реализации Event-driven архитектуры,
+                    # sync_all_data() должен возвращать changed_ids в формате:
+                    # {
+                    #     "orders": [12345, 12346],
+                    #     "products": [98765],
+                    #     "stocks": [11111],
+                    #     "reviews": [55555],
+                    #     "sales": [77777]
+                    # }
+                    changed_ids = result.get('changed_ids') if isinstance(result, dict) else None
+
+                    if changed_ids:
+                        # Event-driven: передаем дельту для быстрой инкрементальной индексации
+                        total_changes = sum(len(ids) for ids in changed_ids.values() if isinstance(ids, list))
+                        logger.info(f"Triggering Event-driven RAG indexing for cabinet {cabinet_id} with {total_changes} changes")
+                        index_rag_for_cabinet.delay(cabinet_id, changed_ids=changed_ids)
+                    else:
+                        # Fallback: без дельты (обратная совместимость)
+                        # TODO: Обновить sync_all_data() для возврата changed_ids
+                        logger.info(f"Triggering incremental RAG indexing for cabinet {cabinet_id} (no delta available)")
+                        index_rag_for_cabinet.delay(cabinet_id)
             else:
                 logger.info("RAG_DISABLED: skipping indexing after sync")
         except Exception as rag_error:

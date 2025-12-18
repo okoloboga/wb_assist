@@ -53,24 +53,24 @@ class AIChatCRUD:
     def check_and_update_limit(self, telegram_id: int) -> Tuple[bool, int]:
         """
         Check if user can make a request and update counter.
-        
+
         This method:
         1. Gets or creates limit record
         2. Resets counter if it's a new day
         3. Checks if limit is exceeded
         4. Increments counter if allowed
-        
+
         Args:
             telegram_id: Telegram user ID
-            
+
         Returns:
             Tuple[bool, int]: (can_request, remaining_requests)
                 - can_request: True if request allowed
-                - remaining_requests: Number of requests left (0 if exceeded)
+                - remaining_requests: Number of requests left (0 if exceeded, -1 if unlimited)
         """
         if DAILY_LIMIT == 0:
-            logger.debug(f"♾️ Limit disabled (RAG_USAGE=0) for telegram_id={telegram_id}")
-            return (True, None)
+            logger.debug(f"♾️ Limit disabled (DAILY_LIMIT=0) for telegram_id={telegram_id}")
+            return (True, -1)  # -1 indicates unlimited
 
         today = date.today()
         
@@ -116,22 +116,22 @@ class AIChatCRUD:
     def get_limits(self, telegram_id: int) -> dict:
         """
         Get current rate limits for user WITHOUT modifying counter.
-        
+
         Args:
             telegram_id: Telegram user ID
-            
+
         Returns:
             dict: Limit information
                 - requests_today: Current counter
-                - requests_remaining: Remaining requests
-                - daily_limit: Daily limit (30)
+                - requests_remaining: Remaining requests (-1 if unlimited)
+                - daily_limit: Daily limit (0 if unlimited)
                 - reset_date: Last reset date
         """
         if DAILY_LIMIT == 0:
             today = date.today()
             return {
                 "requests_today": 0,
-                "requests_remaining": None,
+                "requests_remaining": -1,  # -1 indicates unlimited
                 "daily_limit": 0,
                 "reset_date": today
             }

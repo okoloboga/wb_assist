@@ -5,6 +5,7 @@ Provides REST API for triggering RAG indexing and checking status.
 """
 
 import logging
+import asyncio
 from typing import Optional, Dict, List
 from fastapi import APIRouter, HTTPException, Depends, Header
 from pydantic import BaseModel
@@ -50,35 +51,23 @@ def _verify_api_key(x_api_key: Optional[str] = Header(None, alias="X-API-KEY")) 
         )
 
 
-@router.post("/index/{cabinet_id}")
-async def trigger_indexing(
+async def _background_indexing(
     cabinet_id: int,
-    full_rebuild: bool = False,
-    request_body: Optional[IndexRequest] = None,
-    _: None = Depends(_verify_api_key)
-):
+    full_rebuild: bool,
+    changed_ids: Optional[Dict[str, List[int]]]
+) -> None:
     """
-    Запуск индексации для кабинета.
+    Фоновая задача индексации.
 
-    Поддерживает два режима:
-    1. Event-driven (changed_ids): Индексация только измененных записей
-    2. Full rebuild: Полная переиндексация с очисткой устаревших данных
+    Выполняется асинхронно, не блокируя основной поток.
+    Все ошибки логируются и записываются в статус.
 
     Args:
-        cabinet_id: ID кабинета Wildberries
-        full_rebuild: Полная переиндексация (weekly cleanup)
-        request_body: Дельта изменений от WB sync (Event-driven)
-
-    Returns:
-        Результат индексации с метриками
+        cabinet_id: ID кабинета
+        full_rebuild: Полная переиндексация
+        changed_ids: Дельта изменений (для incremental)
     """
     indexing_mode = 'full_rebuild' if full_rebuild else 'incremental'
-    changed_ids = request_body.changed_ids if request_body else None
-
-    logger.info(
-        f"Starting {indexing_mode} RAG indexing for cabinet {cabinet_id}"
-        + (f" with {sum(len(ids) for ids in changed_ids.values())} changed IDs" if changed_ids else "")
-    )
 
     try:
         indexer = RAGIndexer()
@@ -90,64 +79,99 @@ async def trigger_indexing(
 
         if result['success']:
             logger.info(
-                f"{indexing_mode.capitalize()} indexing completed for cabinet {cabinet_id}: "
+                f"✅ Background {indexing_mode} indexing completed for cabinet {cabinet_id}: "
                 f"{result['total_chunks']} chunks indexed"
             )
-            return {
-                "status": "success",
-                "message": f"Индексация кабинета {cabinet_id} завершена успешно",
-                "cabinet_id": cabinet_id,
-                "indexing_mode": result['indexing_mode'],
-                "total_chunks": result['total_chunks'],
-                "metrics": result.get('metrics', {})
-            }
         else:
             errors = result.get('errors', [])
+            logger.error(
+                f"❌ Background {indexing_mode} indexing failed for cabinet {cabinet_id}: {errors}"
+            )
 
-            # Проверяем, является ли ошибка конфликтом (индексация уже выполняется)
-            is_concurrent_conflict = any("уже выполняется" in str(err) for err in errors)
-
-            if is_concurrent_conflict:
-                # 409 Conflict - индексация уже выполняется (не триггерит retry в Celery)
-                logger.warning(
-                    f"Concurrent indexing detected for cabinet {cabinet_id}. Skipping."
-                )
-                raise HTTPException(
-                    status_code=409,  # ✅ Conflict - Celery НЕ делает retry для 4xx
-                    detail={
-                        "status": "conflict",
-                        "message": f"Индексация кабинета {cabinet_id} уже выполняется",
-                        "errors": errors
-                    }
-                )
-            else:
-                # 500 Internal Server Error - реальная ошибка (может триггерить retry)
-                logger.error(
-                    f"{indexing_mode.capitalize()} indexing failed for cabinet {cabinet_id}: "
-                    f"{errors}"
-                )
-                raise HTTPException(
-                    status_code=500,
-                    detail={
-                        "status": "error",
-                        "message": f"Ошибка индексации кабинета {cabinet_id}",
-                        "errors": errors
-                    }
-                )
-
-    except HTTPException:
-        # Пробрасываем HTTPException (409, 500) как есть, не оборачивая в новый 500
-        raise
     except Exception as e:
-        # Только для неожиданных ошибок (не HTTPException)
-        logger.error(f"Unexpected error during indexing cabinet {cabinet_id}: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=500,
-            detail={
-                "status": "error",
-                "message": f"Внутренняя ошибка при индексации: {str(e)}"
-            }
+        logger.error(
+            f"❌ Unexpected error in background indexing for cabinet {cabinet_id}: {e}",
+            exc_info=True
         )
+
+
+@router.post("/index/{cabinet_id}", status_code=202)
+async def trigger_indexing(
+    cabinet_id: int,
+    full_rebuild: bool = False,
+    request_body: Optional[IndexRequest] = None,
+    _: None = Depends(_verify_api_key)
+):
+    """
+    Запуск асинхронной индексации для кабинета.
+
+    Индексация выполняется в фоне, endpoint сразу возвращает 202 Accepted.
+    Для проверки статуса используйте GET /v1/rag/status/{cabinet_id}.
+
+    Поддерживает два режима:
+    1. Event-driven (changed_ids): Индексация только измененных записей
+    2. Full rebuild: Полная переиндексация с очисткой устаревших данных
+
+    Args:
+        cabinet_id: ID кабинета Wildberries
+        full_rebuild: Полная переиндексация (weekly cleanup)
+        request_body: Дельта изменений от WB sync (Event-driven)
+
+    Returns:
+        202 Accepted: Индексация запущена
+        409 Conflict: Индексация уже выполняется
+    """
+    indexing_mode = 'full_rebuild' if full_rebuild else 'incremental'
+    changed_ids = request_body.changed_ids if request_body else None
+
+    logger.info(
+        f"🚀 Triggering background {indexing_mode} RAG indexing for cabinet {cabinet_id}"
+        + (f" with {sum(len(ids) for ids in changed_ids.values())} changed IDs" if changed_ids else "")
+    )
+
+    # Проверяем, не выполняется ли уже индексация
+    db = RAGSessionLocal()
+    try:
+        status = db.query(RAGIndexStatus).filter(
+            RAGIndexStatus.cabinet_id == cabinet_id
+        ).first()
+
+        if status and status.indexing_status == 'in_progress':
+            logger.warning(
+                f"⚠️ Concurrent indexing detected for cabinet {cabinet_id}. Skipping."
+            )
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "status": "conflict",
+                    "message": f"Индексация кабинета {cabinet_id} уже выполняется",
+                    "cabinet_id": cabinet_id,
+                    "current_status": "in_progress"
+                }
+            )
+    finally:
+        db.close()
+
+    # Запускаем индексацию в фоне
+    asyncio.create_task(
+        _background_indexing(
+            cabinet_id=cabinet_id,
+            full_rebuild=full_rebuild,
+            changed_ids=changed_ids
+        )
+    )
+
+    logger.info(
+        f"✅ Background {indexing_mode} indexing task created for cabinet {cabinet_id}"
+    )
+
+    return {
+        "status": "accepted",
+        "message": f"Индексация кабинета {cabinet_id} запущена в фоне",
+        "cabinet_id": cabinet_id,
+        "indexing_mode": indexing_mode,
+        "note": "Используйте GET /v1/rag/status/{cabinet_id} для проверки статуса"
+    }
 
 
 @router.get("/status/{cabinet_id}")
@@ -156,13 +180,16 @@ async def get_indexing_status(
     _: None = Depends(_verify_api_key)
 ):
     """
-    Получить статус индексации для кабинета.
+    Получить детальный статус индексации для кабинета.
+
+    Возвращает текущий статус, время последней индексации,
+    количество проиндексированных чанков и другую информацию.
 
     Args:
         cabinet_id: ID кабинета Wildberries
 
     Returns:
-        Статус индексации
+        Детальный статус индексации
     """
     logger.info(f"📊 Getting RAG indexing status for cabinet {cabinet_id}")
 
@@ -180,16 +207,27 @@ async def get_indexing_status(
                 "cabinet_id": cabinet_id,
                 "indexing_status": None,
                 "last_indexed_at": None,
-                "total_chunks": 0
+                "last_incremental_at": None,
+                "total_chunks": 0,
+                "is_indexing": False
             }
+
+        is_indexing = status.indexing_status == 'in_progress'
 
         return {
             "status": "success",
             "cabinet_id": cabinet_id,
             "indexing_status": status.indexing_status,
+            "is_indexing": is_indexing,
             "last_indexed_at": status.last_indexed_at.isoformat() if status.last_indexed_at else None,
+            "last_incremental_at": status.last_incremental_at.isoformat() if status.last_incremental_at else None,
             "total_chunks": status.total_chunks or 0,
-            "updated_at": status.updated_at.isoformat() if status.updated_at else None
+            "created_at": status.created_at.isoformat() if status.created_at else None,
+            "updated_at": status.updated_at.isoformat() if status.updated_at else None,
+            "message": (
+                "Индексация выполняется..." if is_indexing
+                else f"Последняя индексация: {status.indexing_status}"
+            )
         }
 
     except Exception as e:

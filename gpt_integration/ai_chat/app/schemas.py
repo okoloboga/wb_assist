@@ -31,7 +31,7 @@ class ChatSendRequest(BaseModel):
 class ChatSendResponse(BaseModel):
     """Response from AI chat."""
     response: str = Field(..., description="AI generated response")
-    remaining_requests: int = Field(..., description="Remaining requests for today", ge=0)
+    remaining_requests: int = Field(..., description="Remaining requests for today (-1 for unlimited)")
     tokens_used: int = Field(..., description="Tokens consumed in this request", ge=0)
 
 
@@ -73,7 +73,7 @@ class ChatLimitsResponse(BaseModel):
     """Response with user's rate limits."""
     telegram_id: int = Field(..., description="Telegram user ID")
     requests_today: int = Field(..., description="Requests made today", ge=0)
-    requests_remaining: int = Field(..., description="Remaining requests", ge=0)
+    requests_remaining: int = Field(..., description="Remaining requests (-1 for unlimited)")
     daily_limit: int = Field(..., description="Daily request limit")
     reset_date: date = Field(..., description="Date of last reset")
 
