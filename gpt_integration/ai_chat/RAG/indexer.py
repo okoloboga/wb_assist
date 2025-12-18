@@ -598,6 +598,9 @@ class RAGIndexer:
         Обрабатывает дубликаты: обновляет существующие записи.
         Обрабатывает частичную индексацию: сохраняет только успешные чанки.
 
+        ВАЖНО: Использует batch commits (каждые 100 чанков) для предотвращения
+        длинных транзакций, которые блокируют доступ к RAG search.
+
         Args:
             embeddings: Список векторов
             chunks_metadata: Список метаданных для каждого чанка
@@ -618,18 +621,19 @@ class RAGIndexer:
             embeddings = embeddings[:min_length]
             chunks_metadata = chunks_metadata[:min_length]
             logger.info(f"📊 Будет сохранено {min_length} чанков")
-        
+
         saved_count = 0
-        
+        batch_size = 100  # Коммитим каждые 100 чанков для предотвращения длинных транзакций
+
         try:
-            for embedding, chunk_meta in zip(embeddings, chunks_metadata):
+            for idx, (embedding, chunk_meta) in enumerate(zip(embeddings, chunks_metadata)):
                 # Проверить, существует ли запись
                 existing_metadata = db.query(RAGMetadata).filter(
                     RAGMetadata.cabinet_id == cabinet_id,
                     RAGMetadata.source_table == chunk_meta['source_table'],
                     RAGMetadata.source_id == chunk_meta['source_id']
                 ).first()
-                
+
                 if existing_metadata:
                     # Обновить существующую запись
                     existing_metadata.chunk_text = chunk_meta['chunk_text']
@@ -673,18 +677,24 @@ class RAGIndexer:
                         metadata_id=new_metadata.id
                     )
                     db.add(new_embedding)
-                
+
                 saved_count += 1
-            
-            # Коммит всех изменений
+
+                # Batch commit: коммитим каждые batch_size чанков
+                # Это предотвращает длинные транзакции, которые блокируют RAG search
+                if (idx + 1) % batch_size == 0:
+                    db.commit()
+                    logger.debug(f"📦 Batch committed: {saved_count}/{len(embeddings)} chunks saved")
+
+            # Финальный коммит для оставшихся записей
             db.commit()
-            logger.info(f"✅ Saved {saved_count} records to vector DB")
-            
+            logger.info(f"✅ Saved {saved_count} records to vector DB (batch size: {batch_size})")
+
         except Exception as e:
             db.rollback()
             logger.error(f"❌ Error saving to vector DB: {e}")
             raise
-        
+
         return saved_count
     
     async def index_cabinet(
