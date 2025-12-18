@@ -307,6 +307,90 @@ class VectorSearch:
             logger.error(f"❌ Error retrieving metadata: {e}")
             raise
     
+    def _detect_chunk_types_from_query(self, query_text: str) -> Optional[List[str]]:
+        """
+        Определяет типы чанков для поиска на основе ключевых слов в запросе.
+
+        Автоматически фильтрует chunk_types если запрос явно указывает на конкретный тип данных.
+        Это улучшает точность поиска и предотвращает возврат нерелевантных результатов.
+
+        Args:
+            query_text: Текст запроса пользователя
+
+        Returns:
+            Список типов чанков ['sale', 'order', 'product', 'stock', 'review'] или None (все типы)
+        """
+        query_lower = query_text.lower()
+
+        # Ключевые слова для каждого типа чанков
+        keywords_map = {
+            'sale': [
+                'выкуп', 'выкупов', 'выкупы', 'выкупа',
+                'продаж', 'продажи', 'продажа', 'продаже',
+                'возврат', 'возвратов', 'возвраты', 'возврата',
+                'sales', 'sale', 'buyout', 'return',
+                'купи', 'купили', 'купил',  # "кто купил товар"
+                'проданн',  # проданный, проданных, проданные
+            ],
+            'order': [
+                'заказ', 'заказов', 'заказы', 'заказа',
+                'order', 'orders',
+                'отмен',  # отменен, отмененных, отмены
+                'новых заказ', 'последних заказ',
+            ],
+            'product': [
+                'товар', 'товаров', 'товары', 'товара',
+                'product', 'products',
+                'артикул', 'nm_id', 'nmid',
+                'цена', 'цены', 'ценой',
+                'рейтинг', 'рейтинга',
+                'бренд', 'бренда',
+                'категори',  # категория, категории
+            ],
+            'stock': [
+                'остат', 'остатков', 'остатки', 'остатка',
+                'stock', 'stocks',
+                'склад', 'складов', 'складе', 'складах',
+                'warehouse',
+                'количеств', 'количества',
+                'сколько осталось', 'сколько на складе',
+                'где хранится', 'где товар',
+            ],
+            'review': [
+                'отзыв', 'отзывов', 'отзывы', 'отзыва',
+                'review', 'reviews',
+                'комментари', 'комментарий',
+                'оценк', 'оценок', 'оценка',
+                'негатив', 'позитив',
+                'плох', 'хорош',  # плохие отзывы, хорошие отзывы
+            ]
+        }
+
+        # Подсчитываем совпадения для каждого типа
+        matches = {}
+        for chunk_type, keywords in keywords_map.items():
+            match_count = sum(1 for keyword in keywords if keyword in query_lower)
+            if match_count > 0:
+                matches[chunk_type] = match_count
+
+        # Если нет совпадений - вернуть None (искать во всех типах)
+        if not matches:
+            return None
+
+        # Если есть явный winner (на 2+ совпадений больше) - вернуть только его
+        max_matches = max(matches.values())
+        top_types = [t for t, count in matches.items() if count == max_matches]
+
+        # Если несколько типов с одинаковым счетом - вернуть все (неоднозначность)
+        # Но если один явно лидирует - вернуть только его
+        if len(top_types) == 1:
+            logger.info(f"🎯 Detected chunk_type from query: {top_types[0]} (matches: {max_matches})")
+            return top_types
+        else:
+            # Несколько типов с одинаковым счетом - вернуть их все
+            logger.info(f"🎯 Detected multiple chunk_types from query: {top_types} (matches: {max_matches})")
+            return top_types
+
     def _is_temporal_query(self, query_text: str) -> bool:
         """
         Определяет, является ли запрос временным (требует сортировки по дате).
@@ -396,9 +480,20 @@ class VectorSearch:
             # Detect nm_id in the query text to filter more accurately
             nm_id_match = re.search(r"\b\d{6,}\b", query_text)
             nm_id_filter = int(nm_id_match.group()) if nm_id_match else None
-            effective_chunk_types = chunk_types
-            if nm_id_filter and not effective_chunk_types:
+
+            # Auto-detect chunk types from query keywords (if not explicitly provided)
+            if chunk_types is None:
+                detected_types = self._detect_chunk_types_from_query(query_text)
+                effective_chunk_types = detected_types
+            else:
+                # Use explicitly provided chunk_types
+                effective_chunk_types = chunk_types
+                logger.info(f"📌 Using explicitly provided chunk_types: {chunk_types}")
+
+            # Special case: nm_id detected but no chunk_types specified
+            if nm_id_filter and effective_chunk_types is None:
                 effective_chunk_types = ["stock", "product"]
+                logger.info(f"🔍 nm_id detected, limiting to stock/product")
 
             # Detect temporal queries
             is_temporal = self._is_temporal_query(query_text)
