@@ -408,23 +408,32 @@ class RAGIndexer:
         name = product_name or sale.get('product_name') or 'Неизвестный товар'
         sale_type = sale.get('type', 'N/A')
         sale_date = sale.get('sale_date')
-        
+
         if isinstance(sale_date, datetime):
             sale_date = sale_date.strftime('%Y-%m-%d')
         elif sale_date:
             sale_date = str(sale_date)
         else:
             sale_date = 'N/A'
-        
+
         amount = sale.get('amount', 0) or 0
         if not isinstance(amount, (int, float)):
             amount = 0
-        
+
+        # Определяем метку типа продажи (выделяем ВЫКУП vs ВОЗВРАТ)
+        if sale_type == "buyout":
+            type_label = "ВЫКУП"
+        elif sale_type == "return":
+            type_label = "ВОЗВРАТ"
+        else:
+            type_label = sale_type.upper()
+
+        # Новый формат: тип и дата вначале для лучшей семантической дифференциации
         chunk_text = (
-            f"Продажа товара '{name}' (nm_id: {sale.get('nm_id', 'N/A')}) от {sale_date}: "
-            f"тип - {sale_type}, сумма: {amount:.2f}₽"
+            f"{type_label} от {sale_date}: товар '{name}' (nm_id: {sale.get('nm_id', 'N/A')}), "
+            f"сумма: {amount:.2f}₽"
         )
-        
+
         return {
             'chunk_type': 'sale',
             'source_table': 'wb_sales',

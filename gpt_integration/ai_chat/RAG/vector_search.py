@@ -307,6 +307,80 @@ class VectorSearch:
             logger.error(f"❌ Error retrieving metadata: {e}")
             raise
     
+    def _is_temporal_query(self, query_text: str) -> bool:
+        """
+        Определяет, является ли запрос временным (требует сортировки по дате).
+
+        Args:
+            query_text: Текст запроса
+
+        Returns:
+            True если запрос содержит временные индикаторы
+        """
+        temporal_keywords = [
+            'последн',  # последних, последние, последний
+            'recent',
+            'latest',
+            'новых',
+            'новые',
+            'свежих',
+            'свежие',
+            'недавн',  # недавних, недавние
+        ]
+        query_lower = query_text.lower()
+        return any(keyword in query_lower for keyword in temporal_keywords)
+
+    def _extract_date_from_chunk(self, chunk_text: str) -> Optional[str]:
+        """
+        Извлекает дату из текста чанка.
+
+        Ищет даты в формате YYYY-MM-DD (например, "от 2025-12-18").
+
+        Args:
+            chunk_text: Текст чанка
+
+        Returns:
+            Дата в формате YYYY-MM-DD или None
+        """
+        # Ищем даты в формате YYYY-MM-DD
+        date_pattern = r'от (\d{4}-\d{2}-\d{2})'
+        match = re.search(date_pattern, chunk_text)
+        if match:
+            return match.group(1)
+        return None
+
+    def _rerank_by_date(self, metadata_list: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Переранжирует результаты по дате (от новых к старым).
+
+        Комбинирует semantic similarity с temporal ranking:
+        - Сначала сортирует по дате (DESC)
+        - Затем по similarity (DESC) для записей с одинаковой датой
+
+        Args:
+            metadata_list: Список метаданных с similarity scores
+
+        Returns:
+            Переранжированный список
+        """
+        # Извлекаем даты из chunk_text
+        for metadata in metadata_list:
+            chunk_date = self._extract_date_from_chunk(metadata['chunk_text'])
+            metadata['extracted_date'] = chunk_date or '0000-00-00'  # Fallback для записей без даты
+
+        # Сортируем: сначала по дате (DESC), затем по similarity (DESC)
+        metadata_list.sort(
+            key=lambda x: (x['extracted_date'], x['similarity']),
+            reverse=True
+        )
+
+        logger.info(
+            f"🔄 Re-ranked by date: "
+            f"date_range={metadata_list[0]['extracted_date']} to {metadata_list[-1]['extracted_date']}"
+        )
+
+        return metadata_list
+
     async def search_relevant_chunks(
         self,
         query_text: str,
@@ -326,6 +400,9 @@ class VectorSearch:
             if nm_id_filter and not effective_chunk_types:
                 effective_chunk_types = ["stock", "product"]
 
+            # Detect temporal queries
+            is_temporal = self._is_temporal_query(query_text)
+
             logger.info(
                 f"🔍 Starting search for relevant chunks:\n"
                 f"  📝 Query: '{query_text}'\n"
@@ -333,50 +410,59 @@ class VectorSearch:
                 f"  📦 Chunk types: {effective_chunk_types if effective_chunk_types else 'all'}\n"
                 f"  🔢 Max results: {max_chunks}\n"
                 f"  📊 Similarity threshold: {self.similarity_threshold}\n"
-                f"  🔎 Source ID filter: {nm_id_filter if nm_id_filter else 'none'}"
+                f"  🔎 Source ID filter: {nm_id_filter if nm_id_filter else 'none'}\n"
+                f"  ⏰ Temporal query: {is_temporal}"
             )
-            
+
             # 1. Generate query embedding
             query_embedding = await self.generate_query_embedding(query_text)
-            
-            # 2. Vector Search
+
+            # 2. Vector Search (fetch more results for temporal queries to have better date coverage)
+            search_limit = max_chunks * 3 if is_temporal else max_chunks
             search_results = self.search(
                 query_embedding=query_embedding,
                 cabinet_id=cabinet_id,
                 chunk_types=effective_chunk_types,
-                limit=max_chunks,
+                limit=search_limit,
                 source_id=nm_id_filter
             )
-            
+
             if not search_results:
                 logger.warning(
                     f"⚠️ No relevant chunks found for query '{query_text[:100]}...' "
                     f"(cabinet_id={cabinet_id}, threshold={self.similarity_threshold})"
                 )
                 return []
-            
+
             logger.info(
                 f"📋 Found {len(search_results)} results after filtering, "
                 f"fetching metadata..."
             )
-            
+
             # 3. Retrieve metadata
             db = RAGSessionLocal()
             try:
                 embedding_ids = [r['embedding_id'] for r in search_results]
                 logger.debug(f"🔍 Requesting metadata for {len(embedding_ids)} embedding IDs: {embedding_ids}")
-                
+
                 metadata_list = self.get_metadata_for_embeddings(embedding_ids, db)
-                
+
                 # Combine with similarity scores
                 similarity_map = {r['embedding_id']: r['similarity'] for r in search_results}
                 for metadata in metadata_list:
                     embedding_id = metadata['embedding_id']
                     metadata['similarity'] = similarity_map.get(embedding_id, 0.0)
-                
-                # Sort by similarity (descending)
-                metadata_list.sort(key=lambda x: x['similarity'], reverse=True)
-                
+
+                # 4. Sort: by date if temporal, otherwise by similarity
+                if is_temporal:
+                    logger.info("⏰ Temporal query detected - re-ranking by date")
+                    metadata_list = self._rerank_by_date(metadata_list)
+                    # Limit to max_chunks after re-ranking
+                    metadata_list = metadata_list[:max_chunks]
+                else:
+                    # Sort by similarity (descending)
+                    metadata_list.sort(key=lambda x: x['similarity'], reverse=True)
+
                 logger.info(
                     f"✅ Final search results:\n"
                     f"  📊 Total found: {len(metadata_list)} chunks\n"
@@ -384,7 +470,7 @@ class VectorSearch:
                     f"{metadata_list[-1]['similarity']:.4f}\n"
                     f"  📝 Chunk types: {', '.join(set(m['chunk_type'] for m in metadata_list))}"
                 )
-                
+
                 # Detailed log for each result
                 for idx, metadata in enumerate(metadata_list, 1):
                     logger.debug(
@@ -393,12 +479,12 @@ class VectorSearch:
                         f"source={metadata['source_table']}:{metadata['source_id']}, "
                         f"text_preview='{metadata['chunk_text'][:50]}...'"
                     )
-                
+
                 return metadata_list
-                
+
             finally:
                 db.close()
-                
+
         except Exception as e:
             logger.error(f"❌ Error searching relevant chunks: {e}", exc_info=True)
             # Fallback to empty list on error
