@@ -107,9 +107,12 @@ def get_product_urls(brand_url: str, driver: webdriver.Chrome, count: int = 30) 
         logger.info(f"Загрузка страницы бренда: {brand_url}")
         driver.get(brand_url)
         
-        # Ждем появления первой ссылки на товар
+        # Ждем появления первой ссылки на товар.
+        # Структура ссылок на товары на WB могла измениться, поэтому больше
+        # не полагаемся на наличие 'detail.aspx' в href, а ищем любые ссылки
+        # с подстрокой '/catalog/'.
         WebDriverWait(driver, 30).until(
-            EC.presence_of_element_located((By.XPATH, "//a[contains(@href, '/catalog/') and contains(@href, 'detail.aspx')]"))
+            EC.presence_of_element_located((By.XPATH, "//a[contains(@href, '/catalog/')]"))
         )
         
         # Даем странице время на полную загрузку
@@ -123,16 +126,21 @@ def get_product_urls(brand_url: str, driver: webdriver.Chrome, count: int = 30) 
         while len(product_urls) < count and scroll_attempts < max_scroll_attempts:
             # Ищем ссылки на товары
             product_links_selenium = driver.find_elements(
-                By.XPATH, 
-                "//a[contains(@href, '/catalog/') and contains(@href, 'detail.aspx')]"
+                By.XPATH,
+                "//a[contains(@href, '/catalog/')]"
             )
             
             for link_element in product_links_selenium:
                 href = link_element.get_attribute('href')
-                if href and href not in product_urls:
-                    product_urls.append(href)
-                    if len(product_urls) >= count:
-                        break
+                # Берём только ссылки, в которых явно присутствует числовой nm_id
+                # в сегменте /catalog/<nm_id>
+                if href and "/catalog/" in href:
+                    if not re.search(r"/catalog/\d+", href):
+                        continue
+                    if href not in product_urls:
+                        product_urls.append(href)
+                        if len(product_urls) >= count:
+                            break
             
             # Если нашли достаточно ссылок, выходим
             if len(product_urls) >= count:
@@ -174,8 +182,9 @@ def scrape_product_data(product_url: str, driver: webdriver.Chrome) -> Optional[
         Словарь с данными товара или None при ошибке
     """
     try:
-        # Извлекаем nm_id из URL
-        nm_id_match = re.search(r'/catalog/(\d+)/detail.aspx', product_url)
+        # Извлекаем nm_id из URL (WB мог изменить структуру ссылок,
+        # поэтому ищем просто /catalog/<число> независимо от хвоста)
+        nm_id_match = re.search(r'/catalog/(\d+)', product_url)
         nm_id = nm_id_match.group(1) if nm_id_match else None
         
         if not nm_id:

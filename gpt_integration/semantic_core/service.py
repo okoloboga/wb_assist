@@ -36,7 +36,7 @@ SEMANTIC_CORE_PROMPT_TEMPLATE = """
 {descriptions_text}
 """
 
-def generate_semantic_core(descriptions_text: str) -> Dict[str, Any]:
+async def generate_semantic_core(descriptions_text: str) -> Dict[str, Any]:
     """
     Генерирует семантическое ядро на основе предоставленного текста описаний товаров.
     """
@@ -46,7 +46,7 @@ def generate_semantic_core(descriptions_text: str) -> Dict[str, Any]:
     
     logger.info("Generating semantic core with GPT...")
     try:
-        response_text = client.complete_messages([{"role": "user", "content": prompt}])
+        response_text = await client.complete_messages([{"role": "user", "content": prompt}])
         logger.info("Semantic core generated successfully.")
         return {"status": "success", "core": response_text}
     except Exception as e:

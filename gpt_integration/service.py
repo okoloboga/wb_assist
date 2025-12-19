@@ -346,7 +346,7 @@ async def semantic_core_generate(
     logger.info("💎 Generating semantic core...")
     
     try:
-        result = semantic_core_service(descriptions_text=req.descriptions_text)
+        result = await semantic_core_service(descriptions_text=req.descriptions_text)
         
         if result.get("status") == "error":
             error_message = result.get("message", "Unknown error")
