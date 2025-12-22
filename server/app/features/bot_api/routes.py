@@ -17,6 +17,7 @@ from app.features.notifications.schemas import (
     NotificationSettingsUpdate,
     APIResponse
 )
+from app.features.stock_alerts.ignore_crud import UserStockIgnoreCRUD
 from app.features.competitors.models import CompetitorLink  # New import
 from .service import BotAPIService
 from .schemas import (
@@ -25,7 +26,8 @@ from .schemas import (
     OrderDetailResponse, CabinetStatusResponse, CabinetConnectResponse, CabinetConnectRequest,
     DailyTrendsAPIResponse
 )
-from pydantic import BaseModel # New import
+from pydantic import BaseModel, conlist # New import
+from typing import List
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +39,13 @@ class SemanticCoreReadyWebhookRequest(BaseModel):
     core_data: str
     status: str
     error_message: Optional[str] = None
+
+
+class IgnoreItemRequest(BaseModel):
+    nm_id: int
+
+class IgnoreItemsRequest(BaseModel):
+    nm_ids: conlist(int, min_length=1)
 
 
 def get_bot_service(db: Session = Depends(get_db)) -> BotAPIService:
@@ -657,6 +666,63 @@ async def update_notification_settings(
             message=f"Internal server error: {str(e)}",
             error=str(e)
         )
+
+
+# ===== ИГНОР-ЛИСТ ОСТАТКОВ =====
+
+@router.get("/notifications/stock-ignore-list", response_model=APIResponse)
+async def get_ignore_list(
+    telegram_id: int = Query(..., description="Telegram ID пользователя"),
+    db: Session = Depends(get_db)
+):
+    """Get the user's stock alert ignore list."""
+    user_crud = UserCRUD(db)
+    user = user_crud.get_user_by_telegram_id(telegram_id)
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    
+    ignore_list = UserStockIgnoreCRUD.get_by_user(db, user.id)
+    return APIResponse(
+        success=True,
+        message="Ignore list retrieved successfully",
+        data={"nm_ids": ignore_list}
+    )
+
+@router.post("/notifications/stock-ignore-list/add", response_model=APIResponse)
+async def add_to_ignore_list(
+    request: IgnoreItemsRequest,
+    telegram_id: int = Query(..., description="Telegram ID пользователя"),
+    db: Session = Depends(get_db)
+):
+    """Add one or more nm_ids to the user's ignore list."""
+    user_crud = UserCRUD(db)
+    user = user_crud.get_user_by_telegram_id(telegram_id)
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+        
+    added_count = UserStockIgnoreCRUD.add_items(db, user.id, request.nm_ids)
+    return APIResponse(
+        success=True,
+        message=f"{added_count} new items were added to the ignore list."
+    )
+
+@router.post("/notifications/stock-ignore-list/remove", response_model=APIResponse)
+async def remove_from_ignore_list(
+    request: IgnoreItemRequest,
+    telegram_id: int = Query(..., description="Telegram ID пользователя"),
+    db: Session = Depends(get_db)
+):
+    """Remove an nm_id from the user's ignore list."""
+    user_crud = UserCRUD(db)
+    user = user_crud.get_user_by_telegram_id(telegram_id)
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+        
+    removed = UserStockIgnoreCRUD.remove_item(db, user.id, request.nm_id)
+    if not removed:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item not found in ignore list")
+        
+    return APIResponse(success=True, message="Item removed from ignore list successfully.")
 
 
 # ===== ДОПОЛНИТЕЛЬНЫЕ ЭНДПОИНТЫ ДЛЯ ДАШБОРДА =====

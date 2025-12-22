@@ -2,7 +2,7 @@
 Модели базы данных для системы динамических уведомлений по остаткам
 """
 
-from sqlalchemy import Column, Integer, String, Float, Date, DateTime, ForeignKey, BigInteger, func, Index
+from sqlalchemy import Column, Integer, String, Float, Date, DateTime, ForeignKey, BigInteger, func, Index, UniqueConstraint
 from sqlalchemy.orm import relationship
 from app.core.database import Base
 
@@ -60,4 +60,20 @@ class StockAlertHistory(Base):
     
     def __repr__(self):
         return f"<StockAlertHistory(nm_id={self.nm_id}, warehouse={self.warehouse_name}, size={self.size}, days_remaining={self.days_remaining})>"
+
+
+class UserStockIgnoreItem(Base):
+    """Список игнорируемых nm_id для уведомлений по остаткам (пользовательский)"""
+    __tablename__ = "user_stock_ignore_list"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    nm_id = Column(BigInteger, nullable=False, index=True)
+
+    __table_args__ = (
+        UniqueConstraint('user_id', 'nm_id', name='_user_nm_ignore_uc'),
+    )
+
+    def __repr__(self):
+        return f"<UserStockIgnoreItem user_id={self.user_id} nm_id={self.nm_id}>"
 

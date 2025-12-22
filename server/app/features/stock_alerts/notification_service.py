@@ -12,8 +12,10 @@ import httpx
 from app.features.wb_api.models import WBProduct
 from app.features.notifications.models import NotificationSettings
 from app.utils.timezone import TimezoneUtils
+from app.utils.timezone import TimezoneUtils
 from .stock_analyzer import DynamicStockAnalyzer
 from .crud import StockAlertHistoryCRUD
+from .ignore_crud import UserStockIgnoreCRUD
 from .schemas import StockAlertHistoryCreate
 
 logger = logging.getLogger(__name__)
@@ -26,6 +28,7 @@ class StockAlertNotificationService:
         self.db = db
         self.analyzer = DynamicStockAnalyzer(db)
         self.alert_crud = StockAlertHistoryCRUD()
+        self.ignore_crud = UserStockIgnoreCRUD()
         self.cooldown_hours = int(os.getenv("STOCK_ALERT_COOLDOWN_HOURS", "24"))
     
     async def check_and_send_alerts(
@@ -39,9 +42,9 @@ class StockAlertNotificationService:
         
         Логика:
         1. Получить список рисковых позиций через analyzer
-        2. Отфильтровать позиции, по которым недавно было уведомление (cooldown)
-        3. Для каждой позиции:
-           - Получить информацию о товаре
+        2. Отфильтровать позиции из пользовательского игнор-листа
+        3. Отфильтровать позиции, по которым недавно было уведомление (cooldown)
+        4. Для каждой позиции:
            - Сформировать текст уведомления
            - Отправить через webhook
            - Записать в stock_alert_history
@@ -70,46 +73,54 @@ class StockAlertNotificationService:
                     "alerts_skipped": 0,
                     "positions_analyzed": 0
                 }
+
+            # Получаем игнор-лист пользователя
+            ignore_list = self.ignore_crud.get_by_user(self.db, user_id)
+            ignore_set = set(ignore_list)
             
             # Получаем период перспективы из настроек пользователя (по умолчанию 3 дня)
             perspective_days = getattr(user_settings, 'stock_analysis_days', 3)
             
-            # Получаем рисковые позиции с учетом периода перспективы пользователя
-            # Фильтрация по perspective_days уже происходит внутри analyze_stock_positions
+            # Получаем рисковые позиции
             at_risk_positions = await self.analyzer.analyze_stock_positions(cabinet_id, perspective_days=perspective_days)
             
             if not at_risk_positions:
-                logger.info(f"No at-risk positions found for cabinet {cabinet_id} (уже отфильтровано по perspective_days={perspective_days})")
-                return {
-                    "status": "success",
-                    "alerts_sent": 0,
-                    "alerts_skipped": 0,
-                    "positions_analyzed": 0
-                }
+                logger.info(f"No at-risk positions found for cabinet {cabinet_id}")
+                return {"status": "success", "alerts_sent": 0, "alerts_skipped": 0, "positions_analyzed": 0}
+
+            initial_count = len(at_risk_positions)
             
-            logger.info(f"Получено {len(at_risk_positions)} позиций для уведомлений (уже отфильтровано по perspective_days={perspective_days})")
+            # Фильтруем по игнор-листу
+            filtered_positions = [p for p in at_risk_positions if p['nm_id'] not in ignore_set]
+            
+            skipped_due_to_ignore = initial_count - len(filtered_positions)
+            if skipped_due_to_ignore > 0:
+                logger.info(f"Skipped {skipped_due_to_ignore} positions from user's ignore list.")
+
+            if not filtered_positions:
+                logger.info(f"All at-risk positions are in the user's ignore list.")
+                return {"status": "success", "alerts_sent": 0, "alerts_skipped": skipped_due_to_ignore, "positions_analyzed": initial_count}
+            
+            logger.info(f"Found {len(filtered_positions)} positions for notification after ignore list filtering.")
             
             alerts_sent = 0
-            alerts_skipped = 0
+            alerts_skipped_cooldown = 0
             
             # Обрабатываем каждую позицию
-            for position in at_risk_positions:
+            for position in filtered_positions:
                 try:
-                    # Проверяем, нужно ли отправлять уведомление
+                    # Проверяем, нужно ли отправлять уведомление (cooldown)
                     if not await self.should_send_alert(
                         cabinet_id=cabinet_id,
                         nm_id=position["nm_id"],
                         warehouse_name=position["warehouse_name"],
                         size=position["size"]
                     ):
-                        alerts_skipped += 1
-                        logger.info(
-                            f"Skipping alert for nm_id={position['nm_id']} "
-                            f"(cooldown active)"
-                        )
+                        alerts_skipped_cooldown += 1
+                        logger.info(f"Skipping alert for nm_id={position['nm_id']} (cooldown active)")
                         continue
                     
-                    # Формируем уведомление с учетом периода перспективы
+                    # Формируем уведомление
                     notification_data = self._format_notification_data(position, perspective_days=perspective_days)
                     
                     # Отправляем через webhook
@@ -124,36 +135,29 @@ class StockAlertNotificationService:
                     await self.save_alert_history(cabinet_id, user_id, position)
                     
                     alerts_sent += 1
-                    logger.info(
-                        f"Sent alert for nm_id={position['nm_id']}, "
-                        f"warehouse={position['warehouse_name']}, size={position['size']}"
-                    )
+                    logger.info(f"Sent alert for nm_id={position['nm_id']}, warehouse={position['warehouse_name']}, size={position['size']}")
                     
                 except Exception as e:
                     logger.error(f"Error processing alert for position: {e}")
                     continue
             
+            total_skipped = skipped_due_to_ignore + alerts_skipped_cooldown
             logger.info(
                 f"Stock alerts completed: {alerts_sent} sent, "
-                f"{alerts_skipped} skipped, {len(at_risk_positions)} analyzed"
+                f"{total_skipped} skipped ({skipped_due_to_ignore} ignored, {alerts_skipped_cooldown} on cooldown), "
+                f"{initial_count} analyzed"
             )
             
             return {
                 "status": "success",
                 "alerts_sent": alerts_sent,
-                "alerts_skipped": alerts_skipped,
-                "positions_analyzed": len(at_risk_positions)
+                "alerts_skipped": total_skipped,
+                "positions_analyzed": initial_count
             }
             
         except Exception as e:
             logger.error(f"Error in check_and_send_alerts: {e}")
-            return {
-                "status": "error",
-                "error": str(e),
-                "alerts_sent": 0,
-                "alerts_skipped": 0,
-                "positions_analyzed": 0
-            }
+            return {"status": "error", "error": str(e), "alerts_sent": 0, "alerts_skipped": 0, "positions_analyzed": 0}
     
     async def should_send_alert(
         self,

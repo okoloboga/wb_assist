@@ -533,6 +533,10 @@ def create_notification_keyboard(settings: Dict[str, Any]) -> InlineKeyboardMark
             callback_data="toggle_stock_analysis_days"
         )],
         [InlineKeyboardButton(
+            text="🚫 Игнорировать остатки",
+            callback_data="stock_ignore_list_menu"
+        )],
+        [InlineKeyboardButton(
             text="🔙 Назад к меню",
             callback_data="wb_menu"
         )]

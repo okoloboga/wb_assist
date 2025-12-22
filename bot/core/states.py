@@ -71,3 +71,8 @@ class PhotoProcessingStates(StatesGroup):
 
     waiting_for_model = State()
 
+
+class StockIgnoreStates(StatesGroup):
+    """Состояния для управления списком игнорирования остатков"""
+    waiting_for_add = State()
+

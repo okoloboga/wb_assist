@@ -984,7 +984,49 @@ class BotAPIClient:
 
         return await self._make_request("POST", endpoint, params=params, json_data=json_data)
 
+    # ===== МЕТОДЫ ДЛЯ РАБОТЫ СО СПИСКОМ ИГНОРИРОВАНИЯ ОСТАТКОВ =====
 
+    async def get_stock_ignore_list(
+        self,
+        user_id: int
+    ) -> BotAPIResponse:
+        """
+        Получить список nm_id, игнорируемых пользователем для уведомлений по остаткам.
+        """
+        logger.info(f"🚫 Получение списка игнорируемых nm_id для пользователя {user_id}")
+        endpoint = "/notifications/stock-ignore-list"
+        params = {"telegram_id": user_id}
+        return await self._make_request("GET", endpoint, params=params)
+
+    async def add_to_stock_ignore_list(
+        self,
+        user_id: int,
+        nm_ids: List[int]
+    ) -> BotAPIResponse:
+        """
+        Добавить один или несколько nm_id в список игнорирования пользователя.
+        """
+        logger.info(f"➕ Добавление nm_id {nm_ids} в игнор-лист для пользователя {user_id}")
+        endpoint = "/notifications/stock-ignore-list/add"
+        params = {"telegram_id": user_id}
+        json_data = {"nm_ids": nm_ids}
+        return await self._make_request("POST", endpoint, params=params, json_data=json_data)
+
+    async def remove_from_stock_ignore_list(
+        self,
+        user_id: int,
+        nm_id: int
+    ) -> BotAPIResponse:
+        """
+        Удалить nm_id из списка игнорирования пользователя.
+        """
+        logger.info(f"➖ Удаление nm_id {nm_id} из игнор-листа для пользователя {user_id}")
+        endpoint = "/notifications/stock-ignore-list/remove"
+        params = {"telegram_id": user_id}
+        json_data = {"nm_id": nm_id}
+        return await self._make_request("POST", endpoint, params=params, json_data=json_data)
+
+# Создаем глобальный экземпляр клиента
 bot_api_client = BotAPIClient()
 
 
@@ -1021,33 +1063,33 @@ async def register_user_on_server(payload: Dict[str, Any]) -> Tuple[int, Optiona
         logger.error(f"Непредвиденная ошибка при запросе к API: {e}")
         return 500, {"error": "Internal client error"}
 
-    async def get_cabinet_id(self, user_id: int) -> BotAPIResponse:
-        """Получает ID кабинета пользователя"""
-        try:
-            url = f"{SERVER_HOST}/api/v1/wb/cabinets/status"
-            params = {"telegram_id": user_id}
-            
-            logger.info(f"🔍 Получение ID кабинета для пользователя {user_id}")
-            
-            status_code, response_data = await self._make_request_with_retry("GET", url, params=params)
-            
-            if status_code == 200:
-                return BotAPIResponse(
-                    success=True,
-                    data=response_data,
-                    cabinet_id=response_data.get("cabinet_id")
-                )
-            else:
-                return BotAPIResponse(
-                    success=False,
-                    error=response_data.get("detail", "Ошибка получения ID кабинета"),
-                    status_code=status_code
-                )
-                
-        except Exception as e:
-            logger.error(f"Ошибка получения ID кабинета: {e}")
+async def get_cabinet_id(user_id: int) -> BotAPIResponse:
+    """Получает ID кабинета пользователя"""
+    try:
+        url = f"{SERVER_HOST}/api/v1/wb/cabinets/status"
+        params = {"telegram_id": user_id}
+        
+        logger.info(f"🔍 Получение ID кабинета для пользователя {user_id}")
+        
+        status_code, response_data = await BotAPIClient()._make_request_with_retry("GET", url, params=params)
+        
+        if status_code == 200:
+            return BotAPIResponse(
+                success=True,
+                data=response_data,
+                cabinet_id=response_data.get("cabinet_id")
+            )
+        else:
             return BotAPIResponse(
                 success=False,
-                error=f"Ошибка получения ID кабинета: {str(e)}",
-                status_code=500
+                error=response_data.get("detail", "Ошибка получения ID кабинета"),
+                status_code=status_code
             )
+            
+    except Exception as e:
+        logger.error(f"Ошибка получения ID кабинета: {e}")
+        return BotAPIResponse(
+            success=False,
+            error=f"Ошибка получения ID кабинета: {str(e)}",
+            status_code=500
+        )
