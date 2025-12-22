@@ -75,10 +75,7 @@ class GPTClient:
 
         except Exception as e:
             logger.error(f"❌ LLM request failed: {e}", exc_info=True)
-            return (
-                f"ERROR: LLM request failed.\n"
-                f"Error type: {type(e).__name__}\n"
-                f"Error: {e}"
-            )
+            # Re-raise the exception to be handled by the calling service
+            raise
 
 

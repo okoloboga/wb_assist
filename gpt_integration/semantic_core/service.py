@@ -51,4 +51,4 @@ async def generate_semantic_core(descriptions_text: str) -> Dict[str, Any]:
         return {"status": "success", "core": response_text}
     except Exception as e:
         logger.error(f"Error generating semantic core: {e}", exc_info=True)
-        return {"status": "error", "message": str(e)}
+        raise

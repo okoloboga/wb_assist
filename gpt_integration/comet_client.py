@@ -20,7 +20,7 @@ class CometClient:
         self.text_model = os.getenv("COMET_TEXT_MODEL")
         self.embeddings_model = os.getenv("COMET_EMBEDDINGS_MODEL")
         
-        timeout = int(os.getenv("COMET_API_TIMEOUT", "60"))
+        timeout = int(os.getenv("COMET_API_TIMEOUT", "180"))
         
         if not self.api_key:
             raise ValueError("COMET_API_KEY environment variable is not set.")

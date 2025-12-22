@@ -163,6 +163,7 @@ def content_keyboard() -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="✍️ Текст карточек", callback_data="generate_text"),
             InlineKeyboardButton(text="🖼 Изображения", callback_data="generate_images")
         ],
+        [InlineKeyboardButton(text="💎 Семантические ядра", callback_data="view_semantic_cores")],
         [InlineKeyboardButton(text="🔙 Назад", callback_data="wb_menu")]
     ])
 

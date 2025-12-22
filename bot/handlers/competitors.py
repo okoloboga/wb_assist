@@ -546,18 +546,40 @@ async def delete_competitor_do(callback: CallbackQuery):
     await callback.answer("🗑️ Удаление конкурента...", show_alert=False)
 
     # Вызываем API для удаления
-    response = await bot_api_client.delete_competitor(
+    delete_response = await bot_api_client.delete_competitor(
         competitor_id=competitor_id,
         user_id=user_id
     )
 
-    if response.success:
-        # Показываем обновленный список конкурентов
-        await callback.message.answer("✅ Конкурент успешно удален.")
-        # Вызываем хендлер для отображения основного меню конкурентов
-        await show_competitors_menu(callback)
+    if delete_response.success:
+        # Удаляем сообщение с подтверждением
+        await callback.message.delete()
+
+        # Запрашиваем обновленный список
+        response = await bot_api_client.get_competitors(
+            user_id=user_id,
+            offset=0,
+            limit=10
+        )
+        
+        if response.success and response.data:
+            competitors = response.data.get("competitors", [])
+            pagination = response.data.get("pagination", {})
+            keyboard = create_competitors_list_keyboard(
+                competitors_data=competitors,
+                offset=0,
+                limit=10,
+                total=pagination.get("total", 0),
+                has_more=pagination.get("has_more", False)
+            )
+            text = "✅ Конкурент удален.\n\n" + (response.telegram_text or "📊 Конкуренты")
+            await callback.message.answer(text, reply_markup=keyboard)
+        else:
+            # Если не удалось загрузить новый список, просто сообщаем об успехе
+            await callback.message.answer("✅ Конкурент успешно удален.", reply_markup=wb_menu_keyboard())
+
     else:
-        error_message = format_error_message(response.error, response.status_code)
+        error_message = format_error_message(delete_response.error, delete_response.status_code)
         await safe_edit_message(
             callback=callback,
             text=f"❌ Ошибка удаления:\n\n{error_message}",
