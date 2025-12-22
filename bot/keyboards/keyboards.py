@@ -99,7 +99,6 @@ def create_competitor_menu_keyboard(competitor_id: int) -> InlineKeyboardMarkup:
     """Клавиатура для меню конкретного конкурента"""
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🛍️ Товары", callback_data=f"competitor_products_{competitor_id}")],
-        [InlineKeyboardButton(text="💎 Семантическое ядро", callback_data=f"competitor_semantic_core_{competitor_id}")],
         [InlineKeyboardButton(text="🗑️ Удалить конкурента", callback_data=f"delete_competitor_{competitor_id}")],
         [InlineKeyboardButton(text="🔙 Назад к списку", callback_data="competitors")]
     ])
@@ -155,36 +154,7 @@ def create_competitors_list_keyboard(
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-def create_semantic_core_categories_keyboard(competitor_id: int, categories: list) -> InlineKeyboardMarkup:
-    """
-    Создает клавиатуру со списком категорий для выбора семантического ядра.
-    """
-    buttons = []
-    for i, category in enumerate(categories):
-        buttons.append([InlineKeyboardButton(
-            text=category,
-            callback_data=f"select_semantic_core_category:{competitor_id}:{i}"
-        )])
-    
-    buttons.append([InlineKeyboardButton(text="🔙 Назад", callback_data=f"select_competitor_{competitor_id}")])
-    return InlineKeyboardMarkup(inline_keyboard=buttons)
 
-
-def create_existing_semantic_core_keyboard(competitor_id: int, category_index: int) -> InlineKeyboardMarkup:
-    """
-    Создает клавиатуру для существующего семантического ядра с кнопкой перезапуска.
-    """
-    buttons = [
-        [InlineKeyboardButton(
-            text="🔄 Перезапустить анализ",
-            callback_data=f"regenerate_semantic_core:{competitor_id}:{category_index}"
-        )],
-        [InlineKeyboardButton(
-            text="🔙 Назад к категориям",
-            callback_data=f"competitor_semantic_core_{competitor_id}"
-        )]
-    ]
-    return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
 def content_keyboard() -> InlineKeyboardMarkup:
@@ -193,16 +163,16 @@ def content_keyboard() -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="✍️ Текст карточек", callback_data="generate_text"),
             InlineKeyboardButton(text="🖼 Изображения", callback_data="generate_images")
         ],
-        [InlineKeyboardButton(text="📂 Архив", callback_data="content_archive")],
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="main_menu")]
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="wb_menu")]
     ])
 
 
 def ai_assistant_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="💬 AI-чат", callback_data="ai_chat")],
-        [InlineKeyboardButton(text="🎨 Генерация карточки", callback_data="start_card_generation")],
+        [InlineKeyboardButton(text="🎨 Генерация описания", callback_data="start_card_generation")],
         [InlineKeyboardButton(text="📸 Обработка фото", callback_data="start_photo_processing")],
+        [InlineKeyboardButton(text="💎 Семантическое ядро", callback_data="semantic_core_menu")],
         [InlineKeyboardButton(text="🔙 Назад", callback_data="main_menu")]
     ])
 

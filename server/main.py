@@ -37,6 +37,7 @@ from app.features.stock_alerts.models import DailySalesAnalytics, StockAlertHist
 from app.features.export.models import ExportToken, ExportLog
 from app.features.digest.models import ChannelReport, DigestHistory
 from app.features.competitors.models import CompetitorLink, CompetitorProduct, CompetitorSemanticCore
+from app.features.semantic_core.models import CabinetSemanticCore
 
 # Создаем FastAPI приложение с настройками из config
 app = FastAPI(**settings.get_app_config())

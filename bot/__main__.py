@@ -30,6 +30,8 @@ from handlers.gpt import router as gpt_router
 from handlers.ai_chat import router as ai_chat_router
 from handlers.card_generation import router as card_generation_router
 from handlers.photo_processing import router as photo_processing_router
+from handlers.content import router as content_router
+from handlers.semantic_core import router as semantic_core_router
 from keyboards.keyboards import main_keyboard, wb_menu_keyboard
 
 # Настройка логирования
@@ -61,6 +63,8 @@ dp.include_router(registration_router)  # registration_router должен бы�
 dp.include_router(ai_chat_router)  # ai_chat_router должен быть третьим (для обработки FSM)
 dp.include_router(card_generation_router)  # card_generation_router для генерации карточек (тоже FSM)
 dp.include_router(photo_processing_router)  # photo_processing_router для обработки фото (тоже FSM)
+dp.include_router(content_router)  # content_router для раздела контента
+dp.include_router(semantic_core_router)  # семантическое ядро (AI-помощник)
 dp.include_router(wb_cabinet_router)
 dp.include_router(dashboard_router)
 dp.include_router(orders_router)

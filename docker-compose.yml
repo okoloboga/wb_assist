@@ -251,24 +251,24 @@ services:
     networks:
       - app-network
 
-  bot_young:
-    build:
-      context: .
-      dockerfile: bot_young/Dockerfile
-    container_name: wb_assist_bot_young
-    depends_on:
-      - server
-      - redis
-    environment:
-      - BOT_YOUNG_TOKEN=${BOT_YOUNG_TOKEN}
-      - SERVER_HOST=http://server:8000
-      - API_SECRET_KEY=${API_SECRET_KEY}
-      - MAIN_BOT_USERNAME=${MAIN_BOT_USERNAME}
-      - LOG_LEVEL=${LOG_LEVEL:-INFO}
-      - DEFAULT_TIMEZONE=Europe/Moscow
-    networks:
-      - app-network
-    restart: unless-stopped
+#bot_young:
+  #uild:
+   #  context: .
+   #  dockerfile: bot_young/Dockerfile
+  # container_name: wb_assist_bot_young
+  # depends_on:
+   #  - server
+   #  - redis
+  #environment:
+    # - BOT_YOUNG_TOKEN=${BOT_YOUNG_TOKEN}
+   #  - SERVER_HOST=http://server:8000
+  # - API_SECRET_KEY=${API_SECRET_KEY}
+  # - MAIN_BOT_USERNAME=${MAIN_BOT_USERNAME}
+  #  - LOG_LEVEL=${LOG_LEVEL:-INFO}
+  #  - DEFAULT_TIMEZONE=Europe/Moscow
+ #networks:
+  #  - app-network
+  #restart: unless-stopped
 
   # dashboard:
   #   build:

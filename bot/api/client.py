@@ -300,15 +300,33 @@ class BotAPIClient:
                         logger.info(f"   📦 Response data: {response_data}")
                     except aiohttp.ContentTypeError:
                         response_data = {"error": "Invalid response format"}
-                        logger.error(f"   ❌ Ошибка парсинга JSON: Invalid response format")
+                        logger.error("   ❌ Ошибка парсинга JSON: Invalid response format")
 
                     is_dict = isinstance(response_data, dict)
-                    
+
+                    # Единообразное извлечение текста ошибки:
+                    # - если есть поле "error" -> используем его;
+                    # - если есть поле "detail" (FastAPI style) -> маппим его в error;
+                    # - если "detail" — список валидационных ошибок -> берём msg первой.
+                    error_message: Optional[str] = None
+                    if is_dict:
+                        raw_error = response_data.get("error")
+                        if isinstance(raw_error, str) and raw_error:
+                            error_message = raw_error
+                        else:
+                            detail = response_data.get("detail")
+                            if isinstance(detail, str):
+                                error_message = detail
+                            elif isinstance(detail, list) and detail:
+                                first = detail[0]
+                                if isinstance(first, dict) and "msg" in first:
+                                    error_message = first.get("msg")
+
                     result = BotAPIResponse(
                         success=resp.status < 400,
                         data=response_data,
                         telegram_text=response_data.get("telegram_text") if is_dict else None,
-                        error=response_data.get("error") if is_dict else None,
+                        error=error_message,
                         status_code=resp.status,
                         # Единообразная структура - поля в корне ответа
                         competitors=response_data.get("competitors") if is_dict else None,
@@ -927,6 +945,44 @@ class BotAPIClient:
         params = {"telegram_id": user_id}
         
         return await self._make_request("GET", endpoint, params=params)
+
+    async def get_semantic_core_categories(
+        self,
+        user_id: int
+    ) -> BotAPIResponse:
+        """
+        Получить список категорий для агрегированного семантического ядра
+        по всем конкурентам кабинета пользователя.
+        """
+        logger.info(f"🗂️ Получение категорий для агрегированного семантического ядра пользователя {user_id}")
+
+        endpoint = "/semantic-cores/categories"
+        params = {"telegram_id": user_id}
+
+        return await self._make_request("GET", endpoint, params=params)
+
+    async def generate_cabinet_semantic_core(
+        self,
+        category_name: str,
+        user_id: int,
+        force: bool = False
+    ) -> BotAPIResponse:
+        """
+        Запустить генерацию семантического ядра по категории для всех конкурентов кабинета.
+        """
+        logger.info(
+            "💎 Запуск генерации агрегированного семантического ядра для категории '%s' "
+            "пользователя %s, force=%s",
+            category_name,
+            user_id,
+            force,
+        )
+
+        endpoint = "/semantic-cores/generate"
+        params = {"telegram_id": user_id, "force": str(force).lower()}
+        json_data = {"category_name": category_name}
+
+        return await self._make_request("POST", endpoint, params=params, json_data=json_data)
 
 
 bot_api_client = BotAPIClient()

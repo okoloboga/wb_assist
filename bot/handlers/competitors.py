@@ -16,9 +16,7 @@ from aiogram.filters import Command
 from keyboards.keyboards import (
     wb_menu_keyboard,
     main_keyboard,
-    create_competitors_list_keyboard, # New import
-    create_semantic_core_categories_keyboard,
-    create_existing_semantic_core_keyboard
+    create_competitors_list_keyboard,  # New import
 )
 from utils.formatters import format_error_message, safe_edit_message, safe_send_message, handle_telegram_errors, split_telegram_message
 from api.client import bot_api_client
@@ -69,12 +67,6 @@ def create_competitor_products_keyboard(
     
     if nav_buttons:
         buttons.append(nav_buttons)
-
-    # Кнопка "Семантическое ядро"
-    buttons.append([InlineKeyboardButton(
-        text="💎 Семантическое ядро",
-        callback_data=f"competitor_semantic_core_{competitor_id}"
-    )])
 
     # Кнопка "Удалить конкурента"
     buttons.append([InlineKeyboardButton(
@@ -485,48 +477,6 @@ async def show_competitor_products_page(callback: CallbackQuery):
     await callback.answer()
 
 
-@router.callback_query(F.data.startswith("competitor_semantic_core_"))
-@handle_telegram_errors
-async def show_semantic_core_categories(callback: CallbackQuery):
-    """Показать категории для выбора семантического ядра"""
-    try:
-        competitor_id = int(callback.data.split("_")[-1])
-    except (ValueError, IndexError):
-        await callback.answer("❌ Ошибка: неверный ID конкурента", show_alert=True)
-        return
-    
-    user_id = callback.from_user.id
-    
-    response = await bot_api_client.get_competitor_categories(
-        competitor_id=competitor_id,
-        user_id=user_id
-    )
-    
-    if response.success and response.data and response.data.get("categories"):
-        categories = response.data.get("categories")
-        
-        keyboard = create_semantic_core_categories_keyboard(competitor_id, categories)
-        
-        text = "🗂️ Выберите категорию для анализа семантического ядра:"
-        
-        await safe_edit_message(
-            callback=callback,
-            text=text,
-            reply_markup=keyboard,
-            user_id=user_id
-        )
-    else:
-        error_message = format_error_message(response.error, response.status_code)
-        await safe_edit_message(
-            callback=callback,
-            text=f"❌ Ошибка загрузки категорий:\n\n{error_message}",
-            reply_markup=create_competitors_list_keyboard([], 0, 10, 0, False), # Пустая клавиатура
-            user_id=user_id
-        )
-    
-    await callback.answer()
-
-
 @router.callback_query(F.data.startswith("delete_competitor_confirm_"))
 @handle_telegram_errors
 async def delete_competitor_confirm(callback: CallbackQuery):
@@ -555,171 +505,28 @@ async def delete_competitor_confirm(callback: CallbackQuery):
     await callback.answer()
 
 
-@router.callback_query(F.data.startswith("select_semantic_core_category:"))
+@router.callback_query(F.data.startswith("competitor_semantic_core_"))
 @handle_telegram_errors
-async def start_semantic_core_generation(callback: CallbackQuery):
-    """Запустить генерацию семантического ядра для выбранной категории"""
-    try:
-        parts = callback.data.split(":")
-        competitor_id = int(parts[1])
-        category_index = int(parts[2])
-    except (ValueError, IndexError):
-        await callback.answer("❌ Ошибка: неверные параметры категории", show_alert=True)
-        return
-    
+async def deprecated_competitor_semantic_core(callback: CallbackQuery):
+    """
+    Обработчик устаревшей кнопки семантического ядра в меню конкурентов.
+
+    Показывает пользователю сообщение, что функционал перенесён в раздел AI‑ассистента.
+    """
     user_id = callback.from_user.id
-    
-    # Получаем категории еще раз, чтобы получить имя по индексу
-    response = await bot_api_client.get_competitor_categories(
-        competitor_id=competitor_id,
-        user_id=user_id
+
+    text = (
+        "💎 Семантическое ядро теперь доступно в разделе <b>🤖 AI‑помощник</b>.\n\n"
+        "Перейдите в главное меню → AI‑помощник → 💎 Семантическое ядро,"
+        " чтобы сгенерировать ядро по всем конкурентам сразу."
     )
-    
-    if not response.success or not response.data or not response.data.get("categories"):
-        await safe_edit_message(
-            callback=callback,
-            text="❌ Ошибка: не удалось получить категории для запуска анализа.",
-            reply_markup=create_competitors_list_keyboard([], 0, 10, 0, False), # Пустая клавиатура
-            user_id=user_id
-        )
-        await callback.answer()
-        return
-        
-    categories = response.data.get("categories")
-    
-    try:
-        category_name = categories[category_index]
-    except IndexError:
-        await callback.answer("❌ Ошибка: неверный индекс категории", show_alert=True)
-        return
 
-    await callback.answer("💎 Запускаю анализ семантического ядра...", show_alert=False)
-    
-    response = await bot_api_client.generate_semantic_core(
-        competitor_id=competitor_id,
-        category_name=category_name,
-        user_id=user_id
-    )
-    
-    if response.success and response.data.get("status") == "accepted":
-        text = (
-            f"✅ Генерация семантического ядра для категории '{category_name}' запущена.\n\n"
-            "Это может занять несколько минут. Я пришлю результат, как только он будет готов."
-        )
-        await safe_edit_message(
-            callback=callback,
-            text=text,
-            reply_markup=create_competitors_list_keyboard([], 0, 10, 0, False), # Пустая клавиатура
-            user_id=user_id
-        )
-    elif response.success and response.data.get("status") == "already_exists":
-        semantic_core = response.data.get("semantic_core")
-        text = (
-            f"💎 **Семантическое ядро для категории '{semantic_core.get('category_name')}'**\n\n"
-            f"Конкурент: {semantic_core.get('competitor_name')}\n"
-            f"Дата создания: {semantic_core.get('created_at')}\n\n"
-            f"{semantic_core.get('core_data')}"
-        )
-        keyboard = create_existing_semantic_core_keyboard(competitor_id, category_index)
-        
-        # Разбиваем сообщение на части, если оно слишком длинное
-        message_parts = split_telegram_message(text)
-        
-        # Удаляем исходное сообщение с кнопками
-        await callback.message.delete()
-
-        for i, part in enumerate(message_parts):
-            if i == len(message_parts) - 1:
-                # Последняя часть с клавиатурой
-                await callback.message.answer(
-                    text=part,
-                    reply_markup=keyboard,
-                    parse_mode="Markdown"
-                )
-            else:
-                await callback.message.answer(
-                    text=part,
-                    parse_mode="Markdown"
-                )
-    else:
-        error_message = format_error_message(response.error, response.status_code)
-        await safe_edit_message(
-            callback=callback,
-            text=f"❌ Ошибка запуска генерации семантического ядра:\n\n{error_message}",
-            reply_markup=create_competitors_list_keyboard([], 0, 10, 0, False), # Пустая клавиатура
-            user_id=user_id
-        )
-    
-    await callback.answer()
-
-
-@router.callback_query(F.data.startswith("regenerate_semantic_core:"))
-@handle_telegram_errors
-async def regenerate_semantic_core(callback: CallbackQuery):
-    """Перезапустить генерацию семантического ядра для выбранной категории"""
-    try:
-        parts = callback.data.split(":")
-        competitor_id = int(parts[1])
-        category_index = int(parts[2])
-    except (ValueError, IndexError):
-        await callback.answer("❌ Ошибка: неверные параметры для перезапуска", show_alert=True)
-        return
-    
-    user_id = callback.from_user.id
-    
-    # Получаем категории еще раз, чтобы получить имя по индексу
-    response = await bot_api_client.get_competitor_categories(
-        competitor_id=competitor_id,
-        user_id=user_id
-    )
-    
-    if not response.success or not response.data or not response.data.get("categories"):
-        await safe_edit_message(
-            callback=callback,
-            text="❌ Ошибка: не удалось получить категории для перезапуска анализа.",
-            reply_markup=create_competitors_list_keyboard([], 0, 10, 0, False), # Пустая клавиатура
-            user_id=user_id
-        )
-        await callback.answer()
-        return
-        
-    categories = response.data.get("categories")
-    
-    try:
-        category_name = categories[category_index]
-    except IndexError:
-        await callback.answer("❌ Ошибка: неверный индекс категории", show_alert=True)
-        return
-
-    await callback.answer("💎 Перезапускаю анализ семантического ядра...", show_alert=False)
-    
-    response = await bot_api_client.generate_semantic_core(
-        competitor_id=competitor_id,
-        category_name=category_name,
+    await safe_edit_message(
+        callback=callback,
+        text=text,
+        reply_markup=wb_menu_keyboard(),
         user_id=user_id,
-        force=True  # Принудительный перезапуск
     )
-    
-    if response.success and response.data.get("status") == "accepted":
-        text = (
-            f"✅ Перезапуск генерации семантического ядра для категории '{category_name}' выполнен.\n\n"
-            "Это может занять несколько минут. Я пришлю результат, как только он будет готов."
-        )
-        await safe_edit_message(
-            callback=callback,
-            text=text,
-            reply_markup=create_competitors_list_keyboard([], 0, 10, 0, False), # Пустая клавиатура
-            user_id=user_id
-        )
-    else:
-        error_message = format_error_message(response.error, response.status_code)
-        await safe_edit_message(
-            callback=callback,
-            text=f"❌ Ошибка перезапуска генерации семантического ядра:\n\n{error_message}",
-            reply_markup=create_competitors_list_keyboard([], 0, 10, 0, False), # Пустая клавиатура
-            user_id=user_id
-        )
-    
     await callback.answer()
 
 

@@ -58,6 +58,7 @@ celery_app = Celery(
         "app.features.digest.tasks",
         "app.features.competitors.tasks",
         "app.features.rag.tasks",
+        "app.features.semantic_core.tasks",
     ]
 )
 
@@ -94,9 +95,16 @@ celery_app.conf.update(
         "app.features.digest.tasks.check_digest_schedule": {"queue": "digest_queue"},
         "app.features.digest.tasks.send_digest_to_channel": {"queue": "digest_queue"},
         
-        # Скрапинг конкурентов - отдельная очередь
-        "app.features.competitors.tasks.scrape_competitor_task": {"queue": "scraping_queue"},
-        "app.features.competitors.tasks.update_all_competitors_task": {"queue": "scraping_queue"},
+        # Скрапинг конкурентов и связанные задачи - отдельная очередь
+        "app.features.competitors.tasks.scrape_competitor_task": {
+            "queue": "scraping_queue"
+        },
+        "app.features.competitors.tasks.update_all_competitors_task": {
+            "queue": "scraping_queue"
+        },
+        "app.features.semantic_core.tasks.generate_cabinet_semantic_core_task": {
+            "queue": "scraping_queue"
+        },
 
         # RAG индексация - отдельная очередь
         "app.features.rag.tasks.index_rag_for_cabinet": {"queue": "rag_queue"},
