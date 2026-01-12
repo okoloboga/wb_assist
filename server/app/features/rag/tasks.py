@@ -104,6 +104,60 @@ def index_rag_for_cabinet(
             + (f" with {sum(len(ids) for ids in changed_ids.values())} changed IDs" if changed_ids else "")
         )
 
+        # Проверка временного окна для инкрементальной индексации
+        if not full_rebuild:
+            from datetime import timezone, timedelta
+
+            cooldown_hours = int(os.getenv("RAG_INDEXING_INTERVAL_HOURS", "6"))
+            
+            try:
+                # Запрашиваем статус последней индексации
+                gpt_service_url = _get_gpt_service_url()
+                api_key = _get_api_key()
+                status_endpoint = f"{gpt_service_url}/v1/rag/status/{cabinet_id}"
+                headers = {"X-API-KEY": api_key}
+
+                status_response = requests.get(status_endpoint, headers=headers, timeout=30)
+                
+                if status_response.status_code == 200:
+                    status_data = status_response.json()
+                    
+                    last_full_str = status_data.get('last_indexed_at')
+                    last_inc_str = status_data.get('last_incremental_at')
+                    
+                    last_full_dt = datetime.fromisoformat(last_full_str) if last_full_str else None
+                    last_inc_dt = datetime.fromisoformat(last_inc_str) if last_inc_str else None
+
+                    last_sync_time = None
+                    if last_full_dt and last_inc_dt:
+                        last_sync_time = max(last_full_dt, last_inc_dt)
+                    elif last_full_dt:
+                        last_sync_time = last_full_dt
+                    elif last_inc_dt:
+                        last_sync_time = last_inc_dt
+                        
+                    if last_sync_time:
+                        now_utc = datetime.now(timezone.utc)
+                        cooldown = timedelta(hours=cooldown_hours)
+                        time_since_last_sync = now_utc - last_sync_time
+                        
+                        if time_since_last_sync < cooldown:
+                            logger.info(
+                                f"⏭️ Skipping incremental RAG indexing for cabinet {cabinet_id} due to cooldown. "
+                                f"Last sync: {time_since_last_sync.total_seconds():.0f}s ago. Cooldown: {cooldown.total_seconds():.0f}s."
+                            )
+                            return {
+                                "status": "skipped",
+                                "cabinet_id": cabinet_id,
+                                "message": "Индексация пропущена из-за периода ожидания.",
+                                "reason": "cooldown"
+                            }
+                else:
+                    logger.warning(f"Could not retrieve RAG status for cabinet {cabinet_id} (status: {status_response.status_code}). Proceeding with indexing.")
+            
+            except Exception as status_check_error:
+                logger.error(f"Error checking RAG status for cabinet {cabinet_id}: {status_check_error}. Proceeding with indexing.")
+
         # Получаем сессию БД
         db = next(get_db())
 
