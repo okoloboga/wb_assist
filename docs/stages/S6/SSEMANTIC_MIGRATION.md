@@ -384,3 +384,5 @@ async def get_semantic_core(self, core_id: int, user_id: int) -> BotAPIResponse:
 
 
 
+
+

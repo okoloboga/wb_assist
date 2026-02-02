@@ -80,5 +80,3 @@ class GPTClient:
                 f"Error type: {type(e).__name__}\n"
                 f"Error: {e}"
             )
-
-
