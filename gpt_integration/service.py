@@ -107,6 +107,15 @@ class SemanticCoreRequest(BaseModel): # New Pydantic model
     descriptions_text: str
 
 
+class TryOnRequest(BaseModel):
+    user_photo_url: str
+    product_photo_urls: List[str]
+    model: str = "gemini-2.5-flash-image"
+    mode: str = "single_item"
+    item_name: str = "одежда"
+    category: str = "одежда"
+
+
 
 # ============================================================================
 # Health Check
@@ -365,6 +374,36 @@ async def semantic_core_generate(
             status_code=500,
             detail=f"Internal server error: {str(e)}"
         )
+
+
+# ============================================================================
+# Fitter / Try-On Endpoints
+# ============================================================================
+
+@app.post("/v1/fitter/try-on")
+async def fitter_try_on(
+    req: TryOnRequest,
+    x_api_key: Optional[str] = Header(None)
+) -> Dict[str, Any]:
+    """Виртуальная примерка одежды."""
+    expected_key = os.getenv("API_SECRET_KEY", "")
+    if not x_api_key or x_api_key != expected_key:
+        raise HTTPException(status_code=403, detail="Invalid or missing API key")
+
+    from gpt_integration.fitter import generate_tryon
+
+    result = await generate_tryon(
+        user_photo_source=req.user_photo_url,
+        product_photo_sources=req.product_photo_urls,
+        api_key=os.getenv("COMET_API_KEY"),
+        base_url=os.getenv("IMAGE_GEN_BASE_URL", "https://api.cometapi.com"),
+        model=req.model,
+        tryon_mode=req.mode,
+        item_name=req.item_name,
+        category=req.category
+    )
+
+    return result
 
 # ============================================================================
 # Main Entry Point
