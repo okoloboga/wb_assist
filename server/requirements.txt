@@ -46,10 +46,10 @@ asyncpg>=0.29.0
 structlog>=23.0.0
 
 # Зависимости для Google Sheets интеграции
-google-auth>=2.23.0
-google-auth-oauthlib>=1.0.0
-google-auth-httplib2>=0.1.0
+gspread>=5.7.0
+google-auth>=2.16.0
 google-api-python-client>=2.100.0
+cachetools>=5.2.0
 
 # Графики для аналитики
 matplotlib>=3.8.0

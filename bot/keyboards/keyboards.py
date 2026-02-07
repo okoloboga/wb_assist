@@ -2,6 +2,16 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from typing import Dict, Any, Optional
 from utils.formatters import format_currency
 
+# Импорты клавиатур примерки
+from .fitter_keyboards import (
+    get_fitter_main_menu,
+    get_fitter_mode_selection,
+    get_fitter_category_selection,
+    get_fitter_back_to_main,
+    get_fitter_mode_keyboard,
+    get_history_navigation_keyboard
+)
+
 
 def main_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
@@ -25,8 +35,12 @@ def wb_menu_keyboard() -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="🔔 Уведомления", callback_data="notifications")
         ],
         [
-            InlineKeyboardButton(text="🎨 Контент", callback_data="content"),
-            InlineKeyboardButton(text="🤖 AI-помощник", callback_data="ai_assistant")
+            InlineKeyboardButton(text="🛍️ Каталог", callback_data="catalog_main"),
+            InlineKeyboardButton(text="🎨 Контент", callback_data="content")
+        ],
+        [
+            InlineKeyboardButton(text="🤖 AI-помощник", callback_data="ai_assistant"),
+            InlineKeyboardButton(text="👔 Примерка", callback_data="fitter_main")
         ],
         [
             InlineKeyboardButton(text="📊 Экспорт в Google Sheets", callback_data="export_sheets")
@@ -203,6 +217,7 @@ def ai_assistant_keyboard() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="💬 AI-чат", callback_data="ai_chat")],
         [InlineKeyboardButton(text="🎨 Генерация карточки", callback_data="start_card_generation")],
         [InlineKeyboardButton(text="📸 Обработка фото", callback_data="start_photo_processing")],
+        [InlineKeyboardButton(text="👗 Переодевалка", callback_data="ai_fitter")],
         [InlineKeyboardButton(text="🔙 Назад", callback_data="main_menu")]
     ])
 

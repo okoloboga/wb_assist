@@ -470,3 +470,27 @@ async def show_ai_limits(telegram_id: int, target_message: Message):
         else:
             await safe_send_message(target_message, error_text, user_id=telegram_id)
 
+
+# ============================================================================
+# Callback ai_fitter - переход к функционалу примерки
+# ============================================================================
+
+@router.callback_query(F.data == "ai_fitter")
+@handle_telegram_errors
+async def ai_fitter_transition(callback: CallbackQuery):
+    """Переход к функционалу примерки из AI-помощника."""
+    from keyboards.fitter_keyboards import get_fitter_main_menu
+    
+    # Проверяем есть ли история примерок (заглушка, в реальности нужно проверить через API)
+    has_tryon_history = False  # TODO: проверить через bot_api_client.has_tryon_history(callback.from_user.id)
+    
+    await callback.message.edit_text(
+        "👗 <b>Виртуальная примерка одежды</b>\n\n"
+        "Загрузите своё фото и фото одежды, которую хотите примерить. "
+        "Я создам реалистичное изображение того, как вы будете выглядеть в этой одежде.\n\n"
+        "Выберите действие:",
+        reply_markup=get_fitter_main_menu(has_tryon_history=has_tryon_history),
+        parse_mode="HTML"
+    )
+    await callback.answer()
+

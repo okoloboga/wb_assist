@@ -27,6 +27,7 @@ from app.features.wb_api.api.cabinet_validation import router as cabinet_validat
 from app.features.export import router as export_router, template_router
 from app.features.digest.router import router as digest_router
 from app.features.competitors.routes import router as competitors_router
+from app.features.catalog.routes import router as catalog_router
 
 # Импортируем модели для создания таблиц
 from app.features.user.models import User
@@ -65,6 +66,7 @@ app.include_router(export_router, tags=["Export"])
 app.include_router(template_router, tags=["Export Templates"])
 app.include_router(digest_router, prefix="/api/v1", tags=["Digest"])
 app.include_router(competitors_router, prefix="/api/v1/bot", tags=["Competitors"])
+app.include_router(catalog_router, prefix="/api/v1", tags=["Catalog"])
 
 if __name__ == "__main__":
     import uvicorn
