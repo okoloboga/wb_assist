@@ -18,16 +18,7 @@ import base64
 from keyboards.keyboards import main_keyboard
 from states.fitter_states import FitterStates
 from api.client import bot_api_client
-# from gpt_integration.fitter import validate_photo, generate_tryon
-
-# Временные заглушки для функций fitter (будут вызываться через API)
-async def validate_photo(file_url: str):
-    """Заглушка для валидации фото"""
-    return {"valid": True, "description": "Фото принято"}
-
-async def generate_tryon(*args, **kwargs):
-    """Заглушка для генерации примерки"""
-    return {"success": False, "error": {"message": "Функция примерки пока не реализована"}}
+from gpt_integration.fitter import validate_photo, generate_tryon
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -382,6 +373,249 @@ async def show_tryon_history(callback: CallbackQuery):
 @router.callback_query(F.data == "noop")
 async def noop_callback(callback: CallbackQuery):
     """Пустой callback для счетчика пагинации"""
+    await callback.answer()
+
+
+# === Выбор режима примерки ===
+
+@router.callback_query(F.data == "fitter:mode:single_item")
+async def choose_single_item_mode(callback: CallbackQuery, state: FSMContext):
+    """Выбор режима: только этот товар"""
+    from keyboards.fitter_keyboards import get_model_selection_keyboard
+
+    await state.update_data(tryon_mode='single_item')
+
+    text = """⚡️ <b>Выбери модель генерации</b>
+
+⚡️ <b>Быстрая</b> (~1-2 мин)
+Быстрый результат, хорошее качество
+
+👑 <b>Качественная</b> (~3-4 мин)
+Высокое качество, более реалистичный результат
+
+🚀 <b>GPT Image 1.5</b> (~3-4 мин)
+Новейшая модель, максимальная детализация"""
+
+    await callback.message.edit_text(
+        text,
+        reply_markup=get_model_selection_keyboard(),
+        parse_mode="HTML"
+    )
+    await state.set_state(FitterStates.choosing_model)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "fitter:mode:full_outfit")
+async def choose_full_outfit_mode(callback: CallbackQuery, state: FSMContext):
+    """Выбор режима: весь образ"""
+    from keyboards.fitter_keyboards import get_model_selection_keyboard
+
+    await state.update_data(tryon_mode='full_outfit')
+
+    text = """⚡️ <b>Выбери модель генерации</b>
+
+⚡️ <b>Быстрая</b> (~1-2 мин)
+Быстрый результат, хорошее качество
+
+👑 <b>Качественная</b> (~3-4 мин)
+Высокое качество, более реалистичный результат
+
+🚀 <b>GPT Image 1.5</b> (~3-4 мин)
+Новейшая модель, максимальная детализация"""
+
+    await callback.message.edit_text(
+        text,
+        reply_markup=get_model_selection_keyboard(),
+        parse_mode="HTML"
+    )
+    await state.set_state(FitterStates.choosing_model)
+    await callback.answer()
+
+
+# === Выбор модели генерации ===
+
+@router.callback_query(F.data.startswith("fitter:model:"))
+async def choose_model(callback: CallbackQuery, state: FSMContext):
+    """Выбор модели генерации"""
+    model = callback.data.split(":")[-1]
+    await state.update_data(model=model)
+
+    model_names = {
+        'fast': 'Быстрая',
+        'pro': 'Качественная',
+        'gpt-image-1.5': 'GPT Image 1.5'
+    }
+
+    text = f"""📸 <b>Загрузи свое фото</b>
+
+Модель: {model_names.get(model, model)}
+
+<b>Требования к фото:</b>
+• Человек должен быть виден в полный рост или по пояс
+• Хорошее освещение
+• Четкое изображение
+
+Отправь фото в чат 👇"""
+
+    await callback.message.edit_text(text, parse_mode="HTML")
+    await state.set_state(FitterStates.waiting_for_user_photo)
+    await callback.answer()
+
+
+# === Обработка фото пользователя ===
+
+@router.message(FitterStates.waiting_for_user_photo, F.photo)
+async def process_user_photo_for_tryon(message: Message, state: FSMContext):
+    """Обработка фото пользователя для примерки"""
+    from keyboards.fitter_keyboards import get_fitter_result_keyboard
+
+    status_msg = await message.answer("⏳ Обрабатываем фото...")
+
+    try:
+        # Получаем данные из state
+        data = await state.get_data()
+        product = data.get('product')
+        model = data.get('model', 'fast')
+        tryon_mode = data.get('tryon_mode', 'single_item')
+        category_id = data.get('category_id', '')
+        index = data.get('index', 0)
+        source = data.get('source', 'catalog')
+
+        if not product:
+            await status_msg.edit_text("❌ Ошибка: товар не найден")
+            return
+
+        # Получаем URL фото пользователя
+        photo = message.photo[-1]
+        file = await message.bot.get_file(photo.file_id)
+        user_photo_url = f"https://api.telegram.org/file/bot{message.bot.token}/{file.file_path}"
+
+        # Валидация фото
+        await status_msg.edit_text("🔍 Проверяем фото...")
+        validation_result = await validate_photo(user_photo_url)
+
+        if not validation_result.get("valid"):
+            reason = validation_result.get("description", "Фото не подходит для примерки")
+            await status_msg.edit_text(
+                f"❌ {reason}\n\nПопробуй загрузить другое фото",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="🔄 Загрузить другое", callback_data=f"fitter:retry:{source}:{product['product_id']}:{category_id}:{index}")],
+                    [InlineKeyboardButton(text="◀️ К товару", callback_data=f"back:product:{product['product_id']}:{category_id}:{index}")]
+                ])
+            )
+            return
+
+        # Получаем фото товара
+        garment_url = product.get('photo_1_url') or product.get('collage_url')
+        if not garment_url:
+            await status_msg.edit_text("❌ У товара нет фото для примерки")
+            return
+
+        # Генерация примерки
+        await status_msg.edit_text(f"✨ Создаем примерку... Это займет ~{model == 'fast' and '1-2' or '3-4'} минуты")
+
+        result = await generate_tryon(
+            user_photo_url=user_photo_url,
+            garment_url=garment_url,
+            mode=tryon_mode,
+            model=model
+        )
+
+        if result.get('success') and result.get('image_url'):
+            # Отправляем результат
+            await message.answer_photo(
+                photo=result['image_url'],
+                caption=f"✨ <b>Примерка готова!</b>\n\n{product.get('name', 'Товар')}",
+                reply_markup=get_fitter_result_keyboard(
+                    fitter_id=result.get('fitter_id', 0),
+                    product_id=product['product_id'],
+                    wb_link=product.get('wb_link', ''),
+                    ozon_url=product.get('ozon_url'),
+                    source=source,
+                    category_id=category_id,
+                    index=index
+                ),
+                parse_mode="HTML"
+            )
+            await status_msg.delete()
+        else:
+            error_msg = result.get('error', {}).get('message', 'Не удалось создать примерку')
+            await status_msg.edit_text(
+                f"❌ {error_msg}\n\nПопробуй еще раз или выбери другое фото",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="🔄 Попробовать снова", callback_data=f"fitter:retry:{source}:{product['product_id']}:{category_id}:{index}")],
+                    [InlineKeyboardButton(text="◀️ К товару", callback_data=f"back:product:{product['product_id']}:{category_id}:{index}")]
+                ])
+            )
+
+    except Exception as e:
+        logger.error(f"Error processing tryon: {e}", exc_info=True)
+        await status_msg.edit_text(
+            "❌ Произошла ошибка при создании примерки\n\nПопробуй еще раз",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="◀️ Отмена", callback_data="fitter:cancel")]
+            ])
+        )
+    finally:
+        await state.clear()
+
+
+@router.message(FitterStates.waiting_for_user_photo, ~F.photo)
+async def invalid_photo_for_tryon(message: Message):
+    """Неверный формат - ожидается фото"""
+    await message.answer(
+        "❌ Пожалуйста, отправь фото (не файл, не документ)\n\nИли отмени операцию",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="◀️ Отмена", callback_data="fitter:cancel")]
+        ])
+    )
+
+
+# === Повтор примерки ===
+
+@router.callback_query(F.data.startswith("fitter:retry:"))
+async def retry_tryon(callback: CallbackQuery, state: FSMContext):
+    """Повторить примерку с другим фото"""
+    from keyboards.fitter_keyboards import get_model_selection_keyboard
+
+    parts = callback.data.split(":")
+    source = parts[2]
+    product_id = parts[3]
+    category_id = parts[4] if len(parts) > 4 else ''
+    index = int(parts[5]) if len(parts) > 5 else 0
+
+    # Получаем товар
+    product = await bot_api_client.get_product_by_id(product_id)
+    if not product:
+        await callback.answer("Товар не найден", show_alert=True)
+        return
+
+    # Сохраняем контекст
+    await state.update_data(
+        product_id=product_id,
+        category_id=category_id,
+        index=index,
+        source=source,
+        product=product
+    )
+
+    text = """⚡️ <b>Выбери модель генерации</b>
+
+⚡️ <b>Быстрая</b> (~1-2 мин)
+Быстрый результат, хорошее качество
+
+👑 <b>Качественная</b> (~3-4 мин)
+Высокое качество, более реалистичный результат
+
+🚀 <b>GPT Image 1.5</b> (~3-4 мин)
+Новейшая модель, максимальная детализация"""
+
+    await callback.message.edit_text(
+        text,
+        reply_markup=get_model_selection_keyboard(),
+        parse_mode="HTML"
+    )
+    await state.set_state(FitterStates.choosing_model)
     await callback.answer()
 
 

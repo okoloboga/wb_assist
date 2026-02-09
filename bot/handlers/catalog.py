@@ -3,6 +3,7 @@
 """
 from aiogram import Router, F
 from aiogram.types import CallbackQuery, InputMediaPhoto, URLInputFile, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.fsm.context import FSMContext
 from typing import Optional, List
 import logging
 
@@ -385,24 +386,47 @@ async def back_to_product(callback: CallbackQuery):
 
 
 @router.callback_query(F.data.startswith("tryon:"))
-async def try_on_coming_soon(callback: CallbackQuery):
-    """Заглушка для функции примерки"""
-    text = """👗 Примерка одежды
+async def start_tryon_from_catalog(callback: CallbackQuery, state: FSMContext):
+    """Запуск примерки из каталога"""
+    from keyboards.fitter_keyboards import get_fitter_mode_keyboard
+    from states.fitter_states import FitterStates
 
-Эта функция скоро будет доступна! 🚀
+    parts = callback.data.split(":")
+    product_id = parts[1]
+    category_id = parts[2]
+    index = int(parts[3])
 
-Ты сможешь:
-• Загрузить свое фото
-• Увидеть, как на тебе будет смотреться выбранный товар
-• Сохранить результат примерки
+    # Получаем информацию о товаре
+    product = await bot_api_client.get_product_by_id(product_id)
+    if not product:
+        await callback.answer("Товар не найден", show_alert=True)
+        return
 
-Следи за обновлениями! ✨"""
+    # Сохраняем контекст в state
+    await state.update_data(
+        product_id=product_id,
+        category_id=category_id,
+        index=index,
+        source='catalog',
+        product=product
+    )
 
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="◀️ Назад", callback_data="close_tryon")]
-    ])
+    text = f"""👗 <b>Примерка: {product.get('name', 'Товар')}</b>
 
-    await callback.message.answer(text, reply_markup=keyboard)
+Выбери режим примерки:
+
+👕 <b>Только этот товар</b>
+Примерь только выбранную вещь
+
+👗 <b>Весь образ с фото</b>
+Примерь вещь вместе с другой одеждой из фото"""
+
+    await callback.message.edit_text(
+        text,
+        reply_markup=get_fitter_mode_keyboard(),
+        parse_mode="HTML"
+    )
+    await state.set_state(FitterStates.choosing_mode)
     await callback.answer()
 
 
@@ -411,10 +435,3 @@ async def close_tryon_message(callback: CallbackQuery):
     """Закрыть сообщение о примерке"""
     await callback.message.delete()
     await callback.answer()
-
-
-@router.callback_query(F.data.startswith("fitter:start:"))
-async def fitter_start_from_catalog(callback: CallbackQuery):
-    """Запуск примерки из каталога (перенаправление в fitter)"""
-    # Этот хэндлер будет обрабатываться в fitter.py
-    await callback.answer("Функция примерки будет доступна позже")

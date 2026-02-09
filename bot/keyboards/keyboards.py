@@ -35,7 +35,6 @@ def wb_menu_keyboard() -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="🔔 Уведомления", callback_data="notifications")
         ],
         [
-            InlineKeyboardButton(text="🛍️ Каталог", callback_data="catalog_main"),
             InlineKeyboardButton(text="🎨 Контент", callback_data="content")
         ],
         [

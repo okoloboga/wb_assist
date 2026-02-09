@@ -86,9 +86,15 @@ def get_product_keyboard(product: Dict, category_id: str, current_index: int,
     if marketplace_row:
         buttons.append(marketplace_row)
 
-    # Примерка удалена
+    # 3-й ряд: Примерка
+    buttons.append([
+        InlineKeyboardButton(
+            text="👗 Примерить",
+            callback_data=f"tryon:{product_id}:{category_id}:{current_index}"
+        )
+    ])
 
-    # 3-й ряд: Навигация
+    # 4-й ряд: Навигация
     nav_row = []
     if total_count > 1:
         # Кнопка назад
@@ -110,7 +116,7 @@ def get_product_keyboard(product: Dict, category_id: str, current_index: int,
         ))
         buttons.append(nav_row)
 
-    # 5-й ряд: Кнопка возврата к категориям
+    # 6-й ряд: Кнопка возврата к категориям
     buttons.append([
         InlineKeyboardButton(
             text="🔙 К категориям",
