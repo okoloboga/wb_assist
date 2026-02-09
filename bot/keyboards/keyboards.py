@@ -39,8 +39,7 @@ def wb_menu_keyboard() -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="🎨 Контент", callback_data="content")
         ],
         [
-            InlineKeyboardButton(text="🤖 AI-помощник", callback_data="ai_assistant"),
-            InlineKeyboardButton(text="👔 Примерка", callback_data="fitter_main")
+            InlineKeyboardButton(text="🤖 AI-помощник", callback_data="ai_assistant")
         ],
         [
             InlineKeyboardButton(text="📊 Экспорт в Google Sheets", callback_data="export_sheets")

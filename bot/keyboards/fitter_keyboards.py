@@ -23,7 +23,7 @@ def get_fitter_main_menu(has_tryon_history: bool = False):
     if has_tryon_history:
         buttons.append([InlineKeyboardButton(text="📜 История примерок", callback_data="tryon_history")])
 
-    buttons.append([InlineKeyboardButton(text="ℹ️ О боте", callback_data="about")])
+    buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data="ai_assistant")])
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
     return keyboard

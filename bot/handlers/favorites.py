@@ -5,7 +5,8 @@ from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery, URLInputFile, InputMediaPhoto, BufferedInputFile, InlineKeyboardMarkup, InlineKeyboardButton
 
 from keyboards.catalog import get_favorites_product_keyboard, get_go_to_catalog_keyboard
-from keyboards.fitter_keyboards import get_fitter_main_menu
+# Fitter keyboards removed
+# from keyboards.fitter_keyboards import get_fitter_main_menu
 from api.client import bot_api_client as api_client
 
 router = Router()
