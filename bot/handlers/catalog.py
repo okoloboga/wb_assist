@@ -421,7 +421,13 @@ async def start_tryon_from_catalog(callback: CallbackQuery, state: FSMContext):
 👗 <b>Весь образ с фото</b>
 Примерь вещь вместе с другой одеждой из фото"""
 
-    await callback.message.edit_text(
+    # Удаляем сообщение с фото и отправляем новое текстовое
+    try:
+        await callback.message.delete()
+    except:
+        pass
+
+    await callback.message.answer(
         text,
         reply_markup=get_fitter_mode_keyboard(),
         parse_mode="HTML"

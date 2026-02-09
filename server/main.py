@@ -28,6 +28,9 @@ from app.features.export import router as export_router, template_router
 from app.features.digest.router import router as digest_router
 from app.features.competitors.routes import router as competitors_router
 from app.features.catalog.routes import router as catalog_router
+from app.features.user_photos.routes import router as user_photos_router
+from app.features.measurements.routes import router as measurements_router
+from app.features.favorites.routes import router as favorites_router
 
 # Импортируем модели для создания таблиц
 from app.features.user.models import User
@@ -38,6 +41,9 @@ from app.features.stock_alerts.models import DailySalesAnalytics, StockAlertHist
 from app.features.export.models import ExportToken, ExportLog
 from app.features.digest.models import ChannelReport, DigestHistory
 from app.features.competitors.models import CompetitorLink, CompetitorProduct, CompetitorSemanticCore
+from app.features.user_photos.models import UserPhoto
+from app.features.measurements.models import UserMeasurements
+from app.features.favorites.models import Favorite
 
 # Создаем FastAPI приложение с настройками из config
 app = FastAPI(**settings.get_app_config())
@@ -67,6 +73,9 @@ app.include_router(template_router, tags=["Export Templates"])
 app.include_router(digest_router, prefix="/api/v1", tags=["Digest"])
 app.include_router(competitors_router, prefix="/api/v1/bot", tags=["Competitors"])
 app.include_router(catalog_router, prefix="/api/v1", tags=["Catalog"])
+app.include_router(user_photos_router, prefix="/api/v1", tags=["User Photos"])
+app.include_router(measurements_router, prefix="/api/v1", tags=["Measurements"])
+app.include_router(favorites_router, prefix="/api/v1", tags=["Favorites"])
 
 if __name__ == "__main__":
     import uvicorn
