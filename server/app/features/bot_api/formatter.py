@@ -30,16 +30,26 @@ class BotMessageFormatter:
             
             products = data.get("products", {})
             orders_today = data.get("orders_today", {})
+            orders_7d = data.get("orders_7d", {})
+            orders_30d = data.get("orders_30d", {})
             stocks = data.get("stocks", {})
             reviews = data.get("reviews", {})
             
-            message = f"""🔄 Обновление: {last_sync}
+            message = f"""📊 Ваша статистика
 
-🛒 ЗАКАЗЫ (сегодня)
+🔄 Обновление: {last_sync}
+
+📦 ЗАКАЗЫ
+• Новых заказов (7 дней): {orders_7d.get('count', 0)}
+• На сумму (7 дней): {self.format_currency(orders_7d.get('amount', 0))}
+• Новых заказов (30 дней): {orders_30d.get('count', 0)}
+• На сумму (30 дней): {self.format_currency(orders_30d.get('amount', 0))}
+
+📦 СЕГОДНЯ
 • Новых заказов: {orders_today.get('count', 0)}
 • На сумму: {self.format_currency(orders_today.get('amount', 0))}
 • Вчера: {orders_today.get('yesterday_count', 0)} заказов на {self.format_currency(orders_today.get('yesterday_amount', 0))}
-• Рост к вчера: {orders_today.get('growth_percent', 0):+.0f}% по количеству
+• Рост к вчера: {orders_today.get('growth_percent', 0):+.0f}%
 
 📦 ОСТАТКИ
 • Критичных товаров: {stocks.get('critical_count', 0)}
@@ -53,7 +63,9 @@ class BotMessageFormatter:
 
 📦 ТОВАРЫ
 • Всего товаров: {products.get('total', 0)}
-• Активных: {products.get('active', 0)}"""
+• Активных: {products.get('active', 0)}
+
+Используйте меню ниже для подробной информации"""
             
             return self._truncate_message(message)
             

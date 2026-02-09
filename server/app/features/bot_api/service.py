@@ -1670,6 +1670,10 @@ class BotAPIService:
             if yesterday_count > 0:
                 growth_percent = ((today_count - yesterday_count) / yesterday_count) * 100
             
+            # Получаем статистику заказов за 7 и 30 дней
+            orders_7d = await self.get_orders_stats(cabinet.id, days=7)
+            orders_30d = await self.get_orders_stats(cabinet.id, days=30)
+            
             # Отзывы
             reviews = self.db.query(WBReview).filter(
                 WBReview.cabinet_id == cabinet.id
@@ -1696,6 +1700,14 @@ class BotAPIService:
                     "yesterday_amount": yesterday_amount,
                     "growth_percent": growth_percent
                 },
+                "orders_7d": {
+                    "count": orders_7d["count"],
+                    "amount": orders_7d["total_amount"]
+                },
+                "orders_30d": {
+                    "count": orders_30d["count"],
+                    "amount": orders_30d["total_amount"]
+                },
                 "stocks": {
                     "critical_count": stocks_summary["critical_count"],
                     "zero_count": stocks_summary["zero_count"],
@@ -1719,9 +1731,50 @@ class BotAPIService:
                 "status": "Ошибка",
                 "products": {"total": 0, "active": 0, "moderation": 0, "critical_stocks": 0},
                 "orders_today": {"count": 0, "amount": 0, "yesterday_count": 0, "yesterday_amount": 0, "growth_percent": 0.0},
+                "orders_7d": {"count": 0, "amount": 0},
+                "orders_30d": {"count": 0, "amount": 0},
                 "stocks": {"critical_count": 0, "zero_count": 0, "attention_needed": 0, "top_product": "Ошибка"},
                 "reviews": {"new_count": 0, "average_rating": 0.0, "unanswered": 0, "total": 0},
                 "recommendations": ["Ошибка получения данных"]
+            }
+
+    async def get_orders_stats(self, cabinet_id: int, days: int = 7) -> Dict[str, Any]:
+        """
+        Получить статистику заказов за указанный период
+        
+        Args:
+            cabinet_id: ID кабинета
+            days: Количество дней для анализа (7 или 30)
+        
+        Returns:
+            Dict с количеством заказов и суммой
+        """
+        try:
+            # Вычисляем дату начала периода в UTC
+            start_date = datetime.now(timezone.utc) - timedelta(days=days)
+            
+            # Подсчитываем количество заказов и сумму
+            result = self.db.query(
+                func.count(WBOrder.id).label('count'),
+                func.coalesce(func.sum(WBOrder.total_price), 0).label('total_amount')
+            ).filter(
+                and_(
+                    WBOrder.cabinet_id == cabinet_id,
+                    WBOrder.order_date >= start_date,
+                    WBOrder.status != 'canceled'  # Исключаем отмененные заказы
+                )
+            ).first()
+            
+            return {
+                "count": result.count if result else 0,
+                "total_amount": float(result.total_amount) if result else 0.0
+            }
+            
+        except Exception as e:
+            logger.error(f"Ошибка получения статистики заказов за {days} дней: {e}")
+            return {
+                "count": 0,
+                "total_amount": 0.0
             }
 
     async def _fetch_orders_from_db(self, cabinet: WBCabinet, limit: int, offset: int, status: Optional[str] = None) -> Dict[str, Any]:

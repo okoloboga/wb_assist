@@ -38,6 +38,8 @@ class DashboardData(BaseModel):
     status: str
     products: Dict[str, int]
     orders_today: Dict[str, Union[int, float]]
+    orders_7d: Dict[str, Union[int, float]]  # Новое поле для заказов за 7 дней
+    orders_30d: Dict[str, Union[int, float]]  # Новое поле для заказов за 30 дней
     stocks: Dict[str, Union[int, str]]
     reviews: Dict[str, Union[int, float]]
     recommendations: List[str]
