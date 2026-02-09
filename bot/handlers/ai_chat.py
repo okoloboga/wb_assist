@@ -24,6 +24,7 @@ from utils.formatters import (
     handle_telegram_errors,
 )
 from api.client import bot_api_client
+from keyboards.fitter_keyboards import get_fitter_main_menu
 
 logger = logging.getLogger(__name__)
 
@@ -462,4 +463,30 @@ async def show_ai_limits(telegram_id: int, target_message: Message):
             await target_message.edit_text(error_text, reply_markup=create_ai_chat_keyboard())
         else:
             await safe_send_message(target_message, error_text, user_id=telegram_id)
+
+
+# ============================================================================
+# Callback ai_fitter - Transition to fitter (virtual try-on) functionality
+# ============================================================================
+
+@router.callback_query(F.data == "ai_fitter")
+@handle_telegram_errors
+async def ai_fitter_transition(callback: CallbackQuery):
+    """Переход к функционалу примерки из AI-помощника."""
+    # Проверяем есть ли история примерок (заглушка)
+    has_tryon_history = False
+
+    welcome_text = """👗 <b>Виртуальная примерка одежды</b>
+
+Добро пожаловать в виртуальную примерочную!
+
+Выберите товары из каталога или избранного и попробуйте их виртуально.
+Вы также можете настроить свои параметры для более точной примерки."""
+
+    await callback.message.edit_text(
+        welcome_text,
+        reply_markup=get_fitter_main_menu(has_tryon_history=has_tryon_history),
+        parse_mode="HTML"
+    )
+    await callback.answer()
 

@@ -116,3 +116,6 @@ fixtures/
 server/old
 bot/old
 *.ps1
+
+# Donor bot repository
+fitting_bot/

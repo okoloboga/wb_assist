@@ -33,6 +33,9 @@ from handlers.photo_processing import router as photo_processing_router
 from handlers.content import router as content_router
 from handlers.semantic_core import router as semantic_core_router
 from handlers.stock_ignore import router as stock_ignore_router
+from handlers.fitter import router as fitter_router
+from handlers.catalog import router as catalog_router
+from handlers.favorites import router as favorites_router
 from keyboards.keyboards import main_keyboard, wb_menu_keyboard
 
 # Настройка логирования
@@ -67,6 +70,9 @@ dp.include_router(photo_processing_router)  # photo_processing_router для о�
 dp.include_router(stock_ignore_router) # stock_ignore_router для FSM игнор-листа
 dp.include_router(content_router)  # content_router для раздела контента
 dp.include_router(semantic_core_router)  # семантическое ядро (AI-помощник)
+dp.include_router(fitter_router)  # fitter_router для примерки одежды (тоже FSM)
+dp.include_router(catalog_router)  # catalog_router для каталога товаров
+dp.include_router(favorites_router)  # favorites_router для избранного
 dp.include_router(wb_cabinet_router)
 dp.include_router(dashboard_router)
 dp.include_router(orders_router)

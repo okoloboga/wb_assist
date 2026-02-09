@@ -1026,6 +1026,44 @@ class BotAPIClient:
         json_data = {"nm_id": nm_id}
         return await self._make_request("POST", endpoint, params=params, json_data=json_data)
 
+    # ===== МЕТОДЫ ДЛЯ CATALOG/FITTER (Делегирование к catalog_api_client) =====
+
+    async def get_categories(self):
+        """Получить список категорий (делегирует к catalog_api_client)"""
+        return await catalog_api_client.get_categories()
+
+    async def get_products_by_category(self, category: str):
+        """Получить товары по категории (делегирует к catalog_api_client)"""
+        return await catalog_api_client.get_products_by_category(category)
+
+    async def get_product_by_id(self, product_id: str):
+        """Получить товар по ID (делегирует к catalog_api_client)"""
+        return await catalog_api_client.get_product_by_id(product_id)
+
+    async def add_to_favorites(self, user_id: int, product_id: str):
+        """Добавить в избранное (делегирует к catalog_api_client)"""
+        return await catalog_api_client.add_to_favorites(user_id, product_id)
+
+    async def remove_from_favorites(self, user_tg_id: int, product_id: str):
+        """Удалить из избранного (делегирует к catalog_api_client)"""
+        return await catalog_api_client.remove_from_favorites(user_tg_id, product_id)
+
+    async def get_favorites(self, user_tg_id: int):
+        """Получить список избранного (делегирует к catalog_api_client)"""
+        return await catalog_api_client.get_favorites(user_tg_id)
+
+    async def check_favorite(self, user_tg_id: int, product_id: str):
+        """Проверить, в избранном ли товар (делегирует к catalog_api_client)"""
+        return await catalog_api_client.check_favorite(user_tg_id, product_id)
+
+    async def get_measurements(self, user_tg_id: int):
+        """Получить параметры пользователя (делегирует к catalog_api_client)"""
+        return await catalog_api_client.get_measurements(user_tg_id)
+
+    async def recommend_size(self, user_id: int, product_id: str):
+        """Рекомендовать размер (делегирует к catalog_api_client)"""
+        return await catalog_api_client.recommend_size(user_id, product_id)
+
 # Создаем глобальный экземпляр клиента
 bot_api_client = BotAPIClient()
 
