@@ -39,6 +39,12 @@ from .prompts import SYSTEM_PROMPT
 from ..agent import run_agent
 from ..tools.db_pool import init_pool as init_asyncpg_pool, close_pool as close_asyncpg_pool
 
+# Import user model helper (correct path)
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+from gpt_integration.core.user_model import get_user_preferred_model_async
+
 # RAG integration
 try:
     from ..rag.prompt_enricher import enrich_prompt_with_rag, RAG_ENABLED
@@ -232,6 +238,10 @@ async def send_message(
         # Get recent context for AI
         context_messages = crud.get_recent_context(telegram_id, limit=5)
         
+        # Получаем предпочитаемую модель пользователя
+        user_model = await get_user_preferred_model_async(telegram_id)
+        logger.info(f"🤖 Using AI model for user {telegram_id}: {user_model}")
+        
         # RAG: Получить cabinet_id и обогатить промпт
         system_prompt = SYSTEM_PROMPT
         cabinet_id = None
@@ -292,7 +302,7 @@ async def send_message(
         
         # Stage 1: Call internal agent (LLM + tools in next stage)
         try:
-            agent_result = await run_agent(messages)
+            agent_result = await run_agent(messages, model=user_model)
             response_text = agent_result.get("final", "")
             tokens_used = agent_result.get("tokens_used", 0)
         except RuntimeError as e:

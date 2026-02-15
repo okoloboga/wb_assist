@@ -36,6 +36,7 @@ from handlers.stock_ignore import router as stock_ignore_router
 from handlers.fitter import router as fitter_router
 from handlers.catalog import router as catalog_router
 from handlers.favorites import router as favorites_router
+from handlers.settings import router as settings_router  # Новый router для настроек
 from keyboards.keyboards import main_keyboard, wb_menu_keyboard
 
 # Настройка логирования
@@ -73,6 +74,7 @@ dp.include_router(semantic_core_router)  # семантическое ядро (
 dp.include_router(fitter_router)  # fitter_router для примерки одежды (тоже FSM)
 dp.include_router(catalog_router)  # catalog_router для каталога товаров
 dp.include_router(favorites_router)  # favorites_router для избранного
+dp.include_router(settings_router)  # settings_router для настроек пользователя
 dp.include_router(wb_cabinet_router)
 dp.include_router(dashboard_router)
 dp.include_router(orders_router)

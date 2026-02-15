@@ -826,3 +826,144 @@ async def get_analytics_summary(
     except Exception as e:
         logger.error(f"Ошибка получения сводной статистики для telegram_id {telegram_id}: {e}")
         raise HTTPException(status_code=500, detail="Ошибка сервера")
+
+
+
+# ============================================
+# НАСТРОЙКИ ПОЛЬЗОВАТЕЛЯ И AI МОДЕЛИ
+# ============================================
+
+from app.core.ai_models import AIModel
+from .schemas import (
+    UserSettingsUpdate,
+    UserSettingsResponse,
+    AIModelsListResponse,
+    AIModelInfo
+)
+from app.features.user.models import User
+
+
+@router.get("/ai-models", response_model=AIModelsListResponse)
+async def get_available_ai_models():
+    """
+    Получить список доступных AI моделей
+    
+    Returns:
+        Список моделей с метаданными и модель по умолчанию
+    """
+    try:
+        models_data = AIModel.get_all_models()
+        models = [AIModelInfo(**model) for model in models_data]
+        
+        return AIModelsListResponse(
+            models=models,
+            default_model=AIModel.get_default()
+        )
+    except Exception as e:
+        logger.error(f"Ошибка получения списка AI моделей: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail="Ошибка получения списка моделей"
+        )
+
+
+@router.get("/settings", response_model=UserSettingsResponse)
+async def get_user_settings(
+    telegram_id: int = Query(..., description="Telegram ID пользователя"),
+    db: Session = Depends(get_db)
+):
+    """
+    Получить настройки пользователя
+    
+    Args:
+        telegram_id: Telegram ID пользователя
+        
+    Returns:
+        Настройки пользователя включая предпочитаемую AI модель
+    """
+    try:
+        user = db.query(User).filter(User.telegram_id == telegram_id).first()
+        
+        if not user:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Пользователь с telegram_id={telegram_id} не найден"
+            )
+        
+        return UserSettingsResponse(
+            telegram_id=user.telegram_id,
+            preferred_ai_model=user.preferred_ai_model,
+            username=user.username,
+            first_name=user.first_name
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Ошибка получения настроек пользователя {telegram_id}: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail="Ошибка получения настроек"
+        )
+
+
+@router.patch("/settings", response_model=UserSettingsResponse)
+async def update_user_settings(
+    telegram_id: int = Query(..., description="Telegram ID пользователя"),
+    settings: UserSettingsUpdate = None,
+    db: Session = Depends(get_db)
+):
+    """
+    Обновить настройки пользователя
+    
+    Args:
+        telegram_id: Telegram ID пользователя
+        settings: Новые настройки
+        
+    Returns:
+        Обновленные настройки пользователя
+    """
+    try:
+        user = db.query(User).filter(User.telegram_id == telegram_id).first()
+        
+        if not user:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Пользователь с telegram_id={telegram_id} не найден"
+            )
+        
+        # Обновляем preferred_ai_model если указан
+        if settings and settings.preferred_ai_model:
+            # Валидация модели
+            if not AIModel.is_valid(settings.preferred_ai_model):
+                available_models = [AIModel.GPT_5_1, AIModel.CLAUDE_SONNET_4_5]
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Недопустимая AI модель. Доступные: {available_models}"
+                )
+            
+            user.preferred_ai_model = settings.preferred_ai_model
+            logger.info(
+                f"Обновлена AI модель для пользователя {telegram_id}: "
+                f"{settings.preferred_ai_model}"
+            )
+        
+        db.commit()
+        db.refresh(user)
+        
+        return UserSettingsResponse(
+            telegram_id=user.telegram_id,
+            preferred_ai_model=user.preferred_ai_model,
+            username=user.username,
+            first_name=user.first_name
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Ошибка обновления настроек пользователя {telegram_id}: {e}")
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail="Ошибка обновления настроек"
+        )

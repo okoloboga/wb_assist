@@ -8,8 +8,8 @@ from typing import Dict
 
 class AIModel(str, Enum):
     """Доступные AI модели для пользователей"""
-    GPT_4O_MINI = "gpt-4o-mini"
-    CLAUDE_SONNET_35 = "claude-sonnet-3.5"
+    GPT_5_1 = "gpt-5.1"
+    CLAUDE_SONNET_4_5 = "claude-sonnet-4.5"
     
     @classmethod
     def get_display_name(cls, model: str) -> str:
@@ -23,8 +23,8 @@ class AIModel(str, Enum):
             Читаемое название
         """
         names = {
-            cls.GPT_4O_MINI: "GPT-4o Mini (OpenAI)",
-            cls.CLAUDE_SONNET_35: "Claude Sonnet 3.5 (Anthropic)"
+            cls.GPT_5_1: "GPT-5.1 (OpenAI)",
+            cls.CLAUDE_SONNET_4_5: "Claude Sonnet 4.5 (Anthropic)"
         }
         return names.get(model, model)
     
@@ -40,8 +40,8 @@ class AIModel(str, Enum):
             Описание модели
         """
         descriptions = {
-            cls.GPT_4O_MINI: "Быстрая и экономичная модель от OpenAI с отличным качеством",
-            cls.CLAUDE_SONNET_35: "Продвинутая модель с глубоким пониманием контекста от Anthropic"
+            cls.GPT_5_1: "Новейшая модель GPT-5.1 от OpenAI с улучшенными возможностями рассуждения",
+            cls.CLAUDE_SONNET_4_5: "Продвинутая модель Claude Sonnet 4.5 с глубоким пониманием контекста"
         }
         return descriptions.get(model, "")
     
@@ -57,8 +57,8 @@ class AIModel(str, Enum):
             Название провайдера
         """
         providers = {
-            cls.GPT_4O_MINI: "OpenAI",
-            cls.CLAUDE_SONNET_35: "Anthropic"
+            cls.GPT_5_1: "OpenAI",
+            cls.CLAUDE_SONNET_4_5: "Anthropic (via Google Vertex AI)"
         }
         return providers.get(model, "Unknown")
     
@@ -70,7 +70,7 @@ class AIModel(str, Enum):
         Returns:
             ID модели по умолчанию
         """
-        return cls.GPT_4O_MINI
+        return cls.GPT_5_1
     
     @classmethod
     def get_all_models(cls) -> list[Dict[str, str]]:
@@ -82,16 +82,16 @@ class AIModel(str, Enum):
         """
         return [
             {
-                "id": cls.GPT_4O_MINI,
-                "name": cls.get_display_name(cls.GPT_4O_MINI),
-                "provider": cls.get_provider(cls.GPT_4O_MINI),
-                "description": cls.get_description(cls.GPT_4O_MINI)
+                "id": cls.GPT_5_1,
+                "name": cls.get_display_name(cls.GPT_5_1),
+                "provider": cls.get_provider(cls.GPT_5_1),
+                "description": cls.get_description(cls.GPT_5_1)
             },
             {
-                "id": cls.CLAUDE_SONNET_35,
-                "name": cls.get_display_name(cls.CLAUDE_SONNET_35),
-                "provider": cls.get_provider(cls.CLAUDE_SONNET_35),
-                "description": cls.get_description(cls.CLAUDE_SONNET_35)
+                "id": cls.CLAUDE_SONNET_4_5,
+                "name": cls.get_display_name(cls.CLAUDE_SONNET_4_5),
+                "provider": cls.get_provider(cls.CLAUDE_SONNET_4_5),
+                "description": cls.get_description(cls.CLAUDE_SONNET_4_5)
             }
         ]
     
@@ -106,4 +106,4 @@ class AIModel(str, Enum):
         Returns:
             True если модель валидна
         """
-        return model in [cls.GPT_4O_MINI, cls.CLAUDE_SONNET_35]
+        return model in [cls.GPT_5_1, cls.CLAUDE_SONNET_4_5]

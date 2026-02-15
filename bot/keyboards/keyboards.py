@@ -193,6 +193,7 @@ def ai_assistant_keyboard() -> InlineKeyboardMarkup:
 
 def settings_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🤖 Выбор AI модели", callback_data="settings_ai_model")],
         [InlineKeyboardButton(text="🔑 Подключение WB-кабинета (API-ключ)", callback_data="settings_api_key")],
         [InlineKeyboardButton(text="👥 Доступы (добавить/удалить пользователя по TelegramID)", callback_data="settings_access")],
         [InlineKeyboardButton(text="🌐 Интеграции (Google Sheets, Docs)", callback_data="settings_integrations")],
@@ -553,4 +554,43 @@ def create_notification_keyboard(settings: Dict[str, Any]) -> InlineKeyboardMark
             text="🔙 Назад к меню",
             callback_data="wb_menu"
         )]
+    ])
+
+
+
+# ============================================
+# КЛАВИАТУРЫ ДЛЯ НАСТРОЕК AI МОДЕЛИ
+# ============================================
+
+def get_settings_keyboard() -> InlineKeyboardMarkup:
+    """Клавиатура настроек с выбором AI модели"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🤖 Выбор AI модели", callback_data="settings_ai_model")],
+        [InlineKeyboardButton(text="🔔 Уведомления", callback_data="notifications")],
+        [InlineKeyboardButton(text="🔑 API ключ WB", callback_data="settings_api_key")],
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data="main_menu")]
+    ])
+
+
+def get_ai_model_selection_keyboard(current_model: str) -> InlineKeyboardMarkup:
+    """
+    Клавиатура выбора AI модели
+    
+    Args:
+        current_model: Текущая модель пользователя
+    """
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text="✅ GPT-5.1" if current_model == "gpt-5.1" else "GPT-5.1",
+                callback_data="ai_model_gpt-5.1"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="✅ Claude Sonnet 4.5" if current_model == "claude-sonnet-4.5" else "Claude Sonnet 4.5",
+                callback_data="ai_model_claude-sonnet-4.5"
+            )
+        ],
+        [InlineKeyboardButton(text="⬅️ Назад к настройкам", callback_data="settings")]
     ])

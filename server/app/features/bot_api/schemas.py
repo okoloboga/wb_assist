@@ -689,3 +689,80 @@ class SemanticCoreDetailOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+# ============================================
+# Схемы для настроек пользователя и AI моделей
+# ============================================
+
+class UserSettingsUpdate(BaseModel):
+    """Обновление настроек пользователя"""
+    preferred_ai_model: Optional[str] = Field(
+        None,
+        description="Предпочитаемая AI модель (gpt-4o-mini, claude-sonnet-3.5)"
+    )
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "preferred_ai_model": "gpt-4o-mini"
+            }
+        }
+
+
+class UserSettingsResponse(BaseModel):
+    """Ответ с настройками пользователя"""
+    telegram_id: int
+    preferred_ai_model: str
+    username: Optional[str] = None
+    first_name: str
+    
+    class Config:
+        from_attributes = True
+        json_schema_extra = {
+            "example": {
+                "telegram_id": 123456789,
+                "preferred_ai_model": "gpt-4o-mini",
+                "username": "john_doe",
+                "first_name": "John"
+            }
+        }
+
+
+class AIModelInfo(BaseModel):
+    """Информация об AI модели"""
+    id: str = Field(..., description="ID модели")
+    name: str = Field(..., description="Отображаемое название")
+    provider: str = Field(..., description="Провайдер (OpenAI, Anthropic)")
+    description: str = Field(..., description="Описание модели")
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "id": "gpt-4o-mini",
+                "name": "GPT-4o Mini (OpenAI)",
+                "provider": "OpenAI",
+                "description": "Быстрая и экономичная модель от OpenAI"
+            }
+        }
+
+
+class AIModelsListResponse(BaseModel):
+    """Список доступных AI моделей"""
+    models: List[AIModelInfo]
+    default_model: str
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "models": [
+                    {
+                        "id": "gpt-4o-mini",
+                        "name": "GPT-4o Mini (OpenAI)",
+                        "provider": "OpenAI",
+                        "description": "Быстрая и экономичная модель"
+                    }
+                ],
+                "default_model": "gpt-4o-mini"
+            }
+        }

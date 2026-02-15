@@ -3,7 +3,12 @@ import os
 import json
 import asyncio
 import logging
-from gpt_integration.comet_client import comet_client
+import sys
+from pathlib import Path
+
+# Add parent directory to path for imports
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+from gpt_integration.core.llm_client import llm_client
 from .tools import registry, execute_tool
 
 logger = logging.getLogger(__name__)
@@ -14,35 +19,49 @@ SYSTEM_PROMPT = (
     "сами выполните и предоставьте результат. Отвечайте кратко, с цифрами и выводами."
 )
 
-async def _call_llm(messages: List[Dict[str, Any]], tools: list | None = None) -> Dict[str, Any]:
-    model = os.getenv("COMET_TEXT_MODEL", "comet-chat-mini") # Use COMET_TEXT_MODEL
-    temperature = float(os.getenv("COMET_TEMPERATURE", "0.2")) # Use COMET_TEMPERATURE
-    max_tokens = int(os.getenv("COMET_MAX_TOKENS", "900")) # Use COMET_MAX_TOKENS
+async def _call_llm(
+    messages: List[Dict[str, Any]], 
+    model: str = "gpt-5.1",
+    tools: list | None = None
+) -> Dict[str, Any]:
+    """
+    Call LLM with UniversalLLMClient
+    
+    Args:
+        messages: List of messages
+        model: Model ID (gpt-5.1, claude-sonnet-4.5)
+        tools: List of tools (not yet supported)
+    """
+    temperature = float(os.getenv("COMET_TEMPERATURE", "0.7"))
+    max_tokens = int(os.getenv("COMET_MAX_TOKENS", "2000"))
 
     try:
-        resp = await comet_client.create_completion(
+        # Используем UniversalLLMClient
+        response_text, tokens_used = await llm_client.chat_completion(
             model=model,
             messages=messages,
             temperature=temperature,
-            max_tokens=max_tokens,
-            # Pass tools and tool_choice as kwargs if CometAPI supports OpenAI-like tool_calling
-            tools=tools or None, 
-            tool_choice="auto" if tools else None,
+            max_tokens=max_tokens
         )
         
-        # CometClient is designed to be OpenAI-compatible in response format
-        # The message object from OpenAI is typically accessed via resp.choices[0].message
-        # CometClient returns JSON, so we access as dictionary
+        # Возвращаем в формате, совместимом с OpenAI
         return {
-            "message": resp["choices"][0]["message"],
-            "usage": resp.get("usage"),
+            "message": {
+                "role": "assistant",
+                "content": response_text
+            },
+            "usage": {
+                "total_tokens": tokens_used
+            }
         }
     except Exception as e:
         logger.error(f"LLM call failed: {e}", exc_info=True)
-        # Rethrow the original exception for upstream handling
         raise
 
-async def run_agent(messages: List[Dict[str, Any]]) -> Dict[str, Any]:
+async def run_agent(
+    messages: List[Dict[str, Any]], 
+    model: str = "gpt-5.1"
+) -> Dict[str, Any]:
     """Agent loop with tool-calling.
 
     1) Call LLM with tools.
@@ -57,7 +76,7 @@ async def run_agent(messages: List[Dict[str, Any]]) -> Dict[str, Any]:
     enriched.extend(messages)
 
     # First call with tools
-    first = await _call_llm(enriched, tools=registry)
+    first = await _call_llm(enriched, model=model, tools=registry)
     msg = first["message"]
     usage = first.get("usage")
     if usage:
@@ -125,7 +144,7 @@ async def run_agent(messages: List[Dict[str, Any]]) -> Dict[str, Any]:
     })
     followup.extend(tool_messages)
 
-    final = await _call_llm(followup)
+    final = await _call_llm(followup, model=model)
     fmsg = final["message"]
     fusage = final.get("usage")
     if fusage:

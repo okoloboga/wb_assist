@@ -1064,8 +1064,128 @@ class BotAPIClient:
         """Рекомендовать размер (делегирует к catalog_api_client)"""
         return await catalog_api_client.recommend_size(user_id, product_id)
 
-# Создаем глобальный экземпляр клиента
-bot_api_client = BotAPIClient()
+    # ============================================
+    # МЕТОДЫ ДЛЯ РАБОТЫ С НАСТРОЙКАМИ И AI МОДЕЛЯМИ
+    # ============================================
+    
+    async def get_available_ai_models(self) -> Dict[str, Any]:
+        """
+        Получить список доступных AI моделей
+        
+        Returns:
+            Dict с списком моделей и моделью по умолчанию
+        """
+        try:
+            response = await self._make_request_with_retry(
+                method="GET",
+                endpoint="/ai-models"
+            )
+            
+            if response.success and response.data:
+                return response.data
+            else:
+                logger.error(f"Ошибка получения списка AI моделей: {response.error}")
+                return {
+                    "models": [],
+                    "default_model": "gpt-5.1"
+                }
+                
+        except Exception as e:
+            logger.error(f"Исключение при получении списка AI моделей: {e}")
+            return {
+                "models": [],
+                "default_model": "gpt-5.1"
+            }
+    
+    async def get_user_settings(self, telegram_id: int) -> Dict[str, Any]:
+        """
+        Получить настройки пользователя
+        
+        Args:
+            telegram_id: Telegram ID пользователя
+            
+        Returns:
+            Dict с настройками пользователя
+        """
+        try:
+            response = await self._make_request_with_retry(
+                method="GET",
+                endpoint="/settings",
+                params={"telegram_id": telegram_id}
+            )
+            
+            if response.success and response.data:
+                return response.data
+            else:
+                logger.error(
+                    f"Ошибка получения настроек пользователя {telegram_id}: "
+                    f"{response.error}"
+                )
+                return {
+                    "telegram_id": telegram_id,
+                    "preferred_ai_model": "gpt-5.1"
+                }
+                
+        except Exception as e:
+            logger.error(
+                f"Исключение при получении настроек пользователя {telegram_id}: {e}"
+            )
+            return {
+                "telegram_id": telegram_id,
+                "preferred_ai_model": "gpt-5.1"
+            }
+    
+    async def update_user_settings(
+        self,
+        telegram_id: int,
+        preferred_ai_model: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Обновить настройки пользователя
+        
+        Args:
+            telegram_id: Telegram ID пользователя
+            preferred_ai_model: Предпочитаемая AI модель
+            
+        Returns:
+            Dict с обновленными настройками
+        """
+        try:
+            data = {}
+            if preferred_ai_model:
+                data["preferred_ai_model"] = preferred_ai_model
+            
+            response = await self._make_request_with_retry(
+                method="PATCH",
+                endpoint="/settings",
+                params={"telegram_id": telegram_id},
+                data=data
+            )
+            
+            if response.success and response.data:
+                logger.info(
+                    f"Настройки пользователя {telegram_id} обновлены: "
+                    f"model={preferred_ai_model}"
+                )
+                return response.data
+            else:
+                logger.error(
+                    f"Ошибка обновления настроек пользователя {telegram_id}: "
+                    f"{response.error}"
+                )
+                return {
+                    "telegram_id": telegram_id,
+                    "preferred_ai_model": preferred_ai_model or "gpt-5.1"
+                }
+                
+        except Exception as e:
+            logger.error(
+                f"Исключение при обновлении настроек пользователя {telegram_id}: {e}"
+            )
+            return {
+                "telegram_id": telegram_id,
+                "preferred_ai_model": preferred_ai_model or "gpt-5.1"
+            }
 
 
 # Обратная совместимость - старые функции
@@ -1131,3 +1251,7 @@ async def get_cabinet_id(user_id: int) -> BotAPIResponse:
             error=f"Ошибка получения ID кабинета: {str(e)}",
             status_code=500
         )
+
+
+# Создаем глобальный экземпляр клиента ПОСЛЕ определения всех методов
+bot_api_client = BotAPIClient()
